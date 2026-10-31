@@ -77,7 +77,7 @@ describe('the repository', () => {
     expect(cmake).toStartWith('# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)\n# SPDX-License-Identifier: AGPL-3.0-only\n')
   })
 
-  test('the files that carry OrcaSlicer code say which, from which OrcaSlicer file', () => {
+  test('the files that carry OrcaSlicer code say which, from which OrcaSlicer file, and whose copyright those portions are', () => {
     const carries: Record<string, string[]> = {
       'cli/gui_symbols.cpp': ['src/slic3r/Utils/ColorSpaceConvert.cpp', 'deps_src/nanosvg'],
       'cli/run.cpp': ['src/OrcaSlicer.cpp', 'PartPlate.cpp', 'Plater.cpp'],
@@ -92,6 +92,7 @@ describe('the repository', () => {
       const block = text.slice(at, at + 1200)
       for (const f of from) expect({ file, f, found: block.includes(f) }).toEqual({ file, f, found: true })
       expect({ file, dated: /20\d\d-\d\d-\d\d/.test(block) }).toEqual({ file, dated: true })
+      expect({ file, copyright: /copyright (is )?the OrcaSlicer contributors/.test(block.replace(/\n(\/\/|#) ?/g, ' ')) }).toEqual({ file, copyright: true })
     }
   })
 

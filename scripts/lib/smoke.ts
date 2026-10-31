@@ -41,6 +41,7 @@
 // TypeScript from OrcaSlicer's src/libslic3r/Slicing.cpp (layer_height_profile_from_ranges with its
 // lh_append, generate_object_layers, and min/max_layer_height_from_nozzle with SlicingParameters;
 // OrcaSlicer v2.4.2, commit 8500fcd), 2026-10-30, to predict the layers the engine must make.
+// Those portions are copyright the OrcaSlicer contributors (NOTICE).
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'

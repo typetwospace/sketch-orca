@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -22,6 +23,7 @@ import {
   prebuiltLibraries,
   prebuiltLine,
   prebuiltSourcePath,
+  repositoryFiles,
   SOURCE_VERSION,
   verifySums,
   withPrebuiltSources,
@@ -33,6 +35,8 @@ import {
   type PrebuiltSource,
 } from '../scripts/lib/bundle.ts'
 import { depsBuildArgs, formatCommand, orcaBuildArgs } from '../scripts/lib/cmake.ts'
+import { firstExisting, gitCandidates } from '../scripts/lib/env.ts'
+import { currentPlatform } from '../scripts/lib/toolchain.ts'
 import { nativePath, sha256Bytes, sha256Sums, treeEntries, writeText } from '../scripts/lib/files.ts'
 import { LOCK_FORMAT, type OrcaLock } from '../scripts/lib/lock.ts'
 import { buildManifest, type EngineManifest } from '../scripts/lib/stage.ts'
@@ -451,7 +455,64 @@ describe('prebuilt libraries and their sources', () => {
     expect(line).toContain("The binary is CGAL's MinGW-w64 build of this release")
     expect(prebuiltLine(lib!, false)).toContain('Its source, gmp-5.0.1.tar.bz2, was left out of this bundle; it is at https://gmplib.org/download/gmp/gmp-5.0.1.tar.bz2')
     expect(prebuiltLine(gmp(), true)).toContain('Its source is NOT in this bundle')
-    // A layout with prebuilt/ is a new bundle version: an older bundle is made again.
-    expect(SOURCE_VERSION).toBe(2)
+    // engine/ as git tracks it, and its commit in bundle.json, is a new bundle version: an older bundle is made again.
+    expect(SOURCE_VERSION).toBe(3)
+  })
+})
+
+describe("the repository's files in the bundle", () => {
+  const git = firstExisting(gitCandidates(currentPlatform(), process.env))
+
+  /** git in the test's own repository, with no user or system configuration. */
+  function inRepo(repo: string, ...args: string[]): string {
+    const empty = join(dir, 'gitconfig')
+    if (!existsSync(empty)) writeFileSync(empty, '')
+    const r = spawnSync(git!, ['-C', repo, ...args], {
+      encoding: 'utf8',
+      windowsHide: true,
+      env: { ...process.env, GIT_CONFIG_GLOBAL: empty, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid' },
+    })
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`)
+    return r.stdout
+  }
+
+  test.skipIf(git === undefined)('from a git checkout: exactly the files git tracks, at its commit; a change or a file git does not track is refused', () => {
+    const repo = join(dir, 'repo')
+    for (const [rel, text] of [['cli/main.cpp', 'int main() {}\n'], ['README.md', 'readme\n'], ['.gitignore', 'node_modules/\n/work/\n*.log\n']] as const) {
+      mkdirSync(join(repo, rel, '..'), { recursive: true })
+      writeFileSync(join(repo, rel), text)
+    }
+    inRepo(repo, 'init', '-q')
+    inRepo(repo, 'add', '-A')
+    inRepo(repo, 'commit', '-q', '-m', 'first')
+    const head = inRepo(repo, 'rev-parse', 'HEAD').trim()
+    // Ignored files are never listed and never block: the packages, the work folder, logs.
+    for (const rel of ['node_modules/x/index.js', 'work/src/a.txt', 'build.log']) {
+      mkdirSync(join(repo, rel, '..'), { recursive: true })
+      writeFileSync(join(repo, rel), 'local')
+    }
+    expect(repositoryFiles(git, repo)).toEqual({ files: ['.gitignore', 'README.md', 'cli/main.cpp'], commit: head })
+
+    // A file git does not track (notes, a key) stops the bundle, by name.
+    writeFileSync(join(repo, 'notes.txt'), 'private')
+    expect(() => repositoryFiles(git, repo)).toThrow('notes.txt')
+    rmSync(join(repo, 'notes.txt'))
+    // So does a tracked file changed and not committed, and a rename.
+    writeFileSync(join(repo, 'README.md'), 'changed\n')
+    expect(() => repositoryFiles(git, repo)).toThrow('README.md')
+    inRepo(repo, 'checkout', '-q', '--', 'README.md')
+    inRepo(repo, 'mv', 'README.md', 'READ.md')
+    expect(() => repositoryFiles(git, repo)).toThrow('READ.md')
+    inRepo(repo, 'mv', 'READ.md', 'README.md')
+    expect(repositoryFiles(git, repo).commit).toBe(head)
+  })
+
+  test("outside a checkout (a bundle's own engine/ folder): every file keepEngineFile keeps, and no commit", () => {
+    const engine = join(dir, 'engine')
+    for (const rel of ['cli/main.cpp', 'README.md', 'node_modules/x.js', 'work/a.txt']) {
+      mkdirSync(join(engine, rel, '..'), { recursive: true })
+      writeFileSync(join(engine, rel), 'x')
+    }
+    expect(repositoryFiles(undefined, engine)).toEqual({ files: ['README.md', 'cli/main.cpp'], commit: null })
   })
 })

@@ -4,7 +4,10 @@
 //   orca/OrcaSlicer-<tag>.tar.gz    OrcaSlicer at the locked commit, as upstream has it (git archive)
 //   engine/                         this repository (sketch-orca): the lock, the patches, the
 //                                   command-line front end (cli/), the protocol, the pipeline scripts
-//                                   and their tests, the README and the licence files
+//                                   and their tests, the README and the licence files; from a git
+//                                   checkout, exactly the files git tracks, at the commit bundle.json
+//                                   names (a checkout with uncommitted changes or untracked files is
+//                                   refused, so no local file is published)
 //   dependencies/<Name>/<file>      the source packages Orca's dependency build downloaded, each one
 //                                   checked against the SHA-256 that Orca's recipe pins
 //   prebuilt/<Name>/<file>          the source packages of the libraries Orca ships prebuilt (GMP on
@@ -27,16 +30,16 @@ import type { Context } from '../orca.ts'
 import { headCommit, listPatches } from './checkout.ts'
 import { depsBuildArgs, depsConfigureArgs, formatCommand, orcaBuildArgs, orcaConfigureArgs } from './cmake.ts'
 import { firstExisting, gitCandidates, type Platform } from './env.ts'
-import { copyFile, hashTree, listFiles, nativePath, parseSha256Sums, sha256Bytes, sha256Sums, treeEntries, writeText, type FileEntry } from './files.ts'
+import { copyFile, hashTree, listFiles, nativePath, parseSha256Sums, sha256Bytes, sha256Sums, treeEntries, writeText } from './files.ts'
 import type { OrcaLock } from './lock.ts'
 import { sha256File, sha256Text, writeStamp } from './paths.ts'
-import { Log, runLogged, StepError } from './run.ts'
+import { capture, Log, runLogged, StepError } from './run.ts'
 import { builtDependencies, dependencySourceDir, readManifest, verifyStaged, type EngineManifest, type StageCopy } from './stage.ts'
 import { currentPlatform } from './toolchain.ts'
 
 export const SOURCE_FORMAT = 'sketch-orca-source/1'
 /** Bump when the bundle's layout changes: a bundle of an older version is made again. */
-export const SOURCE_VERSION = 2
+export const SOURCE_VERSION = 3
 
 /**
  * The toolchain the engine has been built with, on Windows x64 (2026-10-30), as BUILDING.md (the
@@ -357,6 +360,39 @@ export function keepEngineFile(rel: string): boolean {
   return name !== '.DS_Store' && name !== 'Thumbs.db' && !name.endsWith('~') && !name.endsWith('.log')
 }
 
+/**
+ * The files of the repository the bundle carries as engine/, and the commit they are from. In a git
+ * checkout (a `.git` in `dir`): exactly the files git tracks there (that keepEngineFile keeps), at
+ * HEAD; a tree with changes that are not committed, or with files git neither tracks nor ignores,
+ * is refused, so no local file (notes, keys) goes into a published bundle. Outside a checkout (a
+ * bundle's own engine/ folder): every file keepEngineFile keeps, and no commit.
+ */
+export function repositoryFiles(git: string | undefined, dir: string): { files: string[]; commit: string | null } {
+  if (!existsSync(join(dir, '.git'))) return { files: listFiles(dir, (rel) => keepEngineFile(rel)), commit: null }
+  if (git === undefined) throw new StepError(`${dir} is a git checkout, and git was not found to list the files it tracks (set SKETCH_ORCA_GIT)`)
+  const status = capture(git, ['-C', dir, '-c', 'core.quotePath=false', 'status', '--porcelain=v1', '-z', '--untracked-files=all'])
+  if (status.code !== 0) throw new StepError(`git status failed in ${dir}: ${status.stderr.trim()}`)
+  // Each entry is "XY <path>"; a rename or copy is followed by one more field, its old path.
+  const fields = status.stdout.split('\0')
+  const changed: string[] = []
+  for (let i = 0; i < fields.length; i++) {
+    const entry = fields[i]!
+    if (entry.length < 4) continue
+    changed.push(entry.slice(3))
+    if (/[RC]/.test(entry.slice(0, 2))) i++
+  }
+  if (changed.length > 0) {
+    const shown = changed.slice(0, 5).join(', ') + (changed.length > 5 ? `, and ${changed.length - 5} more` : '')
+    throw new StepError(`${dir} has changes that are not committed, or files git does not track (${shown}); commit or remove them, then run source again`)
+  }
+  const listed = capture(git, ['-C', dir, '-c', 'core.quotePath=false', 'ls-files', '-z'])
+  if (listed.code !== 0) throw new StepError(`git ls-files failed in ${dir}: ${listed.stderr.trim()}`)
+  const commit = headCommit(git, dir)
+  if (commit === undefined) throw new StepError(`${dir} has no commit to bundle`)
+  const files = listed.stdout.split('\0').filter((rel) => rel.length > 0 && keepEngineFile(rel)).sort()
+  return { files, commit }
+}
+
 /** A prebuilt library's source package as the bundle copies it (ensurePrebuiltSource gives the path). */
 export interface PrebuiltArchive {
   name: string
@@ -391,6 +427,8 @@ export interface BundleInfo {
   orca: { repo: string; tag: string; version: string; commit: string; license: string; archive: string }
   patches: { name: string; sha256: string }[]
   cli: string
+  /** The commit of this repository that engine/ holds (its files as git tracks them); null when it was not made from a git checkout. */
+  repository: { commit: string | null }
   dependencies: {
     included: boolean
     archives: { name: string; file: string; url: string; sha256: string; size: number }[]
@@ -580,7 +618,9 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   if (withDeps) {
     for (const p of prebuilt) if (p.source) prebuiltArchives.push({ name: p.name, file: p.source.file, path: await ensurePrebuiltSource(p, w.prebuilt, fetcher, (msg) => log.line(msg)) })
   }
-  const engineFiles = listFiles(ctx.engine.engine, (rel) => keepEngineFile(rel))
+  const repository = repositoryFiles(git, ctx.engine.engine)
+  const engineFiles = repository.files
+  if (repository.commit === null) log.line(`source: ${ctx.engine.engine} is not a git checkout: every file in it but the local work folders goes in`)
   const licensesDir = join(w.dist, 'engine', 'LICENSES')
   const licenseFiles = listFiles(licensesDir)
   const copies = bundleCopies({ engineDir: ctx.engine.engine, engineFiles, archives: plan.archives, prebuiltArchives, withDeps, licensesDir, licenseFiles })
@@ -589,7 +629,8 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
     JSON.stringify({
       sourceVersion: SOURCE_VERSION,
       manifestSha256,
-      engine: treeEntries(ctx.engine.engine, (rel) => keepEngineFile(rel)).map((e: FileEntry) => [e.path, e.sha256]),
+      engine: engineFiles.map((rel) => [rel, sha256File(nativePath(ctx.engine.engine, rel))]),
+      commit: repository.commit,
       archives: plan.archives.map((a) => [a.name, a.file, a.sha256]),
       withDeps,
       missing: plan.missing,
@@ -633,6 +674,7 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
     orca: { repo: ctx.lock.repo, tag: ctx.lock.tag, version: ctx.lock.version, commit: ctx.lock.commit, license: ctx.lock.license, archive: orcaArchiveName(ctx.lock) },
     patches: patches.map((p) => ({ name: p.name, sha256: p.sha256 })),
     cli: m.cli,
+    repository: { commit: repository.commit },
     dependencies: {
       included: withDeps,
       archives: plan.archives.map((a) => ({ name: a.name, file: a.file, url: a.url, sha256: a.sha256, size: a.size })),

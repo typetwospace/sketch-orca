@@ -58,20 +58,26 @@ or the source of:
 What was changed, and when
 --------------------------
 
-All changes are dated; the newest date is the one the staged engine's LICENSES/README.txt gives.
+All changes are dated, here and in the files. The staged engine's LICENSES/README.txt gives the
+newest date of the patch headers.
 
   - patches/0001 to 0004 change OrcaSlicer's build files and one libslic3r source so that the
-    slicing library builds without the GUI. Each patch starts with a dated "Modified for Sketch"
-    line, and the lines it adds to OrcaSlicer's files carry a dated comment. Modified 2026-10-30.
-  - cli/ is the command-line front end, added 2026-10-30. Some of its files carry OrcaSlicer code,
-    adapted; each says which code from which OrcaSlicer file, under "Carries OrcaSlicer code":
+    slicing library builds without the GUI. Each patch's header, the lines before its diff, has a
+    title line and then a dated "Modified for Sketch, <date>." line, and the lines it adds to
+    OrcaSlicer's files carry a dated comment. Modified 2026-10-30.
+  - cli/ is the command-line front end, added 2026-10-30; its file headers and its usage text
+    were changed on 2026-10-31. Some of its files carry OrcaSlicer code, adapted, whose portions
+    are copyright the OrcaSlicer contributors; each says which code from which OrcaSlicer file,
+    under "Carries OrcaSlicer code":
       cli/run.cpp           (src/OrcaSlicer.cpp, src/slic3r/GUI/PartPlate.cpp, src/slic3r/GUI/Plater.cpp)
       cli/presets.cpp       (src/OrcaSlicer.cpp, src/slic3r/GUI/Plater.cpp, src/slic3r/GUI/BitmapCache.cpp)
       cli/gui_symbols.cpp   (src/slic3r/Utils/ColorSpaceConvert.cpp, deps_src/nanosvg)
       cli/CMakeLists.txt    (src/libslic3r/PrintConfig.cpp, read at configure time; the root CMakeLists.txt)
   - scripts/ is the pipeline that fetches, builds, tests, stages and packages the engine, added
-    2026-10-30. scripts/lib/smoke.ts carries a TypeScript port of layer-height code from
-    src/libslic3r/Slicing.cpp, to predict the layers the engine must make.
+    2026-10-30 and changed 2026-10-31 (the source bundle takes the files git tracks).
+    scripts/lib/smoke.ts carries a TypeScript port of layer-height code from
+    src/libslic3r/Slicing.cpp, to predict the layers the engine must make; those portions are
+    copyright the OrcaSlicer contributors.
   - protocol/ specifies the engine's command line and files, added 2026-10-31. It carries no
     OrcaSlicer code or text and is licensed under the MIT licence (protocol/LICENSE), so that any
     program may implement it.

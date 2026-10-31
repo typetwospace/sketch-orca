@@ -14,6 +14,7 @@
 // configuration), src/slic3r/GUI/Plater.cpp (get_min_flush_volumes) and
 // src/slic3r/GUI/BitmapCache.cpp (BitmapCache::parse_color4), OrcaSlicer v2.4.2, commit 8500fcd.
 // Modified for sketch-orca, 2026-10-30.
+// Those portions are copyright the OrcaSlicer contributors (NOTICE).
 
 #include "presets.hpp"
 

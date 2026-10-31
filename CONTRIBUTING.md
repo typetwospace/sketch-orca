@@ -7,9 +7,10 @@ Changes are welcome as patches or pull requests. Before you send one:
   platform.
 - Keep each file's line endings (`.gitattributes` holds `* -text`; the scripts, `cli/` and the
   patches use LF).
-- Date your changes to OrcaSlicer's files, as section 5(a) of the licence asks: a patch starts
-  with a line "Modified for Sketch, <date>." (the form `stage` reads into `LICENSES/README.txt`),
-  as the patches here do, and the lines it adds carry a dated comment. A file that takes code from
+- Date your changes to OrcaSlicer's files, as section 5(a) of the licence asks: a patch's header
+  (the lines before its diff) has a title line, `sketch-orca patch NNNN: ...`, and then the line
+  "Modified for Sketch, <date>." (the form `stage` reads into `LICENSES/README.txt`), as the
+  patches here do, and the lines it adds carry a dated comment. A file that takes code from
   OrcaSlicer says so under "Carries OrcaSlicer code", naming the OrcaSlicer file and the date.
 - A change to the commands or files the engine reads and writes changes `protocol/`: the
   specification, the schemas and their examples, which `test/protocol.test.ts` checks against the

@@ -176,8 +176,10 @@ orca/OrcaSlicer-<tag>.tar.gz   OrcaSlicer at the locked commit (git archive with
                                conversion: each file as committed, most with LF, some, mostly
                                under resources/profiles, with CRLF)
 engine/                        this repository: lock, patches, cli, protocol, licenses, scripts,
-                               tests, README, NOTICE, AUTHORS, LICENSE (no .git, node_modules or
-                               local work folders)
+                               tests, README, NOTICE, AUTHORS, LICENSE: the files git tracks, at
+                               the commit bundle.json names (no .git, node_modules or local work
+                               folders; source refuses a checkout with changes that are not
+                               committed or files git does not track)
 dependencies/<Name>/<file>     the source packages Orca's dependency build downloaded, each
                                matched against the SHA-256 its recipe pins
 prebuilt/<Name>/<file>         the source packages of the libraries Orca ships prebuilt, when
@@ -185,7 +187,7 @@ prebuilt/<Name>/<file>         the source packages of the libraries Orca ships p
 LICENSES/                      the staged engine's licences
 BUILDING.md                    how to build the engine from the bundle alone
 bundle.json                    sketch-orca-source/1: the engine it belongs to (its manifest's
-                               SHA-256), the lock, the patches, each package with URL and
+                               SHA-256), this repository's commit, the lock, the patches, each package with URL and
                                SHA-256, and the libraries built from Orca's tree or shipped
                                prebuilt, with their sources
 SHA256SUMS                     every other file (check with sha256sum -c SHA256SUMS)
@@ -388,6 +390,16 @@ of an engine binary.
   MinGW-w64 runtime's permissive terms; counsel may confirm that no further source is needed).
 - **MPFR (Windows).** Orca ships MPFR 3.0.0 prebuilt too; the engine does not link it, so it is
   neither shipped nor bundled. If a build ever links it, its source must be pinned like GMP's.
+- **OpenSSL.** Orca's dependency build pins OpenSSL 1.1.1w (`deps/OpenSSL`, the recipe excerpt in
+  `test/bundle.test.ts`), and libslic3r includes `openssl/md5.h` (`Utils.hpp`, `bbs_3mf.cpp`), so
+  the engine very likely links OpenSSL's libcrypto. Not checked yet: whether it does, and how
+  (statically into the executable or as a library in `bin/`), and that its licence text is staged
+  in `LICENSES/deps`. OpenSSL 1.1.1 is under the OpenSSL and SSLeay licences, whose advertising
+  clauses the FSF holds incompatible with the GNU GPL family, the AGPL included, unless the
+  copyright holders of the GPL'd code grant an exception; OpenSSL 3.0 and later are under the
+  Apache License 2.0, which is compatible with version 3. Stock OrcaSlicer's releases are built the
+  same way. The options: confirm the link and stage its licence; build the dependencies against
+  OpenSSL 3 (a change to Orca's recipe, as a patch here); or counsel's view on shipping 1.1.1w.
 - **libnoise.** The package Orca pins dropped libnoise's `COPYING.txt`. Staging ships the grant
   from its sources (`src/noise.h`, LGPL 2.1 or later) and the LGPL 2.1 text from `licenses/`.
 - **The toolchain record.** `BUILT_WITH` (`scripts/lib/bundle.ts`, and so each bundle's

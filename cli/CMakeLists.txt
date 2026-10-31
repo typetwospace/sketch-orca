@@ -7,7 +7,7 @@
 # Carries OrcaSlicer code: the legacy-keys step below reads OrcaSlicer's
 # src/libslic3r/PrintConfig.cpp (PrintConfigDef::handle_legacy) at configure time, and the runtime
 # library list follows orcaslicer_copy_dlls in OrcaSlicer's root CMakeLists.txt (v2.4.2, commit
-# 8500fcd). Added 2026-10-30.
+# 8500fcd). Added 2026-10-30. Those portions are copyright the OrcaSlicer contributors (NOTICE).
 #
 # sketch-orca: a command-line front end on OrcaSlicer's slicing library (libslic3r), with
 # no GUI code. Orca's src/CMakeLists.txt adds this folder (patches/0003) when SLIC3R_GUI is

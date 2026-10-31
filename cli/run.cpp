@@ -15,6 +15,7 @@
 // src/slic3r/GUI/Plater.cpp (the plate boxes of export_3mf), OrcaSlicer v2.4.2, commit 8500fcd;
 // the global arrange, the build volume check and the plate's print configuration follow
 // src/OrcaSlicer.cpp. Modified for sketch-orca, 2026-10-30.
+// Those portions are copyright the OrcaSlicer contributors (NOTICE).
 //
 // sketch-orca run: one job, from the job file to the result file. The order follows the stock
 // command line (OrcaSlicer.cpp, CLI::run): the resources, the presets, the model, per-object
