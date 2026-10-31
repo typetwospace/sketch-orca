@@ -1,0 +1,23 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": true,
+  "code": "ok",
+  "message": "",
+  "exitCode": 0,
+  "command": "info",
+  "warnings": [],
+  "layers": [],
+  "printZ": [],
+  "outputs": { "gcode": "", "bambu3mf": "" },
+  "info": {
+    "objects": [{ "objectIndex": 0, "name": "cube", "instances": 1, "triangles": 12, "min": [-10, -10, 0], "max": [10, 10, 20], "size": [20, 20, 20] }],
+    "bed": { "printableArea": [[0, 0], [220, 0], [220, 220], [0, 220]], "printableHeight": 250, "excludeArea": [], "bedType": "" },
+    "printer": "Example printer 0.4 nozzle",
+    "printerModel": "",
+    "printerModelId": "",
+    "process": "0.20mm Example",
+    "filaments": ["Example PLA"],
+    "extruders": 1,
+    "printSequence": "by layer"
+  }
+}

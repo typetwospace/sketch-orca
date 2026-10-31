@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sketch-orca:schema:engine-manifest:1",
+  "title": "sketch-orca engine manifest (sketch-orca-engine/1)",
+  "description": "manifest.json at the top of a staged engine folder: what the engine is, what it was built from, and every other file of the folder with its size and SHA-256. A client finds the executable, the resources folder and the library folder through it. engine.exe must be one of the files; protocol/README.md has the other rules a schema cannot state.",
+  "type": "object",
+  "required": ["format", "stageVersion", "engine", "orca", "platform", "patches", "runtime", "system", "smoke", "inputs", "files"],
+  "properties": {
+    "format": { "const": "sketch-orca-engine/1" },
+    "stageVersion": { "type": "number", "description": "The layout of the staged folder; a stage of an older version is made again." },
+    "engine": {
+      "type": "object",
+      "required": ["name", "version", "exe", "resources", "libraryPath"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "exe": { "$ref": "#/$defs/relativePath", "description": "The executable, relative to the folder." },
+        "resources": { "type": "string", "description": "The folder a job's resources names, relative to the folder." },
+        "libraryPath": { "type": "string", "description": "The folder of the engine's libraries, relative to the folder (Linux and macOS: put it on LD_LIBRARY_PATH or DYLD_LIBRARY_PATH)." }
+      }
+    },
+    "orca": {
+      "description": "The OrcaSlicer release the engine is built from (orca.lock.json).",
+      "type": "object",
+      "required": ["repo", "tag", "version", "commit", "publishedAt", "license"],
+      "properties": {
+        "repo": { "type": "string" },
+        "tag": { "type": "string" },
+        "version": { "type": "string" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "publishedAt": { "type": "string" },
+        "license": { "type": "string" }
+      }
+    },
+    "platform": { "enum": ["win32", "linux", "darwin"] },
+    "arch": { "type": "string" },
+    "patches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "sha256"],
+        "properties": { "name": { "type": "string" }, "sha256": { "$ref": "#/$defs/sha256" } }
+      }
+    },
+    "cli": { "type": "string", "description": "A hash of the front end's sources (cli/) the engine was built from." },
+    "runtime": { "description": "The libraries shipped next to the engine.", "type": "array", "items": { "type": "string" } },
+    "system": { "description": "The libraries the system provides.", "type": "array", "items": { "type": "string" } },
+    "smoke": {
+      "type": "object",
+      "required": ["passed", "smokeVersion"],
+      "properties": { "passed": { "type": "boolean" }, "smokeVersion": { "type": "number" } }
+    },
+    "inputs": { "$ref": "#/$defs/sha256", "description": "A hash of what staging read." },
+    "stagedAt": { "type": "string" },
+    "files": {
+      "description": "Every file of the folder but manifest.json, sorted by path.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "size", "sha256"],
+        "properties": {
+          "path": { "$ref": "#/$defs/relativePath" },
+          "size": { "type": "integer", "minimum": 0 },
+          "sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "relativePath": {
+      "description": "A path relative to the engine folder, with forward slashes, that stays inside it: no leading slash, drive or backslash, and no empty, . or .. part.",
+      "type": "string",
+      "pattern": "^(?![A-Za-z]:)(?!\\.\\.?(/|$))(?!.*/\\.\\.?(/|$))[^/\\\\]+(/[^/\\\\]+)*$"
+    }
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sketch-orca:schema:job:1",
+  "title": "sketch-orca job (sketch-orca-job/1)",
+  "description": "The file `sketch-orca run --job <file>` reads. An optional field given as null is the same as one left out. Fields this schema does not name are ignored. protocol/README.md lists the rules a schema cannot state (order, uniqueness, fit to the model), which the engine checks too.",
+  "type": "object",
+  "required": ["format", "command", "resources", "workDir", "model", "presets"],
+  "properties": {
+    "format": { "const": "sketch-orca-job/1" },
+    "command": { "enum": ["slice", "layers", "info"] },
+    "resources": { "$ref": "#/$defs/absolutePath", "description": "The engine's resources folder (the manifest's engine.resources)." },
+    "workDir": { "$ref": "#/$defs/absolutePath", "description": "A folder the engine may write scratch files to." },
+    "model": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "allOf": [{ "$ref": "#/$defs/absolutePath" }, { "type": "string", "pattern": "\\.(3[Mm][Ff]|[Ss][Tt][Ll]|[Oo][Bb][Jj])$" }] }
+      }
+    },
+    "presets": {
+      "type": "object",
+      "required": ["machine", "process", "filaments"],
+      "properties": {
+        "machine": { "$ref": "#/$defs/jsonPath" },
+        "process": { "$ref": "#/$defs/jsonPath" },
+        "filaments": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/jsonPath" } }
+      }
+    },
+    "overrides": { "$ref": "#/$defs/overrides" },
+    "objects": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "required": ["index"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0, "maximum": 1000000000 },
+          "overrides": { "$ref": "#/$defs/overrides" },
+          "layerHeights": { "$ref": "#/$defs/layerHeights" },
+          "heightRanges": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "object",
+              "required": ["from", "to"],
+              "properties": {
+                "from": { "type": "number", "minimum": 0 },
+                "to": { "type": "number", "exclusiveMinimum": 0 },
+                "overrides": { "$ref": "#/$defs/overrides" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "customGcodes": {
+      "type": ["array", "null"],
+      "items": { "$ref": "#/$defs/customGcode" }
+    },
+    "arrange": { "type": ["boolean", "null"], "description": "Place the objects on the plate, without rotating them. Default true." },
+    "orient": { "type": ["boolean", "null"], "description": "Let the engine orient the objects. Default false." },
+    "output": {
+      "type": ["object", "null"],
+      "properties": {
+        "gcode": { "anyOf": [{ "type": "null" }, { "const": "" }, { "$ref": "#/$defs/gcodePath" }] },
+        "bambu3mf": { "anyOf": [{ "type": "null" }, { "allOf": [{ "$ref": "#/$defs/absolutePath" }, { "type": "string", "pattern": "\\.3[Mm][Ff]$" }] }] },
+        "stats": { "type": ["boolean", "null"], "description": "Default true." }
+      }
+    }
+  },
+  "if": { "properties": { "command": { "const": "slice" } } },
+  "then": {
+    "required": ["output"],
+    "properties": {
+      "output": { "type": "object", "required": ["gcode"], "properties": { "gcode": { "$ref": "#/$defs/gcodePath" } } }
+    }
+  },
+  "$defs": {
+    "absolutePath": {
+      "description": "An absolute path on the system the engine runs on: /... on Linux and macOS; C:\\..., C:/..., \\... or /... on Windows.",
+      "type": "string",
+      "pattern": "^([/\\\\]|[A-Za-z]:[/\\\\])"
+    },
+    "jsonPath": { "allOf": [{ "$ref": "#/$defs/absolutePath" }, { "type": "string", "pattern": "\\.[Jj][Ss][Oo][Nn]$" }] },
+    "gcodePath": { "allOf": [{ "$ref": "#/$defs/absolutePath" }, { "type": "string", "pattern": "\\.[Gg][Cc][Oo][Dd][Ee]$" }] },
+    "overrides": {
+      "description": "Settings by Orca's key, case-sensitive, each value as Orca writes it (numbers and booleans are turned into that text: true is \"1\"). The keys of the preset files are not overrides, in any letter case.",
+      "type": ["object", "null"],
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9_]*$",
+        "not": { "type": "string", "pattern":"^([Tt][Yy][Pp][Ee]|[Nn][Aa][Mm][Ee]|[Ff][Rr][Oo][Mm]|[Ii][Nn][Hh][Ee][Rr][Ii][Tt][Ss]|[Cc][Oo][Mm][Pp][Aa][Tt][Ii][Bb][Ll][Ee]_[Pp][Rr][Ii][Nn][Tt][Ee][Rr][Ss])$" }
+      },
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
+    },
+    "layerHeights": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "object", "required": ["mode"], "properties": { "mode": { "const": "fixed" } } },
+        {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": { "const": "adaptive" },
+            "quality": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "0 is the finest, 1 the coarsest. Default 0.5." }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["mode", "profile"],
+          "properties": {
+            "mode": { "const": "profile" },
+            "profile": {
+              "description": "[z0, h0, z1, h1, ...]: pairs of a height on the object (from its bottom) and the layer height from there; z0 is 0.",
+              "type": "array",
+              "minItems": 4,
+              "prefixItems": [{ "const": 0 }],
+              "items": { "type": "number" }
+            }
+          }
+        }
+      ]
+    },
+    "customGcode": {
+      "type": "object",
+      "required": ["printZ", "type"],
+      "properties": {
+        "printZ": { "type": "number", "exclusiveMinimum": 0, "description": "The print Z of the layer this runs before." },
+        "type": { "enum": ["pause", "color", "filament", "custom"] },
+        "extruder": { "type": ["integer", "null"], "minimum": 1, "maximum": 1000000, "description": "1-based; the filament to switch to." },
+        "color": { "type": ["string", "null"], "pattern": "^#[0-9a-fA-F]{6}$" },
+        "gcode": { "type": ["string", "null"] },
+        "note": { "type": ["string", "null"], "description": "What the person at the printer does; for the client to show, not sent to the printer." }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "filament" } } },
+          "then": { "required": ["extruder"], "properties": { "extruder": { "type": "integer" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "color" } } },
+          "then": { "required": ["color"], "properties": { "color": { "type": "string" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "custom" } } },
+          "then": { "required": ["gcode"], "properties": { "gcode": { "type": "string", "pattern": "\\S" } } }
+        }
+      ]
+    }
+  }
+}

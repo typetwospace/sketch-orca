@@ -1,0 +1,19 @@
+{
+  "format": "sketch-orca-engine/1",
+  "stageVersion": 2,
+  "engine": { "name": "sketch-orca", "version": "0.1.0", "exe": "bin/sketch-orca.exe", "resources": "resources", "libraryPath": "bin" },
+  "orca": { "repo": "OrcaSlicer/OrcaSlicer", "tag": "v2.4.2", "version": "2.4.2", "commit": "8500fcdccaa10b5099ac20d252af3a7c560046f1", "publishedAt": "2026-07-07T03:33:49Z", "license": "AGPL-3.0" },
+  "platform": "win32",
+  "arch": "x64",
+  "patches": [],
+  "cli": "",
+  "runtime": [],
+  "system": [],
+  "smoke": { "passed": true, "smokeVersion": 12 },
+  "inputs": "4444444444444444444444444444444444444444444444444444444444444444",
+  "stagedAt": "",
+  "files": [
+    { "path": "bin/sketch-orca.exe", "size": 1, "sha256": "8888888888888888888888888888888888888888888888888888888888888888" },
+    { "path": "bin/../../outside.dll", "size": 1, "sha256": "9999999999999999999999999999999999999999999999999999999999999999" }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "format": "sketch-orca-job/1",
+  "command": "slice",
+  "resources": "/opt/sketch-orca/resources",
+  "workDir": "/jobs/1/work",
+  "model": { "path": "/jobs/1/bracket.3mf" },
+  "presets": {
+    "machine": "/jobs/1/presets/machine.json",
+    "process": "/jobs/1/presets/process.json",
+    "filaments": ["/jobs/1/presets/filament_1.json"]
+  },
+  "overrides": { "sparse_infill_density": "15%", "wall_loops": 3, "enable_support": false },
+  "objects": [
+    {
+      "index": 0,
+      "overrides": {},
+      "layerHeights": { "mode": "fixed" },
+      "heightRanges": [{ "from": 0, "to": 5, "overrides": { "wall_loops": "4" } }]
+    }
+  ],
+  "customGcodes": [
+    { "printZ": 12.4, "type": "pause", "note": "Insert the 10 x 3 mm magnet" },
+    { "printZ": 20.2, "type": "color", "color": "#d03030" }
+  ],
+  "arrange": false,
+  "orient": false,
+  "output": { "gcode": "/jobs/1/out/plate_1.gcode", "bambu3mf": "/jobs/1/out/plate_1.gcode.3mf", "stats": true }
+}

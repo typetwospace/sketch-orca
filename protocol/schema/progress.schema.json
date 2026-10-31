@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sketch-orca:schema:progress:1",
+  "title": "sketch-orca progress line",
+  "description": "One line of the file `sketch-orca run --progress <file>` appends to: one JSON object per line (newline-delimited JSON). A reader skips blank lines and takes a missing message as \"\".",
+  "type": "object",
+  "required": ["stage", "percent"],
+  "properties": {
+    "stage": {
+      "description": "The step the engine is at: job, presets, model, orient, arrange, slice, gcode, 3mf, stats, then done (ok) or failed. Readers accept stages they do not know.",
+      "type": "string"
+    },
+    "percent": { "type": "number", "minimum": 0, "maximum": 100 },
+    "message": { "type": "string" }
+  }
+}

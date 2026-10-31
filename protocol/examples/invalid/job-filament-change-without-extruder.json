@@ -1,0 +1,9 @@
+{
+  "format": "sketch-orca-job/1",
+  "command": "layers",
+  "resources": "/opt/sketch-orca/resources",
+  "workDir": "/jobs/3/work",
+  "model": { "path": "/jobs/3/cube.stl" },
+  "presets": { "machine": "/jobs/3/presets/machine.json", "process": "/jobs/3/presets/process.json", "filaments": ["/jobs/3/presets/filament_1.json"] },
+  "customGcodes": [{ "printZ": 5, "type": "filament" }]
+}

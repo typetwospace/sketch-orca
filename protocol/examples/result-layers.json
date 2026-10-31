@@ -1,0 +1,16 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": true,
+  "code": "ok",
+  "message": "",
+  "exitCode": 0,
+  "command": "layers",
+  "engine": { "engine": "sketch-orca", "engineVersion": "0.1.0", "orcaVersion": "2.4.2", "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1", "orcaTag": "v2.4.2" },
+  "warnings": [],
+  "layers": [
+    { "objectIndex": 0, "ranges": [[0, 0.25], [0.25, 0.45], [0.45, 0.65]] },
+    { "objectIndex": 1, "ranges": [[0, 0.25], [0.25, 0.37]] }
+  ],
+  "printZ": [0.25, 0.37, 0.45, 0.65],
+  "outputs": { "gcode": "", "bambu3mf": "" }
+}

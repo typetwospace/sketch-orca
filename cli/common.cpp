@@ -1,0 +1,434 @@
+// Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of sketch-orca, a modified version of OrcaSlicer. sketch-orca is free software:
+// you can redistribute it and/or modify it under the terms of the GNU Affero General Public
+// License, version 3, as published by the Free Software Foundation. It is distributed in the hope
+// that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+// (LICENSE) for more details.
+
+#include "common.hpp"
+
+#include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <cmath>
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <sstream>
+
+#include <boost/filesystem.hpp>
+#include <boost/nowide/convert.hpp>
+#include <boost/nowide/fstream.hpp>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
+namespace sketch_orca {
+
+namespace {
+
+// Name -> exit code of the stock Orca command line for the same meaning (OrcaSlicer.cpp,
+// cli_errors in v2.4.2). Several names share a code where our front end tells apart what the stock
+// command line does not (a bad job, a bad setting and a bad layer height profile are all -2, invalid
+// parameters).
+const std::vector<std::pair<std::string, int>> &table()
+{
+    static const std::vector<std::pair<std::string, int>> t = {
+        {"ok", 0},
+        {"environment", -1},               // CLI_ENVIRONMENT_ERROR: the resources folder is missing
+        {"internal-error", -1},            // an error the front end did not expect
+        {"invalid-params", -2},            // CLI_INVALID_PARAMS: the command line itself
+        {"job-invalid", -2},               // the job file
+        {"setting-invalid", -2},           // an override names no setting or has a bad value
+        {"layer-profile-invalid", -2},     // a layer height profile that does not fit the object
+        {"custom-gcode-invalid", -2},      // a custom G-code that does not fit the layers or the filaments
+        {"file-not-found", -3},            // CLI_FILE_NOTFOUND
+        {"preset-invalid", -5},            // CLI_CONFIG_FILE_ERROR
+        {"model-unreadable", -6},          // CLI_DATA_FILE_ERROR
+        {"not-fdm", -7},                   // CLI_INVALID_PRINTER_TECH
+        {"unsupported", -8},               // CLI_UNSUPPORTED_OPERATION
+        {"output-failed", -13},            // CLI_EXPORT_3MF_ERROR (and any output we cannot write)
+        {"out-of-memory", -14},            // CLI_OUT_OF_MEMORY
+        {"process-not-compatible", -17},   // CLI_PROCESS_NOT_COMPATIBLE
+        {"config-invalid", -18},           // CLI_INVALID_VALUES_IN_3MF: the merged settings fail Orca's checks
+        {"arrange-failed", -21},           // CLI_OBJECT_ARRANGE_FAILED
+        {"orient-failed", -22},            // CLI_OBJECT_ORIENT_FAILED
+        {"empty-plate", -50},              // CLI_NO_SUITABLE_OBJECTS: nothing left to slice
+        {"validate-error", -51},           // CLI_VALIDATE_ERROR
+        {"not-printable", -52},            // CLI_OBJECTS_PARTLY_INSIDE (-50 when no object is inside)
+        {"filament-bed-mismatch", -61},    // CLI_FILAMENT_NOT_MATCH_BED_TYPE
+        {"temperature-difference", -62},   // CLI_FILAMENTS_DIFFERENT_TEMP
+        {"collision", -63},                // CLI_OBJECT_COLLISION_IN_SEQ_PRINT (-64 by layer)
+        {"slice-failed", -100},            // CLI_SLICING_ERROR
+        {"path-conflicts", -101},          // CLI_GCODE_PATH_CONFLICTS
+        {"gcode-in-unprintable-area", -102}, // CLI_GCODE_PATH_IN_UNPRINTABLE_AREA
+    };
+    return t;
+}
+
+} // namespace
+
+int exit_code_for(const std::string &code)
+{
+    for (const auto &e : table())
+        if (e.first == code)
+            return e.second;
+    return -1;
+}
+
+std::vector<std::pair<std::string, int>> failure_table() { return table(); }
+
+Failure::Failure(const std::string &code, const std::string &message, int object_index, int exit_code)
+    : std::runtime_error(message), code(code), exit_code(exit_code != 0 ? exit_code : exit_code_for(code)), object_index(object_index)
+{}
+
+void fail(const std::string &code, const std::string &message, int object_index, int exit_code)
+{
+    throw Failure(code, message, object_index, exit_code);
+}
+
+void Warnings::add(const std::string &code, const std::string &message, int object_index)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const Warning &w : m_items)
+        if (w.code == code && w.message == message && w.object_index == object_index)
+            return;
+    m_items.push_back({code, message, object_index});
+}
+
+std::vector<Warning> Warnings::list() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_items;
+}
+
+struct Progress::Impl
+{
+    boost::nowide::ofstream out;
+};
+
+Progress::Progress() = default;
+Progress::~Progress() = default;
+
+bool Progress::open(const std::string &path)
+{
+    try {
+        make_parent_directories(path);
+        auto impl = std::make_unique<Impl>();
+        impl->out.open(path, std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!impl->out.is_open())
+            return false;
+        m_impl = std::move(impl);
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+void Progress::line(const std::string &stage, double percent, const std::string &message)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    note_crash_stage(stage);
+    if (!std::isfinite(percent))
+        percent = m_last;
+    percent = std::max(m_last, std::min(100., std::max(0., percent)));
+    m_last  = percent;
+    write(stage, percent, message);
+}
+
+void Progress::finish(bool ok, const std::string &message)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (ok)
+        m_last = 100.;
+    write(ok ? "done" : "failed", m_last, message);
+}
+
+void Progress::write(const std::string &stage, double percent, const std::string &message)
+{
+    if (!m_impl)
+        return;
+    json j;
+    j["stage"]   = stage;
+    j["percent"] = std::round(percent * 10.) / 10.;
+    j["message"] = message;
+    m_impl->out << j.dump(-1, ' ', false, json::error_handler_t::replace) << "\n";
+    m_impl->out.flush();
+}
+
+std::string read_file(const std::string &path)
+{
+    boost::nowide::ifstream in(path, std::ios::in | std::ios::binary);
+    if (!in.is_open())
+        throw std::runtime_error("cannot open " + path);
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    if (in.bad())
+        throw std::runtime_error("cannot read " + path);
+    return ss.str();
+}
+
+void write_file_atomic(const std::string &path, const std::string &text)
+{
+    make_parent_directories(path);
+    const std::string tmp = path + ".tmp";
+    {
+        boost::nowide::ofstream out(tmp, std::ios::out | std::ios::trunc | std::ios::binary);
+        if (!out.is_open())
+            throw std::runtime_error("cannot create " + tmp);
+        out << text;
+        out.flush();
+        if (!out.good())
+            throw std::runtime_error("cannot write " + tmp);
+    }
+    boost::system::error_code ec;
+    boost::filesystem::rename(boost::filesystem::path(tmp), boost::filesystem::path(path), ec);
+    if (ec) {
+        boost::filesystem::remove(boost::filesystem::path(tmp), ec);
+        throw std::runtime_error("cannot replace " + path);
+    }
+}
+
+bool is_file(const std::string &path)
+{
+    boost::system::error_code ec;
+    return boost::filesystem::is_regular_file(boost::filesystem::path(path), ec);
+}
+
+bool is_directory(const std::string &path)
+{
+    boost::system::error_code ec;
+    return boost::filesystem::is_directory(boost::filesystem::path(path), ec);
+}
+
+void make_directories(const std::string &path)
+{
+    if (path.empty())
+        return;
+    boost::system::error_code ec;
+    boost::filesystem::create_directories(boost::filesystem::path(path), ec);
+    if (ec && !is_directory(path))
+        throw std::runtime_error("cannot create the folder " + path + ": " + ec.message());
+}
+
+std::string parent_directory(const std::string &path)
+{
+    return boost::filesystem::path(path).parent_path().string();
+}
+
+void make_parent_directories(const std::string &path) { make_directories(parent_directory(path)); }
+
+bool is_absolute_path(const std::string &path)
+{
+    if (path.empty())
+        return false;
+    return boost::filesystem::path(path).is_absolute();
+}
+
+double round_um(double v)
+{
+    if (!std::isfinite(v))
+        return 0.;
+    return std::round(v * 1e6) / 1e6;
+}
+
+std::string lower(std::string s)
+{
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    return s;
+}
+
+bool ends_with_ci(const std::string &s, const std::string &suffix)
+{
+    if (s.size() < suffix.size())
+        return false;
+    return lower(s.substr(s.size() - suffix.size())) == lower(suffix);
+}
+
+bool starts_with(const std::string &s, const std::string &prefix) { return s.compare(0, prefix.size(), prefix) == 0; }
+
+std::string join(const std::vector<std::string> &items, const std::string &sep)
+{
+    std::string out;
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (i > 0)
+            out += sep;
+        out += items[i];
+    }
+    return out;
+}
+
+std::string format_number(double v)
+{
+    if (std::isfinite(v) && std::floor(v) == v && std::abs(v) < 1e15) {
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%.0f", v);
+        return buf;
+    }
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.12g", v);
+    return buf;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The crash result
+
+namespace {
+
+// Set up front; the crash handlers only read them, and allocate nothing.
+std::atomic<bool> g_crash_armed{false};
+char              g_crash_stage[64] = "start";
+std::string       g_crash_head, g_crash_tail;
+#ifdef _WIN32
+std::wstring g_crash_out, g_crash_tmp;
+#else
+std::string g_crash_out, g_crash_tmp;
+#endif
+
+void write_crash_result(const char *what)
+{
+    if (!g_crash_armed.exchange(false))
+        return;
+    char message[320];
+    std::snprintf(message, sizeof(message), "the engine crashed (%s) during '%s', in Orca's code", what, g_crash_stage);
+#ifdef _WIN32
+    HANDLE h = CreateFileW(g_crash_tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+    DWORD      written = 0;
+    const bool ok      = WriteFile(h, g_crash_head.data(), DWORD(g_crash_head.size()), &written, nullptr) &&
+                    WriteFile(h, message, DWORD(std::strlen(message)), &written, nullptr) &&
+                    WriteFile(h, g_crash_tail.data(), DWORD(g_crash_tail.size()), &written, nullptr);
+    CloseHandle(h);
+    if (!ok || !MoveFileExW(g_crash_tmp.c_str(), g_crash_out.c_str(), MOVEFILE_REPLACE_EXISTING))
+        DeleteFileW(g_crash_tmp.c_str());
+#else
+    const int fd = ::open(g_crash_tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0)
+        return;
+    const size_t m  = std::strlen(message);
+    const bool   ok = ::write(fd, g_crash_head.data(), g_crash_head.size()) == ssize_t(g_crash_head.size()) &&
+                    ::write(fd, message, m) == ssize_t(m) && ::write(fd, g_crash_tail.data(), g_crash_tail.size()) == ssize_t(g_crash_tail.size());
+    ::close(fd);
+    if (!ok || ::rename(g_crash_tmp.c_str(), g_crash_out.c_str()) != 0)
+        ::unlink(g_crash_tmp.c_str());
+#endif
+}
+
+[[noreturn]] void crash_exit()
+{
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), UINT(-1));
+#endif
+    std::_Exit(-1);
+}
+
+#ifdef _WIN32
+LONG WINAPI on_unhandled_exception(EXCEPTION_POINTERS *info)
+{
+    const EXCEPTION_RECORD *record = info != nullptr ? info->ExceptionRecord : nullptr;
+    char                    what[128];
+    int                     n = std::snprintf(what, sizeof(what), "exception 0x%08lX", record != nullptr ? (unsigned long) record->ExceptionCode : 0ul);
+    // Where: the module's file name (not its folder) and the offset in it, for a crash report.
+    HMODULE module = nullptr;
+    if (record != nullptr && n > 0 &&
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR) record->ExceptionAddress, &module)) {
+        wchar_t path[MAX_PATH];
+        const DWORD len = GetModuleFileNameW(module, path, MAX_PATH);
+        DWORD       start = 0;
+        for (DWORD i = 0; i < len; ++i)
+            if (path[i] == L'\\' || path[i] == L'/')
+                start = i + 1;
+        char name[64];
+        size_t k = 0;
+        for (DWORD i = start; i < len && k + 1 < sizeof(name); ++i)
+            if ((path[i] >= L'a' && path[i] <= L'z') || (path[i] >= L'A' && path[i] <= L'Z') || (path[i] >= L'0' && path[i] <= L'9') || path[i] == L'.' || path[i] == L'-' ||
+                path[i] == L'_')
+                name[k++] = char(path[i]);
+        name[k] = 0;
+        std::snprintf(what + n, sizeof(what) - size_t(n), " at %s+0x%llx", name,
+                      (unsigned long long) ((const char *) record->ExceptionAddress - (const char *) module));
+    }
+    write_crash_result(what);
+    crash_exit();
+}
+#endif
+
+void on_signal(int sig)
+{
+    const char *what = sig == SIGABRT ? "abort" : sig == SIGSEGV ? "access violation" : sig == SIGFPE ? "arithmetic error" : sig == SIGILL ? "illegal instruction" : "signal";
+    write_crash_result(what);
+    crash_exit();
+}
+
+} // namespace
+
+void install_crash_handler()
+{
+#ifdef _WIN32
+    // No error or crash dialog from Windows or the C runtime: the engine runs hidden.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+#ifdef _MSC_VER
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
+    SetUnhandledExceptionFilter(on_unhandled_exception);
+    std::signal(SIGABRT, on_signal);
+#else
+    for (int sig : {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT})
+        std::signal(sig, on_signal);
+#endif
+}
+
+void arm_crash_result(const std::string &out_path, const std::string &head, const std::string &tail)
+{
+    g_crash_armed = false;
+    g_crash_head  = head;
+    g_crash_tail  = tail;
+#ifdef _WIN32
+    g_crash_out = boost::nowide::widen(out_path);
+    g_crash_tmp = boost::nowide::widen(out_path + ".crash.tmp");
+#else
+    g_crash_out = out_path;
+    g_crash_tmp = out_path + ".crash.tmp";
+#endif
+    g_crash_armed = true;
+}
+
+void disarm_crash_result() { g_crash_armed = false; }
+
+void note_crash_stage(const std::string &stage)
+{
+    // The stage goes into a JSON string unescaped, so only plain characters are kept.
+    size_t n = 0;
+    for (char c : stage)
+        if (n + 1 < sizeof(g_crash_stage) && (std::isalnum((unsigned char) c) || c == '-' || c == '_' || c == ' '))
+            g_crash_stage[n++] = c;
+    g_crash_stage[n] = 0;
+    // A crash on purpose, for the smoke case that proves the crash result: SKETCH_ORCA_TEST_CRASH
+    // names a stage ("slice" for an access violation there, "slice:abort" for an abort).
+    static const char *const test_crash = std::getenv("SKETCH_ORCA_TEST_CRASH");
+    if (test_crash != nullptr && *test_crash != 0) {
+        if (stage == test_crash) {
+            volatile int *nowhere = nullptr;
+            *nowhere              = 1;
+        }
+        if (stage + ":abort" == test_crash)
+            std::abort();
+    }
+}
+
+} // namespace sketch_orca

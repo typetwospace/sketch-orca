@@ -1,0 +1,29 @@
+{
+  "url": "https://api.github.com/repos/OrcaSlicer/OrcaSlicer/releases/349166280",
+  "html_url": "https://github.com/OrcaSlicer/OrcaSlicer/releases/tag/v2.4.2",
+  "id": 349166280,
+  "tag_name": "v2.4.2",
+  "target_commitish": "release/v2.4",
+  "name": "OrcaSlicer v2.4.2 Official Release",
+  "draft": false,
+  "immutable": false,
+  "prerelease": false,
+  "created_at": "2026-07-06T14:18:06Z",
+  "updated_at": "2026-07-07T03:33:49Z",
+  "published_at": "2026-07-07T03:33:49Z",
+  "assets": [
+    {
+      "name": "Debug_PDB_V2.4.2_for_developers_only.7z",
+      "content_type": "application/x-7z-compressed",
+      "size": 142388555,
+      "browser_download_url": "https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.4.2/Debug_PDB_V2.4.2_for_developers_only.7z"
+    },
+    {
+      "name": "OrcaSlicer-Linux-flatpak_V2.4.2_aarch64.flatpak",
+      "content_type": "application/vnd.flatpak",
+      "size": 126482000,
+      "browser_download_url": "https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v2.4.2/OrcaSlicer-Linux-flatpak_V2.4.2_aarch64.flatpak"
+    }
+  ],
+  "body": "Trimmed from GET /repos/OrcaSlicer/OrcaSlicer/releases/latest (2026-10-30)."
+}

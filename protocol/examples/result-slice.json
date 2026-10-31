@@ -1,0 +1,19 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": true,
+  "code": "ok",
+  "message": "",
+  "exitCode": 0,
+  "command": "slice",
+  "engine": { "engine": "sketch-orca", "engineVersion": "0.1.0", "orcaVersion": "2.4.2", "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1", "orcaTag": "v2.4.2" },
+  "warnings": [{ "code": "custom-gcode-moved", "message": "the pause at print Z 12.4 runs before the layer at print Z 12.45", "objectIndex": 0 }],
+  "layers": [{ "objectIndex": 0, "ranges": [[0, 0.25], [0.25, 0.45], [0.45, 0.65]] }],
+  "printZ": [0.25, 0.45, 0.65],
+  "outputs": { "gcode": "/jobs/1/out/plate_1.gcode", "bambu3mf": "/jobs/1/out/plate_1.gcode.3mf" },
+  "stats": {
+    "timeSeconds": 590.5,
+    "layerSeconds": [210.1, 190.2, 190.2],
+    "filament": [{ "extruder": 1, "mm": 1315.6, "cm3": 3.16, "g": 3.93, "cost": 0.08 }],
+    "features": { "Outer wall": { "seconds": 220.4, "mm": 512.3 }, "Sparse infill": { "seconds": 140.2, "mm": 388.9 } }
+  }
+}

@@ -1,0 +1,29 @@
+sketch-orca patch 0003: build our command-line front end instead of the stock executable.
+Modified for Sketch, 2026-10-30.
+
+With SLIC3R_GUI=OFF, src/CMakeLists.txt adds the directory named by SKETCH_ORCA_CLI_DIR
+(the sketch-orca front end, kept outside the Orca tree) as the binary directory
+`sketch-orca`, and stops before the stock OrcaSlicer executable: src/OrcaSlicer.cpp
+includes GUI headers and links the GUI library, so it cannot build without the GUI.
+libslic3r and the ORCA_TOOLS block above are unchanged. With SLIC3R_GUI=ON nothing changes.
+
+---
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -113,6 +113,15 @@ if(ORCA_TOOLS)
+     target_compile_definitions(OrcaSlicer_profile_validator PRIVATE -DBOOST_ALL_NO_LIB -DBOOST_USE_WINAPI_VERSION=0x602 -DBOOST_SYSTEM_USE_UTF8)
+ endif()
+ 
++# Sketch (sketch-orca), 2026-10-30: without the GUI, build our command-line front end from SKETCH_ORCA_CLI_DIR
++# instead of the stock executable (OrcaSlicer.cpp includes GUI headers and needs the GUI library).
++if (NOT SLIC3R_GUI)
++    if (SKETCH_ORCA_CLI_DIR)
++        add_subdirectory(${SKETCH_ORCA_CLI_DIR} ${CMAKE_BINARY_DIR}/sketch-orca)
++    endif ()
++    return()
++endif ()
++
+ # Create a slic3r executable
+ # Process manifests for various platforms.
+ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dev-utils/platform/msw/OrcaSlicer.rc.in ${CMAKE_CURRENT_BINARY_DIR}/OrcaSlicer.rc @ONLY)

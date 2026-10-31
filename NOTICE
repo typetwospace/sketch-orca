@@ -1,0 +1,77 @@
+sketch-orca
+===========
+
+sketch-orca is a command-line slicer: OrcaSlicer's slicing library (libslic3r) with a front end
+that reads a job file and writes G-code, a project file and a result file, built without
+OrcaSlicer's graphical interface. It is free software under the GNU Affero General Public License,
+version 3 (LICENSE). Other programs, such as Sketch, run it as a separate program and talk to it
+only through its command line and files (protocol/README.md).
+
+Copyright (C) 2026 The sketch-orca authors (AUTHORS), for the changes and additions described
+below. The work it is based on keeps its own copyright, as stated here and in its sources.
+
+
+What it is based on
+-------------------
+
+sketch-orca is a modified version of OrcaSlicer, by the OrcaSlicer contributors:
+
+    https://github.com/OrcaSlicer/OrcaSlicer
+    tag v2.4.2, commit 8500fcdccaa10b5099ac20d252af3a7c560046f1 (orca.lock.json)
+    licensed under the GNU Affero General Public License, version 3
+
+OrcaSlicer is based on Bambu Studio and carries work from SuperSlicer, each licensed under the
+GNU Affero General Public License, version 3:
+
+  - Bambu Studio, by Bambu Lab (https://github.com/bambulab/BambuStudio), is based on PrusaSlicer.
+  - PrusaSlicer, owned by Prusa Research (https://github.com/prusa3d/PrusaSlicer), is originally
+    based on Slic3r.
+  - Slic3r was created by Alessandro Ranellucci with the help of many other contributors and the
+    RepRap community (https://github.com/Slic3r/Slic3r).
+  - SuperSlicer, by supermerill and contributors (https://github.com/supermerill/SuperSlicer),
+    extends PrusaSlicer; OrcaSlicer carries some of its features.
+
+Code of others in the OrcaSlicer tree, as OrcaSlicer credits it:
+
+  - ArcWelderLib, by Brad Hochgesang, under the GNU Affero General Public License, version 3 or
+    (at your option) any later version: the arc fitting of src/libslic3r/Geometry/ArcWelder.cpp.
+  - The pressure advance calibration pattern, adapted by OrcaSlicer from Andrew Ellis' generator,
+    which is itself adapted from a generator by Sineos for Marlin; both under the GNU General
+    Public License, version 3.
+  - The libraries OrcaSlicer pins as source packages (deps/) or keeps in its tree (deps_src/),
+    each under its own licence. A staged engine carries their licence texts in LICENSES/deps and
+    LICENSES/deps_src.
+
+Code of others that this repository builds into the engine itself, or supplies the licence text
+or the source of:
+
+  - NanoSVG, by Mikko Mononen, under the zlib licence: cli/gui_symbols.cpp compiles its
+    implementation from OrcaSlicer's copy (deps_src/nanosvg), whose notice is staged as
+    LICENSES/deps_src/nanosvg/nanosvg.h.notice.txt.
+  - libnoise, by Jason Bevins, under the GNU Lesser General Public License, version 2.1 or later:
+    the package OrcaSlicer pins lacks the licence text, so licenses/LGPL-2.1.txt supplies it.
+  - GMP 5.0.1 (the GNU Multiple Precision Arithmetic Library), by the Free Software Foundation,
+    under the GNU Lesser General Public License, version 3 or later: OrcaSlicer ships it prebuilt
+    for Windows, and the source bundle carries its source (BUILDING.md, "Prebuilt libraries").
+
+
+What was changed, and when
+--------------------------
+
+All changes are dated; the newest date is the one the staged engine's LICENSES/README.txt gives.
+
+  - patches/0001 to 0004 change OrcaSlicer's build files and one libslic3r source so that the
+    slicing library builds without the GUI. Each patch starts with a dated "Modified for Sketch"
+    line, and the lines it adds to OrcaSlicer's files carry a dated comment. Modified 2026-10-30.
+  - cli/ is the command-line front end, added 2026-10-30. Some of its files carry OrcaSlicer code,
+    adapted; each says which code from which OrcaSlicer file, under "Carries OrcaSlicer code":
+      cli/run.cpp           (src/OrcaSlicer.cpp, src/slic3r/GUI/PartPlate.cpp, src/slic3r/GUI/Plater.cpp)
+      cli/presets.cpp       (src/OrcaSlicer.cpp, src/slic3r/GUI/Plater.cpp, src/slic3r/GUI/BitmapCache.cpp)
+      cli/gui_symbols.cpp   (src/slic3r/Utils/ColorSpaceConvert.cpp, deps_src/nanosvg)
+      cli/CMakeLists.txt    (src/libslic3r/PrintConfig.cpp, read at configure time; the root CMakeLists.txt)
+  - scripts/ is the pipeline that fetches, builds, tests, stages and packages the engine, added
+    2026-10-30. scripts/lib/smoke.ts carries a TypeScript port of layer-height code from
+    src/libslic3r/Slicing.cpp, to predict the layers the engine must make.
+  - protocol/ specifies the engine's command line and files, added 2026-10-31. It carries no
+    OrcaSlicer code or text and is licensed under the MIT licence (protocol/LICENSE), so that any
+    program may implement it.

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sketch-orca:schema:config-def:1",
+  "title": "sketch-orca settings catalogue (sketch-orca-config-def/1)",
+  "description": "The file `sketch-orca config-def --out <file>` writes: every setting Orca defines, and the keys Orca drops or renames when it reads them. Labels, tooltips and side texts are Orca's own text, untranslated.",
+  "type": "object",
+  "required": ["format", "engine", "engineVersion", "orcaVersion", "orcaCommit", "count", "options", "obsolete", "renamed", "stillDefined"],
+  "properties": {
+    "format": { "const": "sketch-orca-config-def/1" },
+    "engine": { "const": "sketch-orca" },
+    "engineVersion": { "type": "string" },
+    "orcaVersion": { "type": "string" },
+    "orcaCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "count": { "type": "integer", "minimum": 0, "description": "The number of options." },
+    "options": { "type": "array", "items": { "$ref": "#/$defs/option" } },
+    "obsolete": { "description": "Keys Orca drops or renames whatever their value, sorted; none of them is an option.", "type": "array", "items": { "type": "string" } },
+    "renamed": { "description": "For each renamed obsolete key, the key Orca reads it as.", "type": "object", "additionalProperties": { "type": "string" } },
+    "stillDefined": { "description": "The obsolete keys Orca still defines, sorted; they are left out of options.", "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "option": {
+      "type": "object",
+      "required": ["key", "type", "nullable", "sections", "category", "label", "fullLabel", "tooltip", "sidetext", "mode", "readonly", "multiline", "isCode", "default"],
+      "properties": {
+        "key": { "type": "string" },
+        "type": {
+          "description": "Orca's option type without its \"co\" prefix.",
+          "enum": ["float", "floats", "int", "ints", "string", "strings", "percent", "percents", "floatOrPercent", "floatsOrPercents", "point", "points", "point3", "bool", "bools", "enum", "enums", "pointsGroups", "intsGroups", "none"]
+        },
+        "nullable": { "type": "boolean" },
+        "sections": { "description": "The preset files the setting belongs to.", "type": "array", "items": { "enum": ["process", "filament", "machine"] } },
+        "category": { "type": "string" },
+        "label": { "type": "string" },
+        "fullLabel": { "type": "string" },
+        "tooltip": { "type": "string" },
+        "sidetext": { "type": "string" },
+        "mode": { "enum": ["simple", "advanced", "develop", "expert"] },
+        "readonly": { "type": "boolean" },
+        "multiline": { "type": "boolean" },
+        "isCode": { "type": "boolean" },
+        "guiType": { "enum": ["i_enum_open", "f_enum_open", "color", "select_open", "slider", "legend", "one_string"] },
+        "default": { "type": ["string", "null"], "description": "The default as Orca writes the value, or null when it has none." },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "enumValues": { "type": "array", "items": { "type": "string" } },
+        "enumLabels": { "type": "array", "items": { "type": "string" } },
+        "ratioOver": { "type": "string" },
+        "aliases": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

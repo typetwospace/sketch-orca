@@ -1,0 +1,8 @@
+{"stage":"job","percent":1,"message":"reading the job"}
+{"stage":"presets","percent":3,"message":"reading the presets"}
+{"stage":"model","percent":8,"message":"reading the model"}
+{"stage":"slice","percent":14,"message":"slicing"}
+{"stage":"gcode","percent":80,"message":"writing the G-code"}
+{"stage":"3mf","percent":96,"message":"writing the project file"}
+{"stage":"stats","percent":98,"message":"counting"}
+{"stage":"done","percent":100,"message":"done"}

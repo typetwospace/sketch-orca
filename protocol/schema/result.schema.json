@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sketch-orca:schema:result:1",
+  "title": "sketch-orca result (sketch-orca-result/1)",
+  "description": "The file `sketch-orca run --out <file>` writes, also when the job fails. A reader takes a missing list as empty and a missing or null output path as \"\". protocol/README.md lists the rules a schema cannot state (layers and print Z ascending).",
+  "type": "object",
+  "required": ["format", "ok", "code"],
+  "properties": {
+    "format": { "const": "sketch-orca-result/1" },
+    "ok": { "type": "boolean" },
+    "code": { "$ref": "#/$defs/code", "description": "\"ok\", or the failure's name (protocol/README.md, Errors)." },
+    "message": { "type": "string" },
+    "exitCode": { "type": "integer", "description": "What the engine exits with: 0 when ok, else the code of the failure." },
+    "objectIndex": { "type": "integer", "minimum": 0, "description": "The object a failure is about." },
+    "command": { "enum": ["slice", "layers", "info"] },
+    "engine": { "type": ["object", "null"], "description": "The engine that wrote the result, as `sketch-orca version` prints it (version.schema.json)." },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "objectIndex": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "layers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["objectIndex"],
+        "properties": {
+          "objectIndex": { "type": "number", "minimum": 0 },
+          "ranges": {
+            "description": "[bottom, top] print Z of each layer of the object, ascending.",
+            "type": "array",
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [{ "type": "number" }, { "type": "number" }],
+              "items": false
+            }
+          }
+        }
+      }
+    },
+    "printZ": { "description": "The print Z of every layer of the plate, ascending.", "type": "array", "items": { "type": "number" } },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "gcode": { "type": ["string", "null"] },
+        "bambu3mf": { "type": ["string", "null"] }
+      }
+    },
+    "stats": {
+      "type": ["object", "null"],
+      "required": ["timeSeconds"],
+      "properties": {
+        "timeSeconds": { "type": "number", "minimum": 0 },
+        "layerSeconds": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+        "filament": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["extruder", "mm", "cm3", "g", "cost"],
+            "properties": {
+              "extruder": { "type": "number", "minimum": 1 },
+              "mm": { "type": "number", "minimum": 0 },
+              "cm3": { "type": "number", "minimum": 0 },
+              "g": { "type": "number", "minimum": 0 },
+              "cost": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        "features": {
+          "description": "Time and extruded length by feature, keyed by the feature's name as the G-code names it.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["seconds", "mm"],
+            "properties": {
+              "seconds": { "type": "number", "minimum": 0 },
+              "mm": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "info": {
+      "description": "What an info job returns: the model's objects, the bed and the preset names. The engine may add fields.",
+      "type": ["object", "null"],
+      "required": ["objects", "bed", "printer", "process", "filaments"],
+      "properties": {
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["objectIndex", "name", "instances", "triangles", "min", "max", "size"],
+            "properties": {
+              "objectIndex": { "type": "integer", "minimum": 0 },
+              "name": { "type": "string" },
+              "instances": { "type": "integer", "minimum": 0 },
+              "triangles": { "type": "integer", "minimum": 0 },
+              "min": { "$ref": "#/$defs/vec3" },
+              "max": { "$ref": "#/$defs/vec3" },
+              "size": { "$ref": "#/$defs/vec3" }
+            }
+          }
+        },
+        "bed": { "type": "object" },
+        "printer": { "type": "string" },
+        "process": { "type": "string" },
+        "filaments": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "if": { "properties": { "ok": { "const": true } } },
+  "then": { "properties": { "code": { "const": "ok" }, "exitCode": { "const": 0 } } },
+  "else": { "properties": { "code": { "not": { "const": "ok" } }, "exitCode": { "not": { "const": 0 } } } },
+  "$defs": {
+    "code": { "type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$" },
+    "vec3": {
+      "description": "[x, y, z] in millimetres.",
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [{ "type": "number" }, { "type": "number" }, { "type": "number" }],
+      "items": false
+    }
+  }
+}

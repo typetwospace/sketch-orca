@@ -1,0 +1,14 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "arrange-failed",
+  "message": "object 0 does not fit on the plate",
+  "exitCode": -21,
+  "objectIndex": 0,
+  "command": "slice",
+  "engine": { "engine": "sketch-orca", "engineVersion": "0.1.0", "orcaVersion": "2.4.2", "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1", "orcaTag": "v2.4.2" },
+  "warnings": [],
+  "layers": [],
+  "printZ": [],
+  "outputs": { "gcode": "", "bambu3mf": "" }
+}

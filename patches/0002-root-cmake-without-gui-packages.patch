@@ -1,0 +1,66 @@
+sketch-orca patch 0002: find the GUI-only packages only for the GUI.
+Modified for Sketch, 2026-10-30.
+
+The root CMakeLists.txt always looks for libcurl, OpenGL, GLFW and (on Linux) D-Bus,
+even with SLIC3R_GUI=OFF. The dependencies built with DEP_WITH_GUI=OFF (patch 0001)
+do not include libcurl or GLFW, and libslic3r uses none of the four: its sources include
+no curl, GL, GLFW or D-Bus headers, and its CMake links none of them. With this patch
+they are looked for only when SLIC3R_GUI is ON (libcurl also for ORCA_TOOLS). The empty
+`libcurl` interface target stays, so nothing that names it breaks; it carries ZLIB as
+before. With SLIC3R_GUI=ON nothing changes.
+
+---
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -385,8 +385,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+     set(THREADS_PREFER_PTHREAD_FLAG ON)
+     find_package(Threads REQUIRED)
+ 
+-    find_package(DBus REQUIRED)
+-    include_directories(SYSTEM ${DBUS_INCLUDE_DIRS})
++    # Sketch (sketch-orca), 2026-10-30: D-Bus only for the GUI.
++    if (SLIC3R_GUI)
++        find_package(DBus REQUIRED)
++        include_directories(SYSTEM ${DBUS_INCLUDE_DIRS})
++    endif ()
+ endif()
+ 
+ if (CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUXX)
+@@ -630,12 +633,17 @@ find_package(TBB REQUIRED)
+ # add_definitions(-DTBB_USE_CAPTURED_EXCEPTION=0)
+ 
+ find_package(OpenSSL REQUIRED)
+-find_package(CURL REQUIRED)
++# Sketch (sketch-orca), 2026-10-30: libcurl only for the GUI and the Orca tools; libslic3r does not use it.
++if (SLIC3R_GUI OR ORCA_TOOLS)
++    find_package(CURL REQUIRED)
++endif ()
+ find_package(Freetype REQUIRED)
+ 
+ 
+ add_library(libcurl INTERFACE)
+-target_link_libraries(libcurl INTERFACE CURL::libcurl)
++if (SLIC3R_GUI OR ORCA_TOOLS)
++    target_link_libraries(libcurl INTERFACE CURL::libcurl)
++endif ()
+ 
+ find_package(ZLIB REQUIRED)
+ target_link_libraries(libcurl INTERFACE ZLIB::ZLIB)
+@@ -688,6 +696,8 @@ endif ()
+ 
+ find_package(PNG REQUIRED)
+ 
++# Sketch (sketch-orca), 2026-10-30: OpenGL and GLFW only for the GUI.
++if (SLIC3R_GUI)
+ set(OpenGL_GL_PREFERENCE "LEGACY")
+ find_package(OpenGL REQUIRED)
+ 
+@@ -696,6 +706,7 @@ if(APPLE AND CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
+ endif()
+ 
+ find_package(glfw3 REQUIRED)
++endif ()
+ 
+ # Find the Cereal serialization library
+ find_package(cereal REQUIRED)

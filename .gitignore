@@ -1,0 +1,14 @@
+# Packages from bun install
+node_modules/
+
+# Local work folders. The pipeline's work folder is outside the repository by default
+# (%LOCALAPPDATA%\SketchDev\orca-engine, or SKETCH_ORCA_HOME); these are for one kept inside it.
+/work/
+/dist/
+/logs/
+*.log
+
+# Editor and system litter
+.DS_Store
+Thumbs.db
+*~

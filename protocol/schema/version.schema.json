@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sketch-orca:schema:version:1",
+  "title": "sketch-orca version",
+  "description": "The line of JSON `sketch-orca version` prints on stdout, and a result's engine field.",
+  "type": "object",
+  "required": ["engine", "engineVersion", "orcaVersion", "orcaCommit", "orcaTag"],
+  "properties": {
+    "engine": { "const": "sketch-orca" },
+    "engineVersion": { "type": "string" },
+    "orcaVersion": { "type": "string" },
+    "orcaCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "orcaTag": { "type": "string" }
+  }
+}

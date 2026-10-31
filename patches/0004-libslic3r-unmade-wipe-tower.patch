@@ -1,0 +1,68 @@
+sketch-orca patch 0004: no crash on a wipe tower that was planned but not made.
+Modified for Sketch, 2026-10-30.
+
+Print::has_wipe_tower() can be true while _make_wipe_tower() makes no tower, because no
+filament change happens: support on another filament where the model needs no support, or a
+filament change on the first layer, so that one filament prints everything. _make_wipe_tower
+then returns before it sets the fake wipe tower's sizes, which were left uninitialised, and the
+path conflict check (ConflictChecker, through getTrueExtrusionLayersFromWipeTower) read them:
+getFakeExtrusionPathsFromWipeTower2 looped over garbage heights and indexed the empty
+z_and_depth_pairs (its size() - 1 wraps around), an access violation on the Prusa-style tower.
+With this patch the sizes start at zero and both fake-path functions return no paths for a tower
+that was not made, so the conflict check sees no tower, as the G-code has none.
+
+---
+diff --git a/src/libslic3r/Print.hpp b/src/libslic3r/Print.hpp
+--- a/src/libslic3r/Print.hpp
++++ b/src/libslic3r/Print.hpp
+@@ -593,16 +593,20 @@ private:
+ struct FakeWipeTower
+ {
+     // generate fake extrusion
+-    Vec2f pos;
+-    float width;
+-    float height;
+-    float layer_height;// Due to variable layer height, this parameter may be not right.
+-    float depth;
++    // Sketch (sketch-orca), 2026-10-30: every size starts at zero. The print can plan a wipe tower
++    // (has_wipe_tower) that _make_wipe_tower then does not make, because no filament change
++    // happens (support on another filament where none is needed, or a filament change on the
++    // first layer). These were left uninitialised then, and the path conflict check read them.
++    Vec2f pos{0.f, 0.f};
++    float width = 0.f;
++    float height = 0.f;
++    float layer_height = 0.f;// Due to variable layer height, this parameter may be not right.
++    float depth = 0.f;
+     std::vector<std::pair<float, float>> z_and_depth_pairs;
+-    float brim_width;
+-    float rotation_angle;
+-    float cone_angle;
+-    Vec2d plate_origin;
++    float brim_width = 0.f;
++    float rotation_angle = 0.f;
++    float cone_angle = 0.f;
++    Vec2d plate_origin{0., 0.};
+     Vec2f rib_offset{0.f,0.f};
+     std::map<float , Polylines> outer_wall; //wipe tower's true outer wall and brim
+ 
+@@ -635,6 +639,9 @@ struct FakeWipeTower
+ 
+     std::vector<ExtrusionPaths> getFakeExtrusionPathsFromWipeTower() const
+     {
++        // Sketch (sketch-orca), 2026-10-30: no tower was made, so it has no paths.
++        if (height <= 0.f || layer_height <= 0.f)
++            return {};
+         int   d         = scale_(depth);
+         int   w         = scale_(width);
+         int   bd        = scale_(brim_width);
+@@ -662,6 +669,10 @@ struct FakeWipeTower
+ 
+     std::vector<ExtrusionPaths> getFakeExtrusionPathsFromWipeTower2() const
+     {
++        // Sketch (sketch-orca), 2026-10-30: no tower was made, so it has no paths (the loop below
++        // would index the empty z_and_depth_pairs).
++        if (height <= 0.f || layer_height <= 0.f || z_and_depth_pairs.empty())
++            return {};
+         float h = height;
+         float lh = layer_height;
+         int   d = scale_(depth);
