@@ -1,9 +1,10 @@
+// privacy-fixtures: /home/builder /Users/李 D:/build-cache/orca
 import { describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isApiSet, isDynamicCrt, isMsvcRuntime, readPeDebugPaths, readPeImports, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from '../scripts/lib/pe.ts'
-import { privacyProblems } from '../scripts/lib/stage.ts'
+import { ALLOWED_BUILD_PATHS, isBinaryProgram, privacyProblems, recordedBuildPaths } from '../scripts/lib/stage.ts'
 
 /**
  * A minimal PE image: one section (.rdata, RVA 0x1000, file offset 0x400) holding the import
@@ -163,9 +164,34 @@ describe('readPeDebugPaths', () => {
       ])
       // And the needles, in the same files.
       expect(privacyProblems(dir, ['bin/a.exe', 'bin/c.dll'], ['d:/build-cache/orca'])).toEqual(['bin/a.exe (d:/build-cache/orca)', 'bin/a.exe (program database D:/build-cache/orca/engine.pdb)'])
+      // A prior builder's folder outside any CodeView record (__FILE__, an assertion text): in a program or library only.
+      put('bin/f.dll', Buffer.concat([makePe({ is64: true, imports: [] }), Buffer.from('assert failed: E:\\agent\\_work\\7\\s\\deps\\x.cpp\0', 'latin1'), Buffer.alloc(3), Buffer.from('F:/ci/build/y.h\0', 'utf16le')]))
+      put('bin/notes.txt', Buffer.from('see E:\\agent\\_work\\7\\s\\deps\\x.cpp'))
+      expect(privacyProblems(dir, ['bin/f.dll', 'bin/notes.txt'], [])).toEqual(['bin/f.dll (build path E:\\agent\\_work\\7\\s\\deps\\x.cpp)', 'bin/f.dll (build path F:/ci/build/y.h)'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  test('recordedBuildPaths: folders of a machine, as narrow or UTF-16LE text at either alignment; not URLs, short or broken runs, or allowed folders', () => {
+    const at = (s: string, enc: BufferEncoding = 'latin1', pad = 0) => recordedBuildPaths(Buffer.concat([Buffer.alloc(pad, 0xff), Buffer.from(s, enc)]))
+    expect(at('x\0D:\\agent\\_work\\1\\s\\a.cpp\0y')).toEqual(['D:\\agent\\_work\\1\\s\\a.cpp'])
+    expect(at('C:\\Users\\John Smith\\w\\x.h')).toEqual(['C:\\Users\\John Smith\\w\\x.h'])
+    expect(at('\\\\buildsrv\\share\\x')).toEqual(['\\\\buildsrv\\share'])
+    expect(at('/home/ci/build/x.c and /Users/ci/x and /root/x')).toEqual(['/Users/ci', '/home/ci', '/root/'])
+    for (const pad of [0, 1]) expect(at('G:/ci/work/x.cpp', 'utf16le', pad)).toEqual(['G:/ci/work/x.cpp'])
+    // URLs, a lone drive, noise that only starts like a path, the GMP compiler's own tree.
+    expect(at('http://www.w3.org/2000/svg https://example.org/a/b')).toEqual([])
+    expect(at('C:\\x and R:\\Sg|p5rL and J:\\0J(^&J and /W64_4.4_160271-src/build-gcc/x86_64')).toEqual([])
+    expect(at('/usr/lib/x86_64-linux-gnu/libm.so.6 /homework/x')).toEqual([])
+    expect(recordedBuildPaths(Buffer.from('D:\\agent\\_work\\1\\s\\a.cpp'), [{ path: 'd:/agent/_work' }])).toEqual([])
+    // Programs and libraries by their first bytes.
+    expect(isBinaryProgram(makePe({ is64: true, imports: [] }))).toBe(true)
+    expect(isBinaryProgram(Buffer.from('!<arch>\n/ 0', 'latin1'))).toBe(true)
+    expect(isBinaryProgram(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2]))).toBe(true)
+    expect(isBinaryProgram(Buffer.from([0xcf, 0xfa, 0xed, 0xfe]))).toBe(true)
+    expect(isBinaryProgram(Buffer.from('{"json": true}'))).toBe(false)
+    expect(ALLOWED_BUILD_PATHS).toEqual([])
   })
 })
 

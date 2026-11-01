@@ -39,7 +39,7 @@ import { copyFile, hashTree, listFiles, nativePath, parseSha256Sums, sha256Bytes
 import type { OrcaLock } from './lock.ts'
 import { sha256File, sha256Text, writeStamp } from './paths.ts'
 import { capture, Log, runLogged, StepError } from './run.ts'
-import { builderNeedles, builtDependencies, dependencySourceDir, privacyProblems, privacyRefusal, readManifest, verifyStaged, type EngineManifest, type StageCopy } from './stage.ts'
+import { builderNeedles, builtDependencies, dependencySourceDir, privacyProblems, privacyProblemsIn, privacyRefusal, readManifest, USER_FOLDER_NEEDLES, verifyStaged, type EngineManifest, type StageCopy } from './stage.ts'
 import { currentPlatform } from './toolchain.ts'
 
 export const SOURCE_FORMAT = 'sketch-orca-source/1'
@@ -424,12 +424,17 @@ export function withArchivedSources(libs: PrebuiltLibrary[], binaries: ArchivedB
   })
 }
 
-/** The SHA-256 of a file of `commit` (`rel`, with forward slashes), as `git archive` writes a binary. */
-export function commitFileSha256(git: string, dir: string, commit: string, rel: string): string {
+/** A file of `commit` (`rel`, with forward slashes), as `git archive` writes a binary. */
+export function commitFileBytes(git: string, dir: string, commit: string, rel: string): Buffer {
   const r = spawnSync(git, ['-C', dir, 'cat-file', 'blob', `${commit}:${rel}`], { windowsHide: true, maxBuffer: 1 << 30 })
   if (r.error) throw r.error
   if (r.status !== 0) throw new StepError(`git cat-file blob ${commit}:${rel} failed in ${dir}: ${r.stderr.toString().trim()}`)
-  return sha256Bytes(r.stdout)
+  return r.stdout
+}
+
+/** The SHA-256 of a file of `commit` (commitFileBytes). */
+export function commitFileSha256(git: string, dir: string, commit: string, rel: string): string {
+  return sha256Bytes(commitFileBytes(git, dir, commit, rel))
 }
 
 /** A prebuilt library for messages: GMP 5.0.1 (bin/libgmp-10.dll, SHA-256 ...). */
@@ -769,10 +774,28 @@ export function prebuiltLine(p: PrebuiltLibrary, withDeps: boolean): string {
 
 /**
  * The bundle's files that privacyProblems reads: all but the packages of others (Orca's archive,
- * dependencies/ and prebuilt/), which are as their projects publish them.
+ * dependencies/ and prebuilt/), which are as their projects publish them, each pinned (the locked
+ * commit, the SHA-256 of each package), so that nothing of this build can be in them. The binaries
+ * the Orca archive keeps are read apart (archivedPrivacyProblems).
  */
 export function ownBundleFiles(rels: string[]): string[] {
   return rels.filter((rel) => !/^(orca|dependencies|prebuilt)\//.test(rel))
+}
+
+/** The bundle's files whose lines marked PRIVACY_FIXTURE_MARK privacyProblems leaves out: the repository's own tests. */
+export function bundleFixtureFile(rel: string): boolean {
+  return rel.startsWith('engine/test/')
+}
+
+/**
+ * What the binaries the Orca archive keeps (`files`, their bytes at the locked commit) record of a
+ * person or a machine: this build's needles, any Windows user folder, a program database recorded
+ * with its folder, any other folder of a machine (privacyProblemsIn). They ship as OrcaSlicer
+ * publishes them, so a hit is upstream's: leave the binary out (orcaArchiveExcludes) or allow the
+ * folder in ALLOWED_BUILD_PATHS (stage.ts), saying why.
+ */
+export function archivedPrivacyProblems(label: string, files: Map<string, Uint8Array>, needles: string[]): string[] {
+  return [...files].flatMap(([rel, bytes]) => privacyProblemsIn(`${label}: ${rel}`, bytes, [...needles, ...USER_FOLDER_NEEDLES]))
 }
 
 /** Problems with a bundle folder against its SHA256SUMS: changed, missing or unlisted files. */
@@ -836,7 +859,12 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   if (tree.code !== 0) throw new StepError(`git ls-tree failed in ${w.src}: ${tree.stderr.trim()}`)
   const archived = archivedBinaries(tree.stdout.split('\0').filter((rel) => rel !== ''), orcaExcluded)
   // The prebuilt binaries the engine ships, and apart from them the ones the archive keeps, each matched to its pin by path and SHA-256.
-  const archivedFiles = [...archived.prebuilt.values()].flat().map((rel) => ({ path: rel, sha256: commitFileSha256(git, w.src, ctx.lock.commit, rel) }))
+  const archivedBytes = new Map([...archived.prebuilt.values()].flat().map((rel) => [rel, commitFileBytes(git, w.src, ctx.lock.commit, rel)] as const))
+  const archivedFiles = [...archivedBytes].map(([rel, bytes]) => ({ path: rel, sha256: sha256Bytes(bytes) }))
+  // Nothing the bundle writes or copies from this repository names the builder (a current bundle too), and the binaries it archives name no machine.
+  const needles = builderNeedles(ctx, platform, git)
+  const archivedPersonal = archivedPrivacyProblems(orcaArchiveName(ctx.lock), archivedBytes, needles)
+  if (archivedPersonal.length > 0) throw new StepError(`binaries the Orca archive keeps record a person's or a machine's folder: ${archivedPersonal.join('; ')}. They ship as OrcaSlicer publishes them: leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or allow the folder in ALLOWED_BUILD_PATHS (scripts/lib/stage.ts), saying why`)
   const prebuilt = withArchivedSources(withPrebuiltSources(prebuiltLibraries(w.src, archivedFiles.map((f) => f.path.split('/').pop()!)), m), archivedFiles)
   const gaps = sourceGaps({ plan, prebuilt, withDeps, unknownBinaries: archived.unknown })
   const { missing } = gaps
@@ -873,14 +901,12 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   const name = bundleName(m)
   const root = join(w.dist, 'source')
   const dir = join(root, name)
-  // Nothing the bundle writes or copies from this repository names the builder (a current bundle too).
-  const needles = builderNeedles(ctx, platform, git)
   if (existsSync(join(dir, 'bundle.json'))) {
     try {
       const old = JSON.parse(readFileSync(join(dir, 'bundle.json'), 'utf8')) as Partial<BundleInfo>
       if (old.inputs === inputs) {
         const problems = verifySums(dir)
-        const personal = problems.length === 0 ? privacyProblems(dir, ownBundleFiles(listFiles(dir)), needles) : []
+        const personal = problems.length === 0 ? privacyProblems(dir, ownBundleFiles(listFiles(dir)), needles, bundleFixtureFile) : []
         if (problems.length === 0 && personal.length === 0) {
           log.line(`source: ${dir} is current; skipping`)
           return 0
@@ -926,7 +952,7 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
     createdAt: new Date().toISOString(),
   }
   writeText(join(tmp, 'bundle.json'), JSON.stringify(info, null, 2) + '\n')
-  const personal = privacyProblems(tmp, ownBundleFiles(listFiles(tmp)), needles)
+  const personal = privacyProblems(tmp, ownBundleFiles(listFiles(tmp)), needles, bundleFixtureFile)
   if (personal.length > 0) throw new StepError(privacyRefusal('files of the source bundle', personal))
   writeText(join(tmp, 'SHA256SUMS'), sha256Sums(treeEntries(tmp, (rel) => rel !== 'SHA256SUMS')))
   const problems = verifySums(tmp)

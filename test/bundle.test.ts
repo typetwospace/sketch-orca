@@ -1,3 +1,4 @@
+// privacy-fixtures: /Users/Builder /home/builder /home/me /build/orca test@example.invalid me@example.org
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -8,7 +9,9 @@ import {
   BUILT_WITH,
   bundleCopies,
   archivedBinaries,
+  archivedPrivacyProblems,
   binaryArch,
+  bundleFixtureFile,
   bundleName,
   commitFileSha256,
   ensurePrebuiltSource,
@@ -47,7 +50,7 @@ import { firstExisting, gitCandidates } from '../scripts/lib/env.ts'
 import { currentPlatform } from '../scripts/lib/toolchain.ts'
 import { listFiles, nativePath, sha256Bytes, sha256Sums, treeEntries, writeText } from '../scripts/lib/files.ts'
 import { LOCK_FORMAT, type OrcaLock } from '../scripts/lib/lock.ts'
-import { buildManifest, personalPathNeedles, privacyProblems, type EngineManifest } from '../scripts/lib/stage.ts'
+import { buildManifest, findPersonalPaths, personalPathNeedles, PRIVACY_FIXTURE_MARK, privacyProblems, privacyProblemsIn, withoutFixtures, type EngineManifest } from '../scripts/lib/stage.ts'
 
 const LOCK: OrcaLock = {
   format: LOCK_FORMAT,
@@ -657,6 +660,61 @@ describe('prebuilt libraries and their sources', () => {
 
 describe("the repository's files in the bundle", () => {
   const git = firstExisting(gitCandidates(currentPlatform(), process.env))
+
+  test('the privacy scan of the whole repository, as engine/, passes for builders named like the made-up paths its tests declare', () => {
+    const root = join(import.meta.dir, '..')
+    const listed = git && existsSync(join(root, '.git')) ? spawnSync(git, ['-C', root, '-c', 'core.quotePath=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { encoding: 'utf8', windowsHide: true }).stdout.split('\0') : listFiles(root)
+    const rels = [...new Set(listed.filter((rel) => rel !== '' && keepEngineFile(rel) && existsSync(join(root, rel))))].sort()
+    expect(rels).toContain('test/pe.test.ts')
+    // The audit's case (an account named builder), and the names, folders and addresses the tests make up.
+    const accounts = ['builder', 'Builder', 'PreviousBuilder', 'me', 'Me', 'John Smith', '\u674e', '\u00c9mile', 'test', 'user', 'runner', 'admin', 'kevin']
+    const roots = ['D:\\build-cache\\orca', 'D:\\Build-Cache\\orca', 'C:\\build', '/build/orca']
+    const emails = ['test@example.invalid', 'me@example.org']
+    const read = (rel: string) => readFileSync(join(root, rel.slice('engine/'.length)))
+    const engineRels = rels.map((rel) => `engine/${rel}`)
+    for (const user of accounts) {
+      for (const home of [`C:\\Users\\${user}`, `/home/${user}`, `/Users/${user}`]) {
+        const needles = personalPathNeedles(home, user, roots, emails)
+        const problems = engineRels.flatMap((rel) => privacyProblemsIn(rel, bundleFixtureFile(rel) ? withoutFixtures(read(rel)) : read(rel), needles))
+        expect({ user, home, problems }).toEqual({ user, home, problems: [] })
+      }
+    }
+    // Without the declarations, the audit's builder trips the tests' fixtures (/home/builder in test/pe.test.ts).
+    const plain = engineRels.flatMap((rel) => privacyProblemsIn(rel, read(rel), personalPathNeedles('/home/builder', 'builder')))
+    expect(plain).toContain('engine/test/pe.test.ts (/home/builder)')
+    // Only the repository's tests declare fixtures.
+    expect(bundleFixtureFile('engine/test/pe.test.ts')).toBe(true)
+    expect(bundleFixtureFile('engine/scripts/lib/stage.ts')).toBe(false)
+    expect(bundleFixtureFile('BUILDING.md')).toBe(false)
+    for (const rel of rels.filter((r) => !r.startsWith('test/'))) expect({ rel, declares: readFileSync(join(root, rel), 'latin1').startsWith(PRIVACY_FIXTURE_MARK) }).toEqual({ rel, declares: false })
+  })
+
+  test('withoutFixtures: only the strings the first line declares, in any letter case, and that line', () => {
+    const text = '// privacy-fixtures: /home/me C:/Users/Builder\nconst a = "/HOME/ME/x" // and C:/users/builder\nconst b = "/home/meg" + "/home/you"\n'
+    const out = withoutFixtures(Buffer.from(text)).toString()
+    expect(out.length).toBe(text.length)
+    expect(out.split('\n')[0]!.trim()).toBe('')
+    expect(findPersonalPaths(Buffer.from(out), ['/home/me', 'c:/users/builder', '/home/you'])).toEqual(['/home/you'])
+    // /home/meg holds the fixture /home/me: what is left of it, g, names no one.
+    expect(out).toContain('g" + "/home/you"')
+    // A file that declares nothing is read as it is.
+    expect(withoutFixtures(Buffer.from('const a = "/home/me"\n')).toString()).toBe('const a = "/home/me"\n')
+    expect(withoutFixtures(Buffer.from('const x = 1\n// privacy-fixtures: /home/me\n"/home/me"')).toString()).toContain('"/home/me"')
+  })
+
+  test('archivedPrivacyProblems: a binary the Orca archive keeps that records a folder of a machine or a person is named', () => {
+    const lib = Buffer.concat([Buffer.from('!<arch>\n', 'latin1'), Buffer.from('obj D:\\agent\\_work\\1\\s\\gmp\\mul.c and C:\\Users\\Someone\\x', 'latin1')])
+    const clean = Buffer.concat([Buffer.from('MZ', 'latin1'), Buffer.alloc(64), Buffer.from('../../mpfr-3.0.0/acos.c /W64_4.4_160271-src/build-gcc http://www.mpfr.org/', 'latin1')])
+    const files = new Map<string, Uint8Array>([
+      ['deps/GMP/gmp/lib/win-x64/libgmp-10.lib', lib],
+      ['deps/MPFR/mpfr/lib/win-x64/libmpfr-4.dll', clean],
+    ])
+    expect(archivedPrivacyProblems('orca/OrcaSlicer-v2.4.2.tar.gz', files, ['/home/me'])).toEqual([
+      'orca/OrcaSlicer-v2.4.2.tar.gz: deps/GMP/gmp/lib/win-x64/libgmp-10.lib (:\\users\\)',
+      'orca/OrcaSlicer-v2.4.2.tar.gz: deps/GMP/gmp/lib/win-x64/libgmp-10.lib (build path C:\\Users\\Someone\\x)',
+      'orca/OrcaSlicer-v2.4.2.tar.gz: deps/GMP/gmp/lib/win-x64/libgmp-10.lib (build path D:\\agent\\_work\\1\\s\\gmp\\mul.c)',
+    ])
+  })
 
   /** git in the test's own repository, with no user or system configuration. */
   function inRepo(repo: string, ...args: string[]): string {

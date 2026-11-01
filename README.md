@@ -174,7 +174,10 @@ SoftFloat texts a Windows engine needs are there; that `NOTICE` and `AUTHORS` ar
 `sketch-orca version` names the locked commit. It builds the folder next to the old one and
 refuses it (and checks a current one it would keep the same way) when a staged file names the builder's home folder, user name, git e-mail
 or (on Windows) build folders, any Windows user folder, or a program database with its folder (`__FILE__`
-paths, `/DEBUG`; see Toolchain). It runs the staged copy with only the system folders on its PATH (on Linux and macOS,
+paths, `/DEBUG`; see Toolchain), and when a program or library records any other folder of a machine
+(a drive path through a folder, a UNC share, `/home/<name>`, `/Users/<name>`, `/root/`), as narrow or
+UTF-16 text, which could be a prior builder's (`ALLOWED_BUILD_PATHS` in `scripts/lib/stage.ts` takes
+exceptions, each with why; none is needed today). It runs the staged copy with only the system folders on its PATH (on Linux and macOS,
 plus `bin/` as the library path): `version`, which proves `bin/` is complete, then smoke's
 `cube-fixed` and `bambu-3mf` cases with the staged `resources/` (`STAGED_CASES`, in
 `<work>/smoke/staged`), which proves the folder slices with what it ships. Then it swaps it in.
@@ -243,7 +246,11 @@ off; the dependency and Orca builds are each started over (`state/deps-env.json`
 it. Linux and macOS get no such flags (passing CFLAGS changes what GMP's configure picks): build
 release engines there with `SKETCH_ORCA_HOME` outside your home folder. Either way `stage` refuses
 an engine that still names your home folder or user name, and `source` a bundle whose own files
-(all but the packages of Orca and the dependencies) do.
+(all but the packages of Orca and the dependencies) do, or whose binaries kept from Orca's archive
+record a person's or a machine's folder. This repository's tests hold made-up paths and addresses
+on purpose; each declares them on its first line (`// privacy-fixtures:` and the strings), and
+only those strings, only in that file, are left out of the check, so a builder whose name or
+e-mail a test happens to use still gets a bundle.
 
 Linux and macOS have code paths but have not been tried yet: the build PATH holds cc, c++, make,
 m4, autoreconf, automake and libtool (glibtoolize on macOS), `ldd` or `otool -L` find the runtime

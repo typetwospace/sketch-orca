@@ -1,3 +1,4 @@
+// privacy-fixtures: C:/Users/me
 import { describe, expect, test } from 'bun:test'
 import { cmakePath, defaultDepsJobs, defaultJobs, depsBuildArgs, depsConfigureArgs, depsParallelEnv, formatCommand, jobsCap, orcaBuildArgs, orcaConfigureArgs } from '../scripts/lib/cmake.ts'
 

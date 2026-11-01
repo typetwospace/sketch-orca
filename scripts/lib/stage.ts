@@ -425,8 +425,8 @@ export function unlicensedDependencies(work: WorkPaths, copies: StageCopy[]): st
 }
 
 /**
- * What would name the builder in a staged file: the home folder (C:\Users\me, /home/me) with
- * either slash, \Users\<name> or /home/<name> on any drive, the build folders `roots` (the work
+ * What would name the builder in a staged file: the home folder (C:\Users\<name>, /home/<name>)
+ * with either slash, \Users\<name> or /home/<name> on any drive, the build folders `roots` (the work
  * folder and this checkout, which the Windows build trims), and git's user.email, with only the
  * ASCII letters made small (as findPersonalPaths folds them). __FILE__ puts such paths into
  * binaries (env.ts, sourcePathTrimEnv trims them on Windows).
@@ -487,26 +487,110 @@ export function isRecordedFolderPath(p: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(p) || /^[\\/]/.test(p)
 }
 
+/** A program or library, by its first bytes: PE (MZ), ELF, Mach-O, or an archive of objects (a static or import library, !<arch>). */
+export function isBinaryProgram(bytes: Uint8Array): boolean {
+  const magic = bytes.length >= 4 ? ((bytes[0]! << 24) | (bytes[1]! << 16) | (bytes[2]! << 8) | bytes[3]!) >>> 0 : 0
+  const ar = bytes.length >= 8 && Buffer.from(bytes.subarray(0, 8)).toString('latin1') === '!<arch>\n'
+  return (bytes[0] === 0x4d && bytes[1] === 0x5a) || ar || magic === 0x7f454c46 || [0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe].includes(magic)
+}
+
 /**
- * What in the files `rels` of `dir` would name the builder or the build machine: the needles
- * (findPersonalPaths), and in Windows programs and libraries a program database recorded with its
- * folder (the linker's /DEBUG without /PDBALTPATH:%_PDB%).
+ * Folders that binaries may record, each with why (a build identity of the code of others that is
+ * published as it is). None is needed today: the staged engine and the binaries the Orca archive
+ * keeps record none (checked 2026-11-01; the prebuilt GMP and MPFR name only their compiler's own
+ * /W64_4.4_160271-src/ tree, which recordedBuildPaths does not take for a machine's folder).
  */
-export function privacyProblems(dir: string, rels: string[], needles: string[]): string[] {
+export const ALLOWED_BUILD_PATHS: readonly { path: string; why: string }[] = []
+
+// A drive path is one only where no letter or digit comes before its drive letter (not the p:// of http://).
+const RECORDED_PATH = /[A-Za-z]:[\\/]+(?:[A-Za-z0-9_.$~ -]+[\\/]+)+[A-Za-z0-9_.$~-]*|\\\\[A-Za-z0-9_.-]+\\[A-Za-z0-9_.$-]+|\/(?:home|Users)\/[A-Za-z0-9_.-]+|\/root\//g
+
+/**
+ * The folders of some machine that a program or library records, as narrow or UTF-16LE text: a
+ * path on a drive through at least one folder (D:\agent\_work\1\s), a UNC share (\\server\share),
+ * a home folder (/home/<name>, /Users/<name>, /root/). __FILE__, assertion texts and debug records
+ * put the folder a binary was built in there, the builder's or a prior builder's, which the
+ * needles of this build do not know. ALLOWED_BUILD_PATHS are left out.
+ */
+export function recordedBuildPaths(bytes: Uint8Array, allowed: readonly { path: string }[] = ALLOWED_BUILD_PATHS): string[] {
+  const texts = [Buffer.from(bytes).toString('latin1')]
+  for (const start of [0, 1]) {
+    // The code units of plain ASCII, one byte each; any other unit breaks a path.
+    const units = Buffer.alloc(Math.max(0, Math.floor((bytes.length - start) / 2)), 1)
+    for (let j = 0, i = start; j < units.length; j++, i += 2) if (bytes[i + 1] === 0 && bytes[i]! >= 0x20 && bytes[i]! < 0x7f) units[j] = bytes[i]!
+    texts.push(units.toString('latin1'))
+  }
+  const found = new Set<string>()
+  for (const text of texts) {
+    for (const m of text.matchAll(RECORDED_PATH)) {
+      if (/^[A-Za-z]:/.test(m[0]) && (m[0].length < 8 || /[A-Za-z0-9]/.test(text[m.index - 1] ?? ''))) continue
+      found.add(m[0])
+    }
+  }
+  const fold = (p: string) => p.replace(/\\/g, '/').toLowerCase()
+  return [...found].filter((p) => !allowed.some((a) => fold(p).startsWith(fold(a.path)))).sort()
+}
+
+/**
+ * How a test of the repository declares the made-up personal paths and addresses it holds on
+ * purpose, on its first line: `// privacy-fixtures:` and the strings, separated by spaces.
+ */
+export const PRIVACY_FIXTURE_MARK = '// privacy-fixtures:'
+
+/**
+ * `bytes` with the fixtures its first line declares (PRIVACY_FIXTURE_MARK) blanked wherever they
+ * occur, the ASCII letters without case, and that line itself: only those strings, and only in
+ * that file. The length stays, so nothing else moves.
+ */
+export function withoutFixtures(bytes: Uint8Array): Buffer {
+  const out = Buffer.from(bytes)
+  const nl = out.indexOf(0x0a)
+  const first = out.subarray(0, nl < 0 ? out.length : nl).toString('utf8')
+  if (!first.startsWith(PRIVACY_FIXTURE_MARK)) return out
+  const fixtures = first.slice(PRIVACY_FIXTURE_MARK.length).trim().split(/\s+/).filter((f) => f !== '')
+  out.fill(0x20, 0, nl < 0 ? out.length : nl)
+  const folded = Buffer.from(asciiLower(out.toString('latin1')), 'latin1')
+  for (const f of fixtures) {
+    const needle = Buffer.from(asciiLower(f), 'utf8')
+    for (let at = folded.indexOf(needle); at >= 0; at = folded.indexOf(needle, at + needle.length)) out.fill(0x20, at, at + needle.length)
+  }
+  return out
+}
+
+/**
+ * What in `bytes` (the file `label`) would name the builder or a build machine: the needles
+ * (findPersonalPaths), and in a program or library a program database recorded with its folder
+ * (the linker's /DEBUG without /PDBALTPATH:%_PDB%) and any other folder of a machine it records
+ * (recordedBuildPaths).
+ */
+export function privacyProblemsIn(label: string, bytes: Uint8Array, needles: string[]): string[] {
+  const out: string[] = []
+  const found = findPersonalPaths(bytes, needles)
+  if (found.length > 0) out.push(`${label} (${found.join(', ')})`)
+  if (isBinaryProgram(bytes)) {
+    let pdbs: string[] = []
+    try {
+      pdbs = readPeDebugPaths(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
+    } catch {
+      // Not a PE file: no CodeView records to read.
+    }
+    const recorded = pdbs.filter(isRecordedFolderPath)
+    for (const p of recorded) out.push(`${label} (program database ${p})`)
+    for (const p of recordedBuildPaths(bytes)) if (!recorded.some((r) => r.startsWith(p))) out.push(`${label} (build path ${p})`)
+  }
+  return out
+}
+
+/**
+ * privacyProblemsIn for the files `rels` of `dir`. In the files `fixtures` names (the repository's
+ * own tests, in a source bundle) the fixtures each declares are left out (withoutFixtures): made-up
+ * paths and addresses held on purpose, which a builder of the same name would otherwise trip.
+ */
+export function privacyProblems(dir: string, rels: string[], needles: string[], fixtures: (rel: string) => boolean = () => false): string[] {
   const out: string[] = []
   for (const rel of rels) {
     const bytes = readFileSync(nativePath(dir, rel))
-    const found = findPersonalPaths(bytes, needles)
-    if (found.length > 0) out.push(`${rel} (${found.join(', ')})`)
-    if (/\.(exe|dll)$/i.test(rel)) {
-      let pdbs: string[] = []
-      try {
-        pdbs = readPeDebugPaths(bytes)
-      } catch {
-        // Not a PE file: the needles were checked.
-      }
-      for (const p of pdbs.filter(isRecordedFolderPath)) out.push(`${rel} (program database ${p})`)
-    }
+    out.push(...privacyProblemsIn(rel, fixtures(rel) ? withoutFixtures(bytes) : bytes, needles))
   }
   return out
 }
