@@ -21,7 +21,18 @@ interface Section {
   rawSize: number
 }
 
-export function readPeImports(buf: Buffer): PeImports {
+interface PeLayout {
+  machine: number
+  is64: boolean
+  /** The optional header's file offset. */
+  opt: number
+  /** Data directory `i` (zero when the file has none). */
+  dir(i: number): { rva: number; size: number }
+  /** The file offset of an address. */
+  offset(rva: number): number
+}
+
+function peLayout(buf: Buffer): PeLayout {
   if (buf.length < 0x40 || buf.toString('latin1', 0, 2) !== 'MZ') throw new Error('not a PE file (no MZ header)')
   const pe = buf.readUInt32LE(0x3c)
   if (pe + 24 > buf.length || buf.readUInt32LE(pe) !== 0x00004550) throw new Error('not a PE file (no PE signature)')
@@ -51,6 +62,11 @@ export function readPeImports(buf: Buffer): PeImports {
     }
     throw new Error(`PE: address 0x${rva.toString(16)} is in no section`)
   }
+  return { machine, is64, opt, dir, offset }
+}
+
+export function readPeImports(buf: Buffer): PeImports {
+  const { machine, is64, opt, dir, offset } = peLayout(buf)
   const cstring = (rva: number): string => {
     const start = offset(rva)
     const end = buf.indexOf(0, start)
@@ -80,6 +96,32 @@ export function readPeImports(buf: Buffer): PeImports {
     }
   }
   return { machine, is64, imports, delayImports }
+}
+
+/**
+ * The program database paths a PE file records in its debug directory (CodeView records: RSDS, and
+ * the older NB10), as written. The linker writes the PDB's full path there (/DEBUG) unless told
+ * otherwise (/PDBALTPATH:%_PDB% writes its name alone).
+ */
+export function readPeDebugPaths(buf: Buffer): string[] {
+  const { dir, offset } = peLayout(buf)
+  const debug = dir(6)
+  const out: string[] = []
+  if (debug.rva === 0) return out
+  const start = offset(debug.rva)
+  for (let p = start; p + 28 <= Math.min(buf.length, start + debug.size); p += 28) {
+    const type = buf.readUInt32LE(p + 12)
+    const size = buf.readUInt32LE(p + 16)
+    const raw = buf.readUInt32LE(p + 24)
+    if (type !== 2 || raw === 0 || raw + size > buf.length) continue
+    const record = buf.subarray(raw, raw + size)
+    const sig = record.toString('latin1', 0, 4)
+    const at = sig === 'RSDS' ? 24 : sig === 'NB10' ? 16 : -1
+    if (at < 0 || at >= record.length) continue
+    const end = record.indexOf(0, at)
+    out.push(record.toString('utf8', at, end < 0 ? record.length : end))
+  }
+  return out
 }
 
 /** DLLs that are part of Windows, or API sets it maps onto them. */

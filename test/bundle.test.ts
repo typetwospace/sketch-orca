@@ -15,6 +15,7 @@ import {
   LOCAL_WORK_FOLDERS,
   mpfrHeaderVersion,
   orcaArchiveName,
+  ownBundleFiles,
   parsePinnedSources,
   pinnedSources,
   planDependencies,
@@ -37,9 +38,9 @@ import {
 import { depsBuildArgs, formatCommand, orcaBuildArgs } from '../scripts/lib/cmake.ts'
 import { firstExisting, gitCandidates } from '../scripts/lib/env.ts'
 import { currentPlatform } from '../scripts/lib/toolchain.ts'
-import { nativePath, sha256Bytes, sha256Sums, treeEntries, writeText } from '../scripts/lib/files.ts'
+import { listFiles, nativePath, sha256Bytes, sha256Sums, treeEntries, writeText } from '../scripts/lib/files.ts'
 import { LOCK_FORMAT, type OrcaLock } from '../scripts/lib/lock.ts'
-import { buildManifest, type EngineManifest } from '../scripts/lib/stage.ts'
+import { buildManifest, personalPathNeedles, privacyProblems, type EngineManifest } from '../scripts/lib/stage.ts'
 
 const LOCK: OrcaLock = {
   format: LOCK_FORMAT,
@@ -360,6 +361,23 @@ describe('the bundle', () => {
     expect(verifySums(b).sort()).toEqual(['changed BUILDING.md', 'missing engine/orca.lock.json', 'unlisted file extra.txt'])
     put('b/SHA256SUMS', 'not a sums file\n')
     expect(verifySums(b)).toEqual([expect.stringMatching(/not a sha256sum line/)])
+  })
+
+  test("the privacy scan reads the bundle's own files, not the packages of others", () => {
+    put('b/BUILDING.md', 'built in D:\\Build-Cache\\orca')
+    put('b/bundle.json', '{}')
+    put('b/engine/cli/run.cpp', '// C:/Users/Builder/sketch-orca/cli/run.cpp')
+    put('b/LICENSES/NOTICE.txt', 'text')
+    put('b/orca/OrcaSlicer-v2.4.2.tar.gz', 'D:\\build-cache\\orca')
+    put('b/dependencies/Boost/boost.tar.gz', 'D:\\build-cache\\orca')
+    put('b/prebuilt/GMP/gmp-5.0.1.tar.bz2', 'D:\\build-cache\\orca')
+    const b = join(dir, 'b')
+    const own = ownBundleFiles(listFiles(b))
+    expect(own).toEqual(['BUILDING.md', 'LICENSES/NOTICE.txt', 'bundle.json', 'engine/cli/run.cpp'])
+    expect(privacyProblems(b, own, personalPathNeedles('C:\\Users\\Builder', 'Builder', ['D:\\build-cache\\orca']))).toEqual([
+      'BUILDING.md (d:\\build-cache\\orca)',
+      'engine/cli/run.cpp (/users/builder, c:/users/builder)',
+    ])
   })
 })
 

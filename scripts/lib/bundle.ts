@@ -34,7 +34,7 @@ import { copyFile, hashTree, listFiles, nativePath, parseSha256Sums, sha256Bytes
 import type { OrcaLock } from './lock.ts'
 import { sha256File, sha256Text, writeStamp } from './paths.ts'
 import { capture, Log, runLogged, StepError } from './run.ts'
-import { builtDependencies, dependencySourceDir, readManifest, verifyStaged, type EngineManifest, type StageCopy } from './stage.ts'
+import { builderNeedles, builtDependencies, dependencySourceDir, privacyProblems, privacyRefusal, readManifest, verifyStaged, type EngineManifest, type StageCopy } from './stage.ts'
 import { currentPlatform } from './toolchain.ts'
 
 export const SOURCE_FORMAT = 'sketch-orca-source/1'
@@ -565,6 +565,14 @@ export function prebuiltLine(p: PrebuiltLibrary, withDeps: boolean): string {
   return `${ships} ${where} The binary is ${p.source.provenance}.`
 }
 
+/**
+ * The bundle's files that privacyProblems reads: all but the packages of others (Orca's archive,
+ * dependencies/ and prebuilt/), which are as their projects publish them.
+ */
+export function ownBundleFiles(rels: string[]): string[] {
+  return rels.filter((rel) => !/^(orca|dependencies|prebuilt)\//.test(rel))
+}
+
 /** Problems with a bundle folder against its SHA256SUMS: changed, missing or unlisted files. */
 export function verifySums(dir: string): string[] {
   const sumsPath = join(dir, 'SHA256SUMS')
@@ -654,16 +662,20 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   const name = bundleName(m)
   const root = join(w.dist, 'source')
   const dir = join(root, name)
+  // Nothing the bundle writes or copies from this repository names the builder (a current bundle too).
+  const needles = builderNeedles(ctx, platform, git)
   if (existsSync(join(dir, 'bundle.json'))) {
     try {
       const old = JSON.parse(readFileSync(join(dir, 'bundle.json'), 'utf8')) as Partial<BundleInfo>
       if (old.inputs === inputs) {
         const problems = verifySums(dir)
-        if (problems.length === 0) {
+        const personal = problems.length === 0 ? privacyProblems(dir, ownBundleFiles(listFiles(dir)), needles) : []
+        if (problems.length === 0 && personal.length === 0) {
           log.line(`source: ${dir} is current; skipping`)
           return 0
         }
-        log.line(`source: the bundle no longer matches its SHA256SUMS (${problems.slice(0, 3).join('; ')}); making it again`)
+        if (personal.length > 0) log.line(`source: the bundle names the builder or the build machine (${personal.slice(0, 3).join('; ')}); making it again`)
+        else log.line(`source: the bundle no longer matches its SHA256SUMS (${problems.slice(0, 3).join('; ')}); making it again`)
       }
     } catch {
       // Make it again.
@@ -700,6 +712,8 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
     createdAt: new Date().toISOString(),
   }
   writeText(join(tmp, 'bundle.json'), JSON.stringify(info, null, 2) + '\n')
+  const personal = privacyProblems(tmp, ownBundleFiles(listFiles(tmp)), needles)
+  if (personal.length > 0) throw new StepError(privacyRefusal('files of the source bundle', personal))
   writeText(join(tmp, 'SHA256SUMS'), sha256Sums(treeEntries(tmp, (rel) => rel !== 'SHA256SUMS')))
   const problems = verifySums(tmp)
   if (problems.length > 0) throw new StepError(`the new bundle does not match its own SHA256SUMS: ${problems.slice(0, 3).join('; ')}`)

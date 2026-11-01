@@ -43,6 +43,7 @@ import {
   stageInputs,
   STAGE_VERSION,
   unlicensedDependencies,
+  USER_FOLDER_NEEDLES,
   validateManifest,
   verifyStaged,
   windowsRuntime,
@@ -346,6 +347,40 @@ describe('what goes in', () => {
     expect(found('deps\\OrcaSlicer_dep\\usr\\local\\include\\boost-1_84\\boost/exception')).toEqual([])
     // Only paths: the bare user name is too common a word to refuse on.
     expect(found('memory meme')).toEqual([])
+  })
+
+  test('findPersonalPaths folds only ASCII letters, in UTF-16LE a whole code unit at either alignment', () => {
+    // U+674E is the bytes 4E 67 in UTF-16LE: folding the 4E (N) byte to 6E would lose the path.
+    const needles = personalPathNeedles('C:\\Users\\李', '李')
+    expect(needles).toEqual(['/home/李', '/users/李', '\\home\\李', '\\users\\李', 'c:/users/李', 'c:\\users\\李'])
+    for (const pad of ['\0\0', '\0']) {
+      expect(findPersonalPaths(Buffer.concat([Buffer.from(pad, 'latin1'), Buffer.from('C:/Users/李/build/engine.pdb\0', 'utf16le')]), needles)).toEqual(['/users/李', 'c:/users/李'])
+      expect(findPersonalPaths(Buffer.concat([Buffer.from(pad, 'latin1'), Buffer.from('C:\\USERS\\李\\x.cxx', 'utf8')]), needles)).toEqual(['\\users\\李', 'c:\\users\\李'])
+    }
+    // A UTF-16LE match starts on a code unit of the alignment it was folded at: U+474E U+0100 at an
+    // odd offset is not 李 U+0100, though folding the even units (47 00 is G) would make its bytes so.
+    expect(findPersonalPaths(Buffer.from([0x00, 0x4e, 0x47, 0x00, 0x01]), ['李Ā'])).toEqual([])
+    expect(findPersonalPaths(Buffer.from([0x00, 0x4e, 0x67, 0x00, 0x01]), ['李Ā'])).toEqual(['李Ā'])
+    // A needle Latin-1 cannot hold is not looked for as Latin-1 (Buffer would keep only the low bytes: "N").
+    expect(findPersonalPaths(Buffer.from('\\Users\\N', 'latin1'), ['\\users\\李'])).toEqual([])
+    // Other letters are not folded, in the needles or in the files.
+    expect(personalPathNeedles('C:\\Users\\Émile', 'Émile')).toContain('c:\\users\\Émile')
+    expect(findPersonalPaths(Buffer.from('C:\\USERS\\Émile', 'utf8'), ['c:\\users\\Émile'])).toEqual(['c:\\users\\Émile'])
+  })
+
+  test('personalPathNeedles: the build folders and git e-mail too; USER_FOLDER_NEEDLES find any Windows user folder', () => {
+    expect(personalPathNeedles('/home/me', 'me', ['D:\\Build-Cache\\orca\\', 'E:\\'], ['Me@Example.org', 'not an address'])).toEqual([
+      '/home/me',
+      '/users/me',
+      '\\home\\me',
+      '\\users\\me',
+      'd:/build-cache/orca',
+      'd:\\build-cache\\orca',
+      'me@example.org',
+    ])
+    expect(findPersonalPaths(Buffer.from('C:/Users/PreviousBuilder/build/engine.pdb'), [...USER_FOLDER_NEEDLES])).toEqual([':/users/'])
+    expect(findPersonalPaths(Buffer.from('D:\\USERS\\x', 'utf16le'), [...USER_FOLDER_NEEDLES])).toEqual([':\\users\\'])
+    expect(findPersonalPaths(Buffer.from('https://example.org/users/x'), [...USER_FOLDER_NEEDLES])).toEqual([])
   })
 
   test('cliChangedSinceBuild: the cli/ hash the build recorded must match cli/ now', () => {

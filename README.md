@@ -163,8 +163,9 @@ loads Windows' own `msvcrt.dll`, which is not one); that every built dependency,
 `deps_src` library on the engine's link line (read from `build/build.ninja`), has a licence text; that the link line holds no Intel IPP; that the GMP and
 SoftFloat texts a Windows engine needs are there; that `NOTICE` and `AUTHORS` are there; and that
 `sketch-orca version` names the locked commit. It builds the folder next to the old one and
-refuses it when a staged file names the builder's home folder or user name (`__FILE__` paths; see
-Toolchain). It runs the staged copy with only the system folders on its PATH (on Linux and macOS,
+refuses it (and checks a current one it would keep the same way) when a staged file names the builder's home folder, user name, git e-mail
+or (on Windows) build folders, any Windows user folder, or a program database with its folder (`__FILE__`
+paths, `/DEBUG`; see Toolchain). It runs the staged copy with only the system folders on its PATH (on Linux and macOS,
 plus `bin/` as the library path): `version`, which proves `bin/` is complete, then smoke's
 `cube-fixed` and `bambu-3mf` cases with the staged `resources/` (`STAGED_CASES`, in
 `<work>/smoke/staged`), which proves the folder slices with what it ships. Then it swaps it in.
@@ -230,7 +231,8 @@ off; the dependency and Orca builds are each started over (`state/deps-env.json`
 `state/orca-env.json`) when that setting changes, because Ninja and ExternalProject do not notice
 it. Linux and macOS get no such flags (passing CFLAGS changes what GMP's configure picks): build
 release engines there with `SKETCH_ORCA_HOME` outside your home folder. Either way `stage` refuses
-an engine that still names your home folder or user name.
+an engine that still names your home folder or user name, and `source` a bundle whose own files
+(all but the packages of Orca and the dependencies) do.
 
 Linux and macOS have code paths but have not been tried yet: the build PATH holds cc, c++, make,
 m4, autoreconf, automake and libtool (glibtoolize on macOS), `ldd` or `otool -L` find the runtime

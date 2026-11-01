@@ -24,7 +24,7 @@ import { firstExisting, gitCandidates, type Platform } from './env.ts'
 import { copyFile, hashTree, listFiles, nativePath, sha256Bytes, treeEntries, verifyTree, writeText, type FileEntry } from './files.ts'
 import type { OrcaLock } from './lock.ts'
 import { builtCliSha256, readStamp, sha256File, sha256Text, writeStamp, type WorkPaths } from './paths.ts'
-import { resolveRuntime, windowsRuntimeIo, type RuntimeIo } from './pe.ts'
+import { readPeDebugPaths, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from './pe.ts'
 import { capture, Log, StepError } from './run.ts'
 import { checkVersion, engineEnv, engineLibraryDirs, runCases, runEngine, SMOKE_CASES, smokePassedFor, smokePresetSets, smokeTimeoutMs, SMOKE_VERSION } from './smoke.ts'
 import { currentPlatform } from './toolchain.ts'
@@ -426,30 +426,101 @@ export function unlicensedDependencies(work: WorkPaths, copies: StageCopy[]): st
 
 /**
  * What would name the builder in a staged file: the home folder (C:\Users\me, /home/me) with
- * either slash, and \Users\<name> or /home/<name> on any drive, lower case. __FILE__ puts such
- * paths into binaries (env.ts, sourcePathTrimEnv trims them on Windows).
+ * either slash, \Users\<name> or /home/<name> on any drive, the build folders `roots` (the work
+ * folder and this checkout, which the Windows build trims), and git's user.email, with only the
+ * ASCII letters made small (as findPersonalPaths folds them). __FILE__ puts such paths into
+ * binaries (env.ts, sourcePathTrimEnv trims them on Windows).
  */
-export function personalPathNeedles(home: string, user: string): string[] {
+export function personalPathNeedles(home: string, user: string, roots: string[] = [], emails: string[] = []): string[] {
   const out = new Set<string>()
-  const h = home.replace(/[\\/]+$/, '')
-  if (h.replace(/^[A-Za-z]:/, '').length > 1) {
-    out.add(h.replace(/\//g, '\\'))
-    out.add(h.replace(/\\/g, '/'))
+  for (const dir of [home, ...roots]) {
+    const h = dir.replace(/[\\/]+$/, '')
+    if (h.replace(/^[A-Za-z]:/, '').length > 1) {
+      out.add(h.replace(/\//g, '\\'))
+      out.add(h.replace(/\\/g, '/'))
+    }
   }
   if (user.trim() !== '') {
     for (const sep of ['\\', '/']) for (const dir of ['users', 'home']) out.add(`${sep}${dir}${sep}${user}`)
   }
-  return [...out].map((s) => s.toLowerCase()).sort()
+  for (const e of emails) if (e.trim().includes('@')) out.add(e.trim())
+  return [...out].map(asciiLower).sort()
 }
 
-/** The needles found in `bytes`, without case (ASCII letters), as 8-bit or UTF-8 text and as UTF-16LE. */
+/** Any user's folder on a Windows drive (C:\Users\<anyone>): no staged file names one (the source bundle's tests do). */
+export const USER_FOLDER_NEEDLES: readonly string[] = [':/users/', ':\\users\\']
+
+function asciiLower(s: string): string {
+  return s.replace(/[A-Z]/g, (c) => c.toLowerCase())
+}
+
+/**
+ * The needles found in `bytes`, without case for the ASCII letters: as UTF-8, as Latin-1 (needles
+ * that fit in it) and as UTF-16LE at either byte alignment. Only ASCII letters are folded, in
+ * UTF-16LE a whole code unit at a time, so no byte of another character changes (U+674E is the
+ * bytes 4E 67, an N and a g).
+ */
 export function findPersonalPaths(bytes: Uint8Array, needles: string[]): string[] {
-  const low = Buffer.from(bytes)
-  for (let i = 0; i < low.length; i++) {
-    const c = low[i]!
-    if (c >= 65 && c <= 90) low[i] = c + 32
+  const narrow = Buffer.from(bytes)
+  for (let i = 0; i < narrow.length; i++) {
+    const c = narrow[i]!
+    if (c >= 65 && c <= 90) narrow[i] = c + 32
   }
-  return needles.filter((n) => low.includes(Buffer.from(n, 'utf8')) || low.includes(Buffer.from(n, 'latin1')) || low.includes(Buffer.from(n, 'utf16le')))
+  const wide = [0, 1].map((start) => {
+    const b = Buffer.from(bytes)
+    for (let i = start; i + 1 < b.length; i += 2) {
+      const c = b[i]!
+      if (c >= 65 && c <= 90 && b[i + 1] === 0) b[i] = c + 32
+    }
+    return b
+  })
+  const inWide = (n: Buffer): boolean =>
+    wide.some((b, start) => {
+      for (let at = b.indexOf(n); at >= 0; at = b.indexOf(n, at + 1)) if ((at - start) % 2 === 0) return true
+      return false
+    })
+  return needles.filter((n) => narrow.includes(Buffer.from(n, 'utf8')) || (/^[\0-\xff]*$/.test(n) && narrow.includes(Buffer.from(n, 'latin1'))) || inWide(Buffer.from(n, 'utf16le')))
+}
+
+/** A program database path recorded in a binary (readPeDebugPaths) that names a folder: C:\..., \\server\..., /... */
+export function isRecordedFolderPath(p: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(p) || /^[\\/]/.test(p)
+}
+
+/**
+ * What in the files `rels` of `dir` would name the builder or the build machine: the needles
+ * (findPersonalPaths), and in Windows programs and libraries a program database recorded with its
+ * folder (the linker's /DEBUG without /PDBALTPATH:%_PDB%).
+ */
+export function privacyProblems(dir: string, rels: string[], needles: string[]): string[] {
+  const out: string[] = []
+  for (const rel of rels) {
+    const bytes = readFileSync(nativePath(dir, rel))
+    const found = findPersonalPaths(bytes, needles)
+    if (found.length > 0) out.push(`${rel} (${found.join(', ')})`)
+    if (/\.(exe|dll)$/i.test(rel)) {
+      let pdbs: string[] = []
+      try {
+        pdbs = readPeDebugPaths(bytes)
+      } catch {
+        // Not a PE file: the needles were checked.
+      }
+      for (const p of pdbs.filter(isRecordedFolderPath)) out.push(`${rel} (program database ${p})`)
+    }
+  }
+  return out
+}
+
+/** The needles of this build (personalPathNeedles): its home folder, user name, build folders where the build trims them, and git's user.email. */
+export function builderNeedles(ctx: Pick<Context, 'work' | 'engine'>, platform: Platform, git: string | undefined): string[] {
+  const roots = platform === 'win32' ? [ctx.work.home, ctx.engine.engine] : []
+  const email = git ? capture(git, ['-C', ctx.engine.engine, 'config', '--get', 'user.email']) : undefined
+  return personalPathNeedles(homedir(), safeUserName(), roots, email && email.code === 0 ? [email.stdout.trim()] : [])
+}
+
+/** The message for privacyProblems. */
+export function privacyRefusal(what: string, problems: string[]): string {
+  return `${what} name the builder or the build machine: ${problems.slice(0, 8).join('; ')}${problems.length > 8 ? `; and ${problems.length - 8} more` : ''}. Build in a work folder outside the home folder (SKETCH_ORCA_HOME), link without the program database's folder (/PDBALTPATH:%_PDB%), or find what puts the text there`
 }
 
 function dedupe(copies: StageCopy[]): StageCopy[] {
@@ -748,17 +819,21 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     platform,
   })
 
+  // Nothing staged names the builder or the build machine (a staged engine that is current too).
+  const needles = [...builderNeedles(ctx, platform, git), ...USER_FOLDER_NEEDLES]
   const dist = join(w.dist, 'engine')
   if (existsSync(join(dist, MANIFEST_FILE))) {
     try {
       const old = readManifest(dist)
       if (old.inputs === inputs) {
         const problems = verifyStaged(dist, old)
-        if (problems.length === 0) {
+        const personal = problems.length === 0 ? privacyProblems(dist, [...old.files.map((f) => f.path), MANIFEST_FILE], needles) : []
+        if (problems.length === 0 && personal.length === 0) {
           log.line(`stage: ${dist} is current (${old.files.length} files); skipping`)
           return 0
         }
-        log.line(`stage: the staged engine no longer matches its manifest (${problems.slice(0, 3).join('; ')}); staging again`)
+        if (personal.length > 0) log.line(`stage: the staged engine names the builder or the build machine (${personal.slice(0, 3).join('; ')}); staging again`)
+        else log.line(`stage: the staged engine no longer matches its manifest (${problems.slice(0, 3).join('; ')}); staging again`)
       }
     } catch (err) {
       log.line(`stage: the old manifest cannot be read (${(err as Error).message}); staging again`)
@@ -805,14 +880,8 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
   })
   writeText(join(tmp, MANIFEST_FILE), serializeManifest(manifest))
 
-  // Nothing staged names the builder: no home folder or user name in a path (__FILE__ strings).
-  const needles = personalPathNeedles(homedir(), safeUserName())
-  const personal = [...manifest.files.map((f) => f.path), MANIFEST_FILE].map((path) => ({ path, found: findPersonalPaths(readFileSync(nativePath(tmp, path)), needles) })).filter((f) => f.found.length > 0)
-  if (personal.length > 0) {
-    throw new StepError(
-      `staged files name the builder's home folder or user name: ${personal.slice(0, 8).map((f) => `${f.path} (${f.found.join(', ')})`).join('; ')}${personal.length > 8 ? `; and ${personal.length - 8} more` : ''}. Build in a work folder outside the home folder (SKETCH_ORCA_HOME), or find what puts the path there`,
-    )
-  }
+  const personal = privacyProblems(tmp, [...manifest.files.map((f) => f.path), MANIFEST_FILE], needles)
+  if (personal.length > 0) throw new StepError(privacyRefusal('staged files', personal))
 
   // The staged copy runs on its own: its libraries all resolve inside bin/, and it starts with no library folder on PATH.
   const stagedExe = join(tmp, 'bin', exeName)

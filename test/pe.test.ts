@@ -1,14 +1,18 @@
 import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { isApiSet, isDynamicCrt, isMsvcRuntime, readPeImports, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from '../scripts/lib/pe.ts'
+import { isApiSet, isDynamicCrt, isMsvcRuntime, readPeDebugPaths, readPeImports, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from '../scripts/lib/pe.ts'
+import { privacyProblems } from '../scripts/lib/stage.ts'
 
 /**
  * A minimal PE image: one section (.rdata, RVA 0x1000, file offset 0x400) holding the import
- * descriptors (RVA 0x1000), the delay-load descriptors (RVA 0x1100) and the DLL names (RVA 0x1200).
+ * descriptors (RVA 0x1000), the delay-load descriptors (RVA 0x1100), the DLL names (RVA 0x1200)
+ * and the debug directory (RVA 0x1380), whose CodeView records follow the section (file 0x800).
  */
-function makePe(o: { is64: boolean; imports: string[]; delay?: string[]; delayAsVa?: boolean }): Buffer {
-  const buf = Buffer.alloc(0x800)
+function makePe(o: { is64: boolean; imports: string[]; delay?: string[]; delayAsVa?: boolean; debug?: { sig: 'RSDS' | 'NB10' | 'MISC'; path: string }[] }): Buffer {
+  const debug = o.debug ?? []
+  const buf = Buffer.alloc(0x800 + 0x100 * debug.length)
   buf.write('MZ', 0, 'latin1')
   buf.writeUInt32LE(0x80, 0x3c)
   buf.writeUInt32LE(0x00004550, 0x80)
@@ -58,6 +62,21 @@ function makePe(o: { is64: boolean; imports: string[]; delay?: string[]; delayAs
       buf.writeUInt32LE(o.delayAsVa ? imageBase + r : r, d + 4)
     })
   }
+  if (debug.length > 0) {
+    buf.writeUInt32LE(0x1380, dirs + 8 * 6)
+    buf.writeUInt32LE(28 * debug.length, dirs + 8 * 6 + 4)
+    debug.forEach((r, i) => {
+      const d = at(0x1380 + 28 * i)
+      const raw = 0x800 + 0x100 * i
+      const head = r.sig === 'RSDS' ? 24 : 16
+      const size = head + Buffer.byteLength(r.path, 'utf8') + 1
+      buf.write(r.sig === 'MISC' ? 'MISC' : r.sig, raw, 'latin1')
+      buf.write(`${r.path}\0`, raw + head, 'utf8')
+      buf.writeUInt32LE(r.sig === 'MISC' ? 4 : 2, d + 12)
+      buf.writeUInt32LE(size, d + 16)
+      buf.writeUInt32LE(raw, d + 24)
+    })
+  }
   return buf
 }
 
@@ -101,6 +120,52 @@ describe('readPeImports', () => {
     const t = readPeImports(readFileSync(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'cmd.exe')))
     expect(t.imports.length).toBeGreaterThan(0)
     for (const n of [...t.imports, ...t.delayImports]) expect(n.toLowerCase().endsWith('.dll')).toBe(true)
+  })
+})
+
+describe('readPeDebugPaths', () => {
+  test('the program database paths of the CodeView records, RSDS and NB10; other debug records are not read', () => {
+    const pe = makePe({
+      is64: true,
+      imports: ['KERNEL32.dll'],
+      debug: [
+        { sig: 'RSDS', path: 'D:\\build-cache\\orca\\engine.pdb' },
+        { sig: 'MISC', path: 'C:\\not\\a\\pdb' },
+        { sig: 'NB10', path: 'old.pdb' },
+      ],
+    })
+    expect(readPeDebugPaths(pe)).toEqual(['D:\\build-cache\\orca\\engine.pdb', 'old.pdb'])
+    expect(readPeDebugPaths(makePe({ is64: false, imports: [], debug: [{ sig: 'RSDS', path: 'C:/Users/李/build/engine.pdb' }] }))).toEqual(['C:/Users/李/build/engine.pdb'])
+    expect(readPeDebugPaths(makePe({ is64: true, imports: ['KERNEL32.dll'] }))).toEqual([])
+  })
+
+  test.skipIf(process.platform !== 'win32')('reads a real Windows program', () => {
+    const exe = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'cmd.exe')
+    for (const p of readPeDebugPaths(readFileSync(exe))) expect(p).toMatch(/\.pdb$/i)
+  })
+
+  test('privacyProblems: a staged program or library that records its program database with a folder is refused, any folder', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'orca-pe-'))
+    try {
+      const put = (rel: string, bytes: Buffer) => {
+        mkdirSync(join(dir, 'bin'), { recursive: true })
+        writeFileSync(join(dir, rel), bytes)
+      }
+      put('bin/a.exe', makePe({ is64: true, imports: [], debug: [{ sig: 'RSDS', path: 'D:/build-cache/orca/engine.pdb' }] }))
+      put('bin/b.dll', makePe({ is64: true, imports: [], debug: [{ sig: 'RSDS', path: '\\\\server\\share\\b.pdb' }] }))
+      put('bin/c.dll', makePe({ is64: true, imports: [], debug: [{ sig: 'RSDS', path: 'c.pdb' }] }))
+      put('bin/d.dll', Buffer.from('not a PE file'))
+      put('bin/e.exe', makePe({ is64: true, imports: [], debug: [{ sig: 'NB10', path: '/home/builder/e.pdb' }] }))
+      expect(privacyProblems(dir, ['bin/a.exe', 'bin/b.dll', 'bin/c.dll', 'bin/d.dll', 'bin/e.exe'], [])).toEqual([
+        'bin/a.exe (program database D:/build-cache/orca/engine.pdb)',
+        'bin/b.dll (program database \\\\server\\share\\b.pdb)',
+        'bin/e.exe (program database /home/builder/e.pdb)',
+      ])
+      // And the needles, in the same files.
+      expect(privacyProblems(dir, ['bin/a.exe', 'bin/c.dll'], ['d:/build-cache/orca'])).toEqual(['bin/a.exe (d:/build-cache/orca)', 'bin/a.exe (program database D:/build-cache/orca/engine.pdb)'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
