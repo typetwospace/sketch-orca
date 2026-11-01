@@ -33,16 +33,17 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { applyPatches, fetchSource, headCommit, listPatches, patchedPaths } from './lib/checkout.ts'
+import { applyPatches, fetchSource, headCommit, listPatches, patchedPaths, sourceDigest, type PatchInfo } from './lib/checkout.ts'
 import { defaultDepsJobs, defaultJobs, depsBuildArgs, depsConfigureArgs, depsParallelEnv, jobsCap, orcaBuildArgs, orcaConfigureArgs } from './lib/cmake.ts'
 import { firstExisting, gitCandidates, sourcePathTrimEnv } from './lib/env.ts'
 import { hashTree } from './lib/files.ts'
 import { githubGetter, resolveLatestRelease } from './lib/github.ts'
 import { compareLock, lockForRelease, readLock, releaseDecision, serializeLock, writeLock, type OrcaLock, type ReleaseDecision } from './lib/lock.ts'
-import { enginePaths, readStamp, sha256Text, workHome, workPaths, writeStamp, type WorkPaths } from './lib/paths.ts'
+import { enginePaths, readStamp, sha256File, sha256Text, workHome, workPaths, writeStamp, type WorkPaths } from './lib/paths.ts'
 import { runSteps, stepArgs, type ReleaseStep } from './lib/release.ts'
 import { EXIT, Log, runLogged, StepError, UsageError } from './lib/run.ts'
 import { takeRunLock } from './lib/runlock.ts'
+import type { BuildRecord } from './lib/stage.ts'
 import { checkToolchain, currentPlatform, findToolchain, type Toolchain } from './lib/toolchain.ts'
 
 const ENGINE_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -170,6 +171,8 @@ async function buildDeps(ctx: Context, t: Toolchain, patchesHash: string, log: L
     return
   }
   matchCompilerEnv(w, 'deps', w.deps, cenv, log)
+  // The engine built on the dependencies as they were is no longer the engine of these.
+  forgetEngineBuild(w)
   mkdirSync(w.downloads, { recursive: true })
   mkdirSync(w.deps, { recursive: true })
   // SKETCH_ORCA_JOBS caps the compile jobs here too (depsParallelEnv); configure sees it as well,
@@ -185,7 +188,12 @@ async function buildDeps(ctx: Context, t: Toolchain, patchesHash: string, log: L
   log.line('deps: done')
 }
 
-async function buildOrca(ctx: Context, t: Toolchain, patchesHash: string, log: Log): Promise<void> {
+/** Removes the record of a finished engine build (state/orca.json): stage and source take no engine without one. */
+function forgetEngineBuild(w: WorkPaths): void {
+  rmSync(join(w.state, 'orca.json'), { force: true })
+}
+
+async function buildOrca(ctx: Context, t: Toolchain, patches: PatchInfo[], patchesHash: string, log: Log): Promise<void> {
   const w = ctx.work
   const configure = orcaConfigureArgs({
     ninja: t.ninja,
@@ -213,15 +221,28 @@ async function buildOrca(ctx: Context, t: Toolchain, patchesHash: string, log: L
   }
   const jobs = defaultJobs()
   log.line(`orca: building libslic3r and sketch-orca (-j${jobs})`)
-  // What the engine is built from: cli/ as it is now, and as it still is when the build
-  // ends (an edit in between may or may not have been compiled). stage and source compare it.
+  // What the engine is built from: cli/ and the checkout as they are now, and as they still are
+  // when the build ends (an edit in between may or may not have been compiled). stage and source
+  // compare them. Until the build ends there is no finished build on record.
   const cliSha256 = hashTree(E.cli)
+  const source = sourceDigest(t.git, w.src, ctx.lock.commit)
+  forgetEngineBuild(w)
   // Ninja itself skips what is up to date.
   await runLogged(t.cmake, orcaBuildArgs(w.build, jobs), { env, log, cwd: w.build })
   const exe = engineExe(w, t.platform)
   if (!existsSync(exe)) throw new StepError(`build finished but ${exe} is missing`)
   if (hashTree(E.cli) !== cliSha256) throw new StepError('cli/ changed while the engine was being built; run build again')
-  writeStamp(w.state, 'orca', inputs, { exe, cliSha256, compilerEnv: cenv })
+  if (sourceDigest(t.git, w.src, ctx.lock.commit) !== source) throw new StepError(`${w.src} changed while the engine was being built; run build again`)
+  const { engineRuntime } = await import('./lib/smoke.ts')
+  const record: BuildRecord = {
+    commit: ctx.lock.commit,
+    patches: patches.map((p) => ({ name: p.name, sha256: p.sha256 })),
+    sourceDigest: source,
+    exeSha256: sha256File(exe),
+    runtime: engineRuntime(w, exe, t.platform),
+    depsInputs: readStamp(w.state, 'deps')?.inputs ?? null,
+  }
+  writeStamp(w.state, 'orca', inputs, { exe, cliSha256, compilerEnv: cenv, ...record })
   log.line(`orca: built ${exe}`)
 }
 
@@ -246,7 +267,7 @@ async function cmdBuild(ctx: Context): Promise<number> {
   const depsPatches = patches.filter((p) => patchedPaths(readFileSync(p.path, 'utf8')).some((f) => f.startsWith('deps/')))
   const depsPatchesHash = sha256Text(JSON.stringify(depsPatches.map((p) => [p.name, p.sha256])))
   if (step === undefined || step === 'deps') await buildDeps(ctx, t, depsPatchesHash, log)
-  if (step === undefined || step === 'orca') await buildOrca(ctx, t, patchesHash, log)
+  if (step === undefined || step === 'orca') await buildOrca(ctx, t, patches, patchesHash, log)
   return 0
 }
 

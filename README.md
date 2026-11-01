@@ -151,11 +151,16 @@ provides (`system`), the smoke result, the hash of the staging inputs, the time,
 file with its size and SHA-256. `stage.ts` `readManifest` reads and checks it.
 
 Before staging, `stage` checks that the checkout is at the locked commit; that the patches `build`
-last applied (`state/patches.json`, names and SHA-256) are `patches/` as it is now (it compares
-the patch files, not the patched sources, which `build` resets and patches again whenever they
-differ); that a patch header dates our changes ("Modified for Sketch, <date>."); that `cli/`
+last applied (`state/patches.json`, names and SHA-256) are `patches/` as it is now (`build`
+resets the checkout and patches it again whenever they differ, or the checkout is not the commit
+with them applied and nothing else: `sourceDigest`, the files that differ from the commit by their
+git blob, against `patchedDigest`, the same worked out from the commit and the patches in a scratch
+index); that a patch header dates our changes ("Modified for Sketch, <date>."); that `cli/`
 hashes as it did when the last build started (`state/orca.json`; the build itself fails when
-`cli/` changes while Ninja runs); that a full smoke run passed for this very executable, with
+`cli/` or the checkout changes while Ninja runs); that the engine is the one the last build
+recorded as finished (`state/orca.json`, which the build removes before Ninja runs, and a
+dependency build that starts over removes too), of this commit, these patches, the checkout as it
+is now, the same dependency build and the same libraries; that a full smoke run passed for this very executable, with
 the same libraries and resources (the stamp and `smoke/report.json`); that every library the engine imports is found (Windows: the PE
 import closure); that on Windows neither the engine nor any library it loads imports MSVC's
 dynamic C runtime (the Visual C++ runtime DLLs, `ucrtbase.dll` or its `api-ms-win-crt-*` API sets),

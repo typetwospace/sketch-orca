@@ -10,6 +10,7 @@ import type { RuntimeIo } from '../scripts/lib/pe.ts'
 import { SMOKE_CASES } from '../scripts/lib/smoke.ts'
 import {
   buildManifest,
+  buildRecordProblems,
   builtDependencies,
   cliChangedSinceBuild,
   dependencySourceDir,
@@ -47,6 +48,7 @@ import {
   validateManifest,
   verifyStaged,
   windowsRuntime,
+  type BuildRecord,
   type ManifestParts,
 } from '../scripts/lib/stage.ts'
 
@@ -148,6 +150,7 @@ describe('manifest', () => {
       lock: LOCK,
       patches: [{ name: 'p', sha256: H('1') }],
       cli: H('c'),
+      sourceDigest: H('s'),
       exeSha256: H('e'),
       runtime: [
         { name: 'a.dll', sha256: H('2') },
@@ -164,6 +167,7 @@ describe('manifest', () => {
       { ...base, lock: { ...LOCK, commit: 'f'.repeat(40) } },
       { ...base, patches: [] },
       { ...base, cli: H('d') },
+      { ...base, sourceDigest: H('t') },
       { ...base, exeSha256: H('f') },
       { ...base, runtime: [{ name: 'a.dll', sha256: H('9') }] },
       { ...base, licenses: [] },
@@ -172,6 +176,35 @@ describe('manifest', () => {
     ]) {
       expect(stageInputs(changed)).not.toBe(h)
     }
+  })
+
+  test('buildRecordProblems: the engine must be the build of the commit, patches, checkout, dependencies and libraries there are now', () => {
+    const now: BuildRecord = {
+      commit: LOCK.commit,
+      patches: [{ name: '0001-a.patch', sha256: H('1') }],
+      sourceDigest: H('s'),
+      exeSha256: H('e'),
+      runtime: [
+        ['TKernel.dll', H('2')],
+        ['libgmp-10.dll', H('3')],
+      ],
+      depsInputs: H('d'),
+    }
+    // As build writes it, beside its other fields.
+    const recorded = { exe: 'sketch-orca.exe', cliSha256: H('c'), compilerEnv: {}, ...now, runtime: [...now.runtime].reverse() }
+    expect(buildRecordProblems(recorded, now)).toEqual([])
+    // A build an earlier pipeline recorded, or none.
+    expect(buildRecordProblems({ exe: 'sketch-orca.exe', cliSha256: H('c') }, now)).toEqual(['the engine build was recorded without what it was built from (an earlier pipeline)'])
+    expect(buildRecordProblems(undefined, now)).toHaveLength(1)
+    const differs = (change: Partial<BuildRecord>) => buildRecordProblems({ ...recorded, ...change }, now)
+    expect(differs({ commit: 'f'.repeat(40) })).toEqual([`the engine was built at ${'f'.repeat(40)}, the lock is at ${LOCK.commit}`])
+    // build --step deps applied a new patch, and the engine was not built again.
+    expect(differs({ patches: [] })).toEqual(['the engine was built with other patches than patches/ has now'])
+    expect(differs({ sourceDigest: H('t') })).toEqual(['the checkout changed since the engine was built (a file edited, added or removed against the locked commit and patches/)'])
+    expect(differs({ exeSha256: H('f') })).toEqual(['the engine is not the file the build made'])
+    expect(differs({ runtime: [['TKernel.dll', H('9')], ['libgmp-10.dll', H('3')]] })).toEqual(['the libraries the engine loads changed since it was built'])
+    expect(differs({ runtime: [['TKernel.dll', H('2')]] })).toEqual(['the libraries the engine loads changed since it was built'])
+    expect(differs({ depsInputs: null })).toEqual(['the dependencies were built again, from other inputs, since the engine was'])
   })
 
   test('verifyStaged checks the folder against its manifest, the manifest aside', () => {

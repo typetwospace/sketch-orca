@@ -19,14 +19,14 @@ import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:
 import { homedir, userInfo } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
 import type { Context } from '../orca.ts'
-import { headCommit, listPatches, type PatchInfo } from './checkout.ts'
+import { headCommit, listPatches, sourceDigest, type PatchInfo } from './checkout.ts'
 import { firstExisting, gitCandidates, type Platform } from './env.ts'
 import { copyFile, hashTree, listFiles, nativePath, sha256Bytes, treeEntries, verifyTree, writeText, type FileEntry } from './files.ts'
 import type { OrcaLock } from './lock.ts'
 import { builtCliSha256, readStamp, sha256File, sha256Text, writeStamp, type WorkPaths } from './paths.ts'
 import { readPeDebugPaths, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from './pe.ts'
 import { capture, Log, StepError } from './run.ts'
-import { checkVersion, ENGINE_RESOURCES, engineEnv, engineLibraryDirs, runCases, runEngine, SMOKE_CASES, smokeFingerprint, smokePassedFor, smokePresetSets, smokeTimeoutMs, SMOKE_VERSION } from './smoke.ts'
+import { checkVersion, ENGINE_RESOURCES, engineEnv, engineLibraryDirs, engineRuntime, runCases, runEngine, SMOKE_CASES, smokeFingerprint, smokePassedFor, smokePresetSets, smokeTimeoutMs, SMOKE_VERSION } from './smoke.ts'
 import { currentPlatform } from './toolchain.ts'
 
 export const ENGINE_FORMAT = 'sketch-orca-engine/1'
@@ -673,6 +673,8 @@ export function stageInputs(o: {
   lock: OrcaLock
   patches: { name: string; sha256: string }[]
   cli: string
+  /** The checkout's sourceDigest (checkout.ts): the resources are copied from it. */
+  sourceDigest: string
   exeSha256: string
   runtime: { name: string; sha256: string }[]
   licenses: { to: string; sha256: string }[]
@@ -685,6 +687,7 @@ export function stageInputs(o: {
       lock: o.lock,
       patches: o.patches.map((p) => [p.name, p.sha256]),
       cli: o.cli,
+      source: o.sourceDigest,
       exe: o.exeSha256,
       runtime: o.runtime.map((r) => [r.name, r.sha256]).sort(),
       licenses: o.licenses.map((l) => [l.to, l.sha256]).sort(),
@@ -762,6 +765,40 @@ export function cliChangedSinceBuild(work: WorkPaths, cliDir: string): string | 
   return undefined
 }
 
+/**
+ * What a finished engine build records (state/orca.json, beside cliSha256; orca.ts): what the
+ * engine was built from and with. The build removes the record before Ninja runs and writes it
+ * when the engine is built, so a build that stops leaves none.
+ */
+export interface BuildRecord {
+  /** The locked commit, the patches applied, and the checkout's sourceDigest (checkout.ts) then. */
+  commit: string
+  patches: { name: string; sha256: string }[]
+  sourceDigest: string
+  /** The engine the build made, and the libraries it loads (engineRuntime). */
+  exeSha256: string
+  runtime: [string, string][]
+  /** The inputs of the dependency build it linked (state/deps.json), if one is recorded. */
+  depsInputs: string | null
+}
+
+/** How the engine build recorded in `recorded` (state/orca.json's detail) differs from `now`: empty when it is the build of what is there now. */
+export function buildRecordProblems(recorded: unknown, now: BuildRecord): string[] {
+  const r = (recorded ?? {}) as Partial<BuildRecord>
+  if (typeof r.sourceDigest !== 'string' || typeof r.exeSha256 !== 'string' || !Array.isArray(r.patches) || !Array.isArray(r.runtime)) {
+    return ['the engine build was recorded without what it was built from (an earlier pipeline)']
+  }
+  const out: string[] = []
+  if (r.commit !== now.commit) out.push(`the engine was built at ${String(r.commit)}, the lock is at ${now.commit}`)
+  if (JSON.stringify(r.patches) !== JSON.stringify(now.patches)) out.push('the engine was built with other patches than patches/ has now')
+  if (r.sourceDigest !== now.sourceDigest) out.push('the checkout changed since the engine was built (a file edited, added or removed against the locked commit and patches/)')
+  if (r.exeSha256 !== now.exeSha256) out.push('the engine is not the file the build made')
+  const runtime = (x: [string, string][]) => JSON.stringify([...x].map(([n, h]) => [n.toLowerCase(), h]).sort())
+  if (runtime(r.runtime) !== runtime(now.runtime)) out.push('the libraries the engine loads changed since it was built')
+  if ((r.depsInputs ?? null) !== now.depsInputs) out.push('the dependencies were built again, from other inputs, since the engine was')
+  return out
+}
+
 /** The newest "Modified for Sketch, <date>." of the patch headers (AGPL-3.0 section 5a). */
 export function modifiedDate(patches: PatchInfo[]): string | undefined {
   const dates = patches.map((p) => /^Modified for Sketch, (\d{4}-\d{2}-\d{2})\.$/m.exec(readFileSync(p.path, 'utf8').split('\n---\n')[0] ?? '')?.[1]).filter((d): d is string => !!d)
@@ -781,9 +818,22 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
   if (!applied || JSON.stringify(applied) !== JSON.stringify(patches)) throw new StepError('the checkout does not have patches/ applied as they are now; run build')
   const modified = modifiedDate(patchFiles)
   if (patchFiles.length > 0 && !modified) throw new StepError('no patch header says "Modified for Sketch, <date>." (AGPL-3.0 section 5a)')
-  if (!readStamp(w.state, 'orca')) throw new StepError('no finished engine build is recorded (state/orca.json); run build')
+  const built = readStamp(w.state, 'orca')
+  if (!built) throw new StepError('no finished engine build is recorded (state/orca.json); run build')
   const cliProblem = cliChangedSinceBuild(w, ctx.engine.cli)
   if (cliProblem) throw new StepError(`${cliProblem}; run build`)
+  // The engine is the build of the checkout as it is: the locked commit, patches/ and nothing else.
+  const source = sourceDigest(git, w.src, ctx.lock.commit)
+  const exeSha256 = sha256File(exe)
+  const buildProblems = buildRecordProblems(built.detail, {
+    commit: ctx.lock.commit,
+    patches,
+    sourceDigest: source,
+    exeSha256,
+    runtime: engineRuntime(w, exe, platform),
+    depsInputs: readStamp(w.state, 'deps')?.inputs ?? null,
+  })
+  if (buildProblems.length > 0) throw new StepError(`${buildProblems.join('; ')}; run build`)
   const smokePassed = smokePassedFor(w, exe, smokeFingerprint(w, exe, ctx.lock, platform))
   if (!smokePassed && !without) throw new StepError('smoke has not passed for this engine build; run smoke (or stage --without-smoke for a dev build, recorded in the manifest)')
   if (!smokePassed) log.line('stage: staging WITHOUT a passed smoke run (--without-smoke); the manifest says so')
@@ -812,7 +862,8 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     lock: ctx.lock,
     patches,
     cli,
-    exeSha256: sha256File(exe),
+    sourceDigest: source,
+    exeSha256,
     runtime: runtime.copy.map((c) => ({ name: c.name, sha256: sha256File(c.path) })),
     licenses: licenses.map((l) => ({ to: l.to, sha256: sha256File(l.from) })),
     smokePassed,

@@ -1926,18 +1926,24 @@ export function forgetSmokePass(work: WorkPaths): void {
 }
 
 /**
- * What a smoke pass is for: the cases' version, the locked commit, the engine, every library it
- * loads from its library folders (engineLibraryDirs: on Windows the import closure, elsewhere the
- * shared libraries there), and the resource folders it reads (ENGINE_RESOURCES of
+ * The libraries the engine loads from its library folders (engineLibraryDirs), with their SHA-256:
+ * on Windows its import closure, elsewhere the shared libraries there.
+ */
+export function engineRuntime(work: WorkPaths, exe: string, platform: Platform = currentPlatform(), io?: RuntimeIo): [string, string][] {
+  const libDirs = engineLibraryDirs(work, exe, platform)
+  return platform === 'win32'
+    ? resolveRuntime(exe, libDirs, io ?? windowsRuntimeIo()).copy.map((c): [string, string] => [c.name, sha256File(c.path)])
+    : libDirs.flatMap((d) => (existsSync(d) ? readdirSync(d).filter((n) => /\.so(\.\d+)*$|\.dylib$/.test(n)).sort().map((n): [string, string] => [n, sha256File(join(d, n))]) : []))
+}
+
+/**
+ * What a smoke pass is for: the cases' version, the locked commit, the engine, the libraries it
+ * loads (engineRuntime), and the resource folders it reads (ENGINE_RESOURCES of
  * <work>/src/resources). A changed library or resource file is another fingerprint, whose engine
  * has not passed.
  */
 export function smokeFingerprint(work: WorkPaths, exe: string, lock: Pick<OrcaLock, 'commit'>, platform: Platform = currentPlatform(), io?: RuntimeIo): string {
-  const libDirs = engineLibraryDirs(work, exe, platform)
-  const runtime =
-    platform === 'win32'
-      ? resolveRuntime(exe, libDirs, io ?? windowsRuntimeIo()).copy.map((c) => [c.name, sha256File(c.path)])
-      : libDirs.flatMap((d) => (existsSync(d) ? readdirSync(d).filter((n) => /\.so(\.\d+)*$|\.dylib$/.test(n)).sort().map((n) => [n, sha256File(join(d, n))]) : []))
+  const runtime = engineRuntime(work, exe, platform, io)
   const resources = ENGINE_RESOURCES.map((r) => [r, hashTree(join(work.src, 'resources', r))])
   return sha256Text(JSON.stringify({ smokeVersion: SMOKE_VERSION, commit: lock.commit, exeSha256: sha256File(exe), runtime, resources }))
 }
