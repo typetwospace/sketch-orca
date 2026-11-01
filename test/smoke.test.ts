@@ -12,6 +12,7 @@ import type { FlatPreset, PresetSet } from '../scripts/lib/profiles.ts'
 import {
   CAPITAL_KEY,
   CONFIG_DEF_EXPECT,
+  COLLISIONS,
   CUBE,
   PAUSE_LAYER_INDEX,
   POCKET,
@@ -570,6 +571,7 @@ describe('jobs and the engine environment', () => {
       'preset-metadata',
       'flush-volumes',
       'prime-tower',
+      'file-collisions',
       'crash-result',
       'refusals',
     ])
@@ -578,7 +580,7 @@ describe('jobs and the engine environment', () => {
     // refusals; version 4 z-offset, override-keys, config-def's obsolete keys and two refusals;
     // version 5 the lowered nozzle past the top-of-print slack, config-def's stillDefined, the old
     // name Orca renames for its value (override-keys) and the refusal of the value it drops;
-    // version 6 preset-metadata, flush-volumes and prime-tower.
+    // version 6 preset-metadata, flush-volumes, prime-tower and file-collisions.
     expect(SMOKE_VERSION).toBe(6)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
@@ -634,6 +636,20 @@ describe('jobs and the engine environment', () => {
     FLUSH_JOBS.find((j) => j.id === 'nozzle-volume-out-of-range')!.presets!(copy)
     expect(copy.machine.nozzle_volume).toEqual([FLUSH.outOfRange])
     expect(set.machine.nozzle_volume).toBeUndefined()
+  })
+
+  test('the file collisions: each names one file twice, and a result over an input writes nothing', () => {
+    expect(new Set(COLLISIONS.map((c) => c.id)).size).toBe(COLLISIONS.length)
+    const inputs = ['job', 'model']
+    for (const c of COLLISIONS) {
+      expect(c.out).not.toBe(c.progress)
+      // One of the two is a file the run reads or the G-code it writes.
+      expect([c.out, c.progress].some((f) => [...inputs, 'gcode'].includes(f))).toBe(true)
+      // The result lands where --out points, unless it would replace an input: then nothing is written.
+      if (inputs.includes(c.out)) expect(c.code).toBeUndefined()
+      else expect({ code: c.code, resultAt: c.resultAt }).toEqual({ code: 'invalid-params', resultAt: c.out })
+      expect(c.intact).toContain('job')
+    }
   })
 
   test('toolChanges lists the T commands without their comments', () => {

@@ -60,7 +60,15 @@ fatal to 5 trace; 1, errors, by default).
 - `config-def --out <file>` writes the settings catalogue (below).
 - `run --job <file> --out <file> [--progress <file>]` does the job and writes its result, also when
   it fails; with `--progress`, it appends progress lines as it goes. It exits with the result's
-  `exitCode`.
+  `exitCode`. The files of a run are separate files: the job, its model and presets, the result,
+  the progress file, `output.gcode` and `output.bambu3mf`, with the files they are written through
+  (the file's name plus `.tmp`; also `<result>.crash.tmp`, `<gcode>.tmp.postprocess` and
+  `<bambu3mf>.rels.tmp`). Paths are compared as files: two existing paths to one file (a link, a
+  short name) are one file, and on Windows letter case does not matter. Outputs of the job that
+  overlap each other or an input are `job-invalid`; a `--progress` or `--out` that overlaps another
+  file is `invalid-params`, refused before the progress file is opened. A result that would replace
+  the job or one of its inputs is not written at all: the engine says so on stderr and exits with
+  -2.
 
 ## The job (`sketch-orca-job/1`)
 
@@ -227,7 +235,9 @@ The stages come in this order, as far as the job goes: `job`, `presets`, `model`
 `stats`, then `done` at 100 when the run is ok, or `failed` at the percent reached, with the
 failure's message. The percent never goes down. A client reads the file from where it last stopped,
 skips blank lines and a last line that is not complete yet, and accepts stages it does not know. A
-progress file the engine cannot write is a warning, `progress-unwritable`, not a failure.
+progress file the engine cannot write is a warning, `progress-unwritable`, not a failure. The engine
+opens the progress file once it has read the job and found the run's files apart, so the `job`
+line comes then; a `--progress` that overlaps another file of the run is never written.
 
 ## The settings catalogue (`sketch-orca-config-def/1`)
 

@@ -239,6 +239,39 @@ bool is_absolute_path(const std::string &path)
     return boost::filesystem::path(path).is_absolute();
 }
 
+bool same_file(const std::string &a, const std::string &b)
+{
+    namespace fs = boost::filesystem;
+    if (a.empty() || b.empty())
+        return false;
+    const fs::path            pa(a), pb(b);
+    boost::system::error_code ea, eb;
+    const bool                a_exists = fs::exists(pa, ea), b_exists = fs::exists(pb, eb);
+    if (a_exists && b_exists) {
+        // Links, short names and letter case: the file system says.
+        boost::system::error_code ec;
+        const bool                same = fs::equivalent(pa, pb, ec);
+        if (!ec)
+            return same;
+    }
+    // A path to an existing file and one to no file cannot be the same file.
+    if (!ea && !eb && a_exists != b_exists)
+        return false;
+    const auto normal = [](const fs::path &p) {
+        boost::system::error_code ec;
+        const fs::path            full = fs::absolute(p);
+        const fs::path            real = fs::weakly_canonical(full, ec);
+        return (ec ? full : real).lexically_normal();
+    };
+#ifdef _WIN32
+    // NTFS compares names without letter case, by the same upper-case table as this.
+    const std::wstring wa = normal(pa).make_preferred().wstring(), wb = normal(pb).make_preferred().wstring();
+    return CompareStringOrdinal(wa.c_str(), int(wa.size()), wb.c_str(), int(wb.size()), TRUE) == CSTR_EQUAL;
+#else
+    return normal(pa) == normal(pb);
+#endif
+}
+
 double round_um(double v)
 {
     if (!std::isfinite(v))

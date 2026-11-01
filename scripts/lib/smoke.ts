@@ -34,6 +34,9 @@
 //   prime-tower      where the prime tower goes (wipe_tower_x/y): an object that sets only raft_layers keeps the
 //                    print's support on filament 2, so its tower is placed as for a filament change; on the printer's
 //                    bed moved by -150, -150 (0,0 at its centre, as a delta's) the tower moves with the bed
+//   file-collisions  a --progress on the job or the model, and a --out on the job, the model or output.gcode, are
+//                    refused before anything is written over them: invalid-params (exit -2), and when the result
+//                    itself would replace an input, nothing written at all; the job and the model keep their bytes
 //   crash-result     an engine that crashes in Orca's code (SKETCH_ORCA_TEST_CRASH) still writes its result:
 //                    internal-error, exit code 255, no outputs
 //   refusals         a missing model, an unknown setting (also one with capital letters), a key of the preset files as
@@ -1208,6 +1211,37 @@ export const PRIME_TOWER_JOBS: SettingsJob[] = [
   },
 ]
 
+/** The files of a run in file-collisions: the job file, --out, --progress, the model and output.gcode. */
+export type RunFile = 'job' | 'result' | 'progress' | 'model' | 'gcode'
+
+/**
+ * A run of file-collisions whose command line or job names one file twice. `out` and `progress`
+ * say which file --out and --progress get. The run is refused with `code` in the result at
+ * `resultAt`, or (no `code`) writes nothing at all; the files in `intact` keep their bytes.
+ */
+export interface Collision {
+  id: string
+  out: RunFile
+  progress: RunFile
+  code?: string
+  mentions?: string
+  resultAt?: RunFile
+  intact: RunFile[]
+}
+
+export const COLLISIONS: Collision[] = [
+  // The progress file would have been opened, emptying the job, before the job was read.
+  { id: 'progress-on-job', out: 'result', progress: 'job', code: 'invalid-params', mentions: 'would replace the job', resultAt: 'result', intact: ['job'] },
+  // The result would replace the job: nothing is written, not even the result.
+  { id: 'result-on-job', out: 'job', progress: 'progress', intact: ['job'] },
+  // The progress file would empty the model before Orca read it.
+  { id: 'progress-on-model', out: 'result', progress: 'model', code: 'invalid-params', mentions: 'model.path', resultAt: 'result', intact: ['job', 'model'] },
+  // The result would replace the model once the run was done.
+  { id: 'result-on-model', out: 'model', progress: 'progress', intact: ['job', 'model'] },
+  // The result would replace the G-code it reports as done.
+  { id: 'result-on-gcode', out: 'gcode', progress: 'progress', code: 'invalid-params', mentions: 'output.gcode', resultAt: 'gcode', intact: ['job', 'model'] },
+]
+
 export const SMOKE_CASES: SmokeCase[] = [
   {
     id: 'version',
@@ -1556,6 +1590,48 @@ export const SMOKE_CASES: SmokeCase[] = [
       const shifted = at('bed-shifted')
       if (tower && shifted && (Number(shifted.x) !== Number(tower.x) + BED_SHIFT[0] || Number(shifted.y) !== Number(tower.y) + BED_SHIFT[1]))
         problems.push(`bed-shifted: the tower is at ${shifted.x}, ${shifted.y}; on the bed moved by ${BED_SHIFT.join(', ')} it belongs at ${Number(tower.x) + BED_SHIFT[0]}, ${Number(tower.y) + BED_SHIFT[1]}`)
+      return { problems, warnings }
+    },
+  },
+  {
+    id: 'file-collisions',
+    title: `a run whose files overlap (${COLLISIONS.map((c) => c.id).join(', ')}) is refused before it writes over one: invalid-params, or nothing written when the result itself would replace an input`,
+    async run(env) {
+      const problems: string[] = []
+      const warnings: string[] = []
+      for (const c of COLLISIONS) {
+        const dir = join(env.dir, c.id)
+        rmSync(dir, { recursive: true, force: true })
+        mkdirSync(dir, { recursive: true })
+        const job = smokeJob({ command: 'slice', dir, resources: env.resources, presets: env.files.generic, overrides: cubeOverrides })
+        const files: Record<RunFile, string> = { job: join(dir, 'job.json'), result: join(dir, 'result.json'), progress: join(dir, 'progress.ndjson'), model: job.model.path, gcode: job.output.gcode }
+        writeStl(job.model.path, cube(CUBE.size), 'cube 20 mm')
+        mkdirSync(job.workDir, { recursive: true })
+        writeJob(files.job, job)
+        const before = new Map(c.intact.map((f) => [f, readFileSync(files[f])] as const))
+        const run = await env.exec(['run', '--job', files.job, '--out', files[c.out], '--progress', files[c.progress]])
+        const named = (s: string) => `${c.id}: ${s}`
+        if (run.timedOut) {
+          problems.push(named('the engine did not finish in time'))
+          continue
+        }
+        for (const [f, bytes] of before) if (!existsSync(files[f]) || !readFileSync(files[f]).equals(bytes)) problems.push(named(`the ${f} file ${files[f]} was changed`))
+        if (run.code === null || exitByte(run.code) !== exitByte(-2)) problems.push(named(`the engine exited with ${run.code}, expected -2`))
+        if (c.code === undefined) {
+          for (const f of ['result', 'progress', 'gcode'] as const) if (existsSync(files[f])) problems.push(named(`${files[f]} was written; nothing should be`))
+          continue
+        }
+        if (c.out !== 'gcode' && existsSync(files.gcode)) problems.push(named(`the G-code ${files.gcode} was written`))
+        const at = files[c.resultAt ?? 'result']
+        let result: JobResult
+        try {
+          result = readResult(at)
+        } catch (err) {
+          problems.push(named(`no readable result at ${at}: ${(err as Error).message}`))
+          continue
+        }
+        problems.push(...checkRefusal(result, run.code, { code: c.code, exitCode: -2, mentions: c.mentions }).map(named))
+      }
       return { problems, warnings }
     },
   },
