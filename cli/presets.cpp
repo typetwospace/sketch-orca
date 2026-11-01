@@ -251,6 +251,25 @@ void add_default_gcodes(DynamicPrintConfig &config, Preset::Type type)
     }
 }
 
+// The lists the merge keeps itself, one entry per preset (load_settings): a preset file that
+// carries one (a preset exported from a project may) must not replace them, or the merge's writes
+// by index would land outside a shorter list.
+bool merge_metadata_key(const std::string &key)
+{
+    return key == "inherits_group" || key == "different_settings_to_system" || key == "compatible_machine_expression_group" ||
+           key == "compatible_process_expression_group" || key == "print_compatible_printers";
+}
+
+// Entry `slot` of inherits_group or different_settings_to_system, which hold one entry per preset:
+// the process at 0, filament i at i + 1, the machine at n + 1.
+void set_preset_slot(DynamicPrintConfig &cfg, const char *key, size_t slot, size_t n, const std::string &value)
+{
+    std::vector<std::string> &values = cfg.option<ConfigOptionStrings>(key, true)->values;
+    if (values.size() < std::max(n + 2, slot + 1))
+        values.resize(std::max(n + 2, slot + 1), std::string());
+    values[slot] = value;
+}
+
 // update_full_config in OrcaSlicer.cpp with update_all: every key of a machine or process preset
 // goes into the whole configuration, except the ones that describe the preset.
 void copy_preset_keys(DynamicPrintConfig &full, const DynamicPrintConfig &config, const std::string &field)
@@ -258,7 +277,7 @@ void copy_preset_keys(DynamicPrintConfig &full, const DynamicPrintConfig &config
     static const std::set<std::string> skipped = {"compatible_prints", "compatible_printers", "model_id", "inherits", "dev_model_name", "name",
                                                   "from", "type", "version", "setting_id", "instantiation"};
     for (const t_config_option_key &key : config.keys()) {
-        if (skipped.count(key))
+        if (skipped.count(key) || merge_metadata_key(key))
             continue;
         const ConfigOption *src = config.option(key);
         ConfigOption       *dst = full.option(key, true);
@@ -801,14 +820,8 @@ Settings load_settings(const Job &job, Warnings &warnings)
     // configuration takes every key of the machine, then of the process, then each filament's
     // values at its index.
     DynamicPrintConfig &cfg = s.config;
-    {
-        std::vector<std::string> &different = cfg.option<ConfigOptionStrings>("different_settings_to_system", true)->values;
-        std::vector<std::string> &inherits  = cfg.option<ConfigOptionStrings>("inherits_group", true)->values;
-        inherits.resize(n + 2, std::string());
-        different.resize(n + 2, std::string());
-        different[n + 1] = "";
-        inherits[n + 1]  = s.machine.from == "system" ? "" : s.machine.inherits;
-    }
+    set_preset_slot(cfg, "different_settings_to_system", n + 1, n, "");
+    set_preset_slot(cfg, "inherits_group", n + 1, n, s.machine.from == "system" ? "" : s.machine.inherits);
 
     s.machine.config.set_key_value("printer_settings_id", new ConfigOptionString(s.machine.name));
     add_default_gcodes(s.machine.config, Preset::TYPE_PRINTER);
@@ -827,8 +840,8 @@ Settings load_settings(const Job &job, Warnings &warnings)
         if (const auto *opt = s.process.config.option<ConfigOptionStrings>("compatible_printers"))
             compatible = opt->values;
         cfg.option<ConfigOptionStrings>("print_compatible_printers", true)->values = compatible;
-        cfg.option<ConfigOptionStrings>("different_settings_to_system", true)->values[0] = "";
-        cfg.option<ConfigOptionStrings>("inherits_group", true)->values[0] = s.process.from == "system" ? "" : s.process.inherits;
+        set_preset_slot(cfg, "different_settings_to_system", 0, n, "");
+        set_preset_slot(cfg, "inherits_group", 0, n, s.process.from == "system" ? "" : s.process.inherits);
     }
     copy_preset_keys(cfg, s.process.config, "presets.process");
 
@@ -876,8 +889,8 @@ Settings load_settings(const Job &job, Warnings &warnings)
                 settings_ids->set_at(&name_opt, filament_index - 1, 0);
             }
             config.erase("filament_settings_id");
-            cfg.option<ConfigOptionStrings>("different_settings_to_system", true)->values[filament_index] = "";
-            cfg.option<ConfigOptionStrings>("inherits_group", true)->values[filament_index] = s.filaments[index].from == "system" ? "" : s.filaments[index].inherits;
+            set_preset_slot(cfg, "different_settings_to_system", filament_index, n, "");
+            set_preset_slot(cfg, "inherits_group", filament_index, n, s.filaments[index].from == "system" ? "" : s.filaments[index].inherits);
 
             ConfigOptionStrings *ids = static_cast<ConfigOptionStrings *>(cfg.option("filament_ids", true));
             {
@@ -919,13 +932,19 @@ Settings load_settings(const Job &job, Warnings &warnings)
                     // Other single values of a filament preset do not reach the print.
                     continue;
                 }
-                if (key == "compatible_prints" || key == "compatible_printers" || key == "model_id" || key == "dev_model_name" || key == "filament_settings_id")
+                if (key == "compatible_prints" || key == "compatible_printers" || key == "model_id" || key == "dev_model_name" || key == "filament_settings_id" ||
+                    merge_metadata_key(key))
                     continue;
                 ConfigOption *dst = cfg.option(key, true);
                 if (dst == nullptr)
                     fail("preset-invalid", "presets.filaments[" + std::to_string(index) + "]: " + key + " cannot be stored");
                 auto       *dst_vec = static_cast<ConfigOptionVectorBase *>(dst);
                 const auto *src_vec = static_cast<const ConfigOptionVectorBase *>(src);
+                // Orca's set_at and set_with_restore_2 read the first value of both lists unchecked.
+                if (src_vec->empty())
+                    fail("preset-invalid", "presets.filaments[" + std::to_string(index) + "]: " + key + " is an empty list");
+                if (dst_vec->empty())
+                    dst_vec->resize(1, src_vec); // the machine or process preset gave it as an empty list
                 if (filament_options_with_variant.count(key)) {
                     std::vector<int> restore(new_variant_count, -1);
                     dst_vec->set_with_restore_2(src_vec, restore, old_start[filament_index - 1], old_variant_count, true);

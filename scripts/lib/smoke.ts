@@ -25,6 +25,9 @@
 //   override-keys    overrides whose key has capital letters (required_nozzle_HRC, a filament setting) or is an old
 //                    name Orca renames for its value (top_one_wall_type topmost, read as only_one_wall_top 1) are
 //                    applied: the cube slices and the G-code's config block gives their values
+//   preset-metadata  preset files that carry the lists the engine fills in itself (inherits_group...), shorter or
+//                    longer than its own, and a process with a filament setting as an empty list: the cube slices,
+//                    with the filament's filament_type and none of the files' lists
 //   crash-result     an engine that crashes in Orca's code (SKETCH_ORCA_TEST_CRASH) still writes its result:
 //                    internal-error, exit code 255, no outputs
 //   refusals         a missing model, an unknown setting (also one with capital letters), a key of the preset files as
@@ -61,7 +64,7 @@ import { currentPlatform } from './toolchain.ts'
 import { extractZipEntry, readZipEntries } from './zip.ts'
 
 /** Bump when the cases or their expectations change: a passed stamp of an older version does not count. */
-export const SMOKE_VERSION = 5
+export const SMOKE_VERSION = 6
 
 /**
  * Presets the cases slice with: a generic Klipper printer (plain G-code), the same printer with two
@@ -72,6 +75,10 @@ export const SMOKE_PRESETS = {
   generic2: { vendor: 'Voron', machine: 'Voron 2.4 300 0.4 nozzle', process: '0.20mm Standard @Voron', filaments: ['Generic PLA @System', 'Generic PLA @System'] },
   bambu: { vendor: 'BBL', machine: 'Bambu Lab X1 Carbon 0.4 nozzle', process: '0.20mm Standard @BBL X1C', filaments: ['Bambu PLA Basic @BBL X1C'] },
 } as const
+
+/** The lists the engine fills itself in its merge of the presets (cli/presets.cpp, merge_metadata_key); preset-metadata gives them in the preset files. */
+export const PRESET_METADATA = ['inherits_group', 'different_settings_to_system', 'compatible_machine_expression_group', 'compatible_process_expression_group', 'print_compatible_printers'] as const
+export const PRESET_METADATA_MARK = 'sketch-smoke-preset-list'
 
 /** Settings that keep the generic cases' G-code plain: no brim, skirt, supports, arcs or z alignment. */
 export const PLAIN_OVERRIDES: Overrides = {
@@ -1366,6 +1373,39 @@ export const SMOKE_CASES: SmokeCase[] = [
       const g = readGcode(r.result, job)
       problems.push(...g.problems)
       if (g.scan) problems.push(...checkConfigValue(g.scan, CAPITAL_KEY.key, CAPITAL_KEY.value), ...checkConfigValue(g.scan, VALUE_RENAME.to, VALUE_RENAME.as))
+      return { problems, warnings: r.warnings }
+    },
+  },
+  {
+    id: 'preset-metadata',
+    title: `presets that carry the lists the engine fills in itself (${PRESET_METADATA.join(', ')}), as a project export may, and a process that gives a filament setting as an empty list, slice as without them`,
+    async run(env) {
+      const set = structuredClone(env.sets.generic)
+      // Shorter and longer than the engine's own lists, which hold one entry per preset: it writes them by index.
+      set.machine.inherits_group = []
+      set.machine.different_settings_to_system = []
+      set.process.inherits_group = [PRESET_METADATA_MARK]
+      set.process.compatible_machine_expression_group = [PRESET_METADATA_MARK]
+      set.process.print_compatible_printers = [PRESET_METADATA_MARK]
+      set.filaments[0]!.inherits_group = [PRESET_METADATA_MARK, PRESET_METADATA_MARK, PRESET_METADATA_MARK, PRESET_METADATA_MARK]
+      // The filament merge writes each filament's value into this list by index.
+      set.process.filament_type = []
+      const files = writePresetSet(join(env.dir, 'presets'), set)
+      const job = smokeJob({ command: 'slice', dir: env.dir, resources: env.resources, presets: files, overrides: cubeOverrides })
+      const r = await runJob(env, job, cube(CUBE.size), 'cube 20 mm')
+      const problems = [...r.problems]
+      if (!r.result?.ok) return { problems, warnings: r.warnings }
+      problems.push(...checkFixedLayers(r.result, cubeExpected(env.sets.generic)))
+      const g = readGcode(r.result, job)
+      problems.push(...g.problems)
+      if (!g.scan) return { problems, warnings: r.warnings }
+      const type = settingList(env.sets.generic.filaments[0]!, 'filament_type')[0]
+      if (type === undefined) problems.push('the expectation itself is off: the filament preset has no filament_type')
+      else problems.push(...checkConfigValue(g.scan, 'filament_type', type))
+      for (const key of PRESET_METADATA) {
+        const got = configValue(g.scan.lines, key)
+        if (got?.includes(PRESET_METADATA_MARK)) problems.push(`the G-code's config block gives ${key} = ${JSON.stringify(got)}, a preset file's list`)
+      }
       return { problems, warnings: r.warnings }
     },
   },

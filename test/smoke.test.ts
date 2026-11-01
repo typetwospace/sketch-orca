@@ -563,6 +563,7 @@ describe('jobs and the engine environment', () => {
       'filaments',
       'z-offset',
       'override-keys',
+      'preset-metadata',
       'crash-result',
       'refusals',
     ])
@@ -570,8 +571,9 @@ describe('jobs and the engine environment', () => {
     // Version 3 added filaments, crash-result, the feature lengths, the relationship targets and five
     // refusals; version 4 z-offset, override-keys, config-def's obsolete keys and two refusals;
     // version 5 the lowered nozzle past the top-of-print slack, config-def's stillDefined, the old
-    // name Orca renames for its value (override-keys) and the refusal of the value it drops.
-    expect(SMOKE_VERSION).toBe(5)
+    // name Orca renames for its value (override-keys) and the refusal of the value it drops;
+    // version 6 preset-metadata.
+    expect(SMOKE_VERSION).toBe(6)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
     expect(CAPITAL_KEY.key).not.toBe(CAPITAL_KEY.key.toLowerCase())
