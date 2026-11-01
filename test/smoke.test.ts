@@ -639,6 +639,23 @@ describe('jobs and the engine environment', () => {
     expect(set.machine.nozzle_volume).toBeUndefined()
   })
 
+  test('the crash handler (crash-result): it names every progress stage, and builds its message without snprintf or shared text', () => {
+    const common = readFileSync(join(import.meta.dir, '..', 'cli', 'common.cpp'), 'utf8')
+    const run = readFileSync(join(import.meta.dir, '..', 'cli', 'run.cpp'), 'utf8')
+    const table = /const char \*const CRASH_STAGES\[\] = \{([^}]*)\};/.exec(common)
+    expect(table).not.toBeNull()
+    const names = [...table![1]!.matchAll(/"([a-z0-9]+)"/g)].map((m) => m[1]!)
+    expect(names.at(-1)).toBe('other')
+    const stages = new Set([...run.matchAll(/progress\.line\("([a-z0-9]+)"/g)].map((m) => m[1]!))
+    for (const s of stages) expect({ s, named: names.includes(s) }).toEqual({ s, named: true })
+    // The crash-result case crashes during slice.
+    expect(names).toContain('slice')
+    // The code a crash runs: from write_crash_result to the end of on_signal.
+    const handlers = common.slice(common.indexOf('void write_crash_result('), common.indexOf('void install_crash_handler('))
+    expect(handlers).toContain('g_crash_result.exchange(nullptr)')
+    expect(handlers).not.toMatch(/\b(s?n?printf|std::string\s*\(|new |malloc)\b/)
+  })
+
   test('the file collisions: each names one file twice, and a result over an input writes nothing', () => {
     expect(new Set(COLLISIONS.map((c) => c.id)).size).toBe(COLLISIONS.length)
     const inputs = ['job', 'model']

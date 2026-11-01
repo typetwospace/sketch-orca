@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <sstream>
 
 #include <boost/filesystem.hpp>
@@ -322,43 +323,86 @@ std::string format_number(double v)
 
 namespace {
 
-// Set up front; the crash handlers only read them, and allocate nothing.
-std::atomic<bool> g_crash_armed{false};
-char              g_crash_stage[64] = "start";
-std::string       g_crash_head, g_crash_tail;
+// Set up front and never changed once published; the crash handlers only read them, through
+// lock-free atomics, and allocate nothing (sketch-orca, 2026-11-01). A handler may run on any thread
+// at any moment, also while another thread notes a stage, so it reads no text that is written in
+// place: the stage is an index into fixed names, and the result's parts are one object, published
+// whole and taken by the handler with an exchange.
+const char *const CRASH_STAGES[] = {"start", "job", "presets", "model", "orient", "arrange", "slice", "gcode", "3mf", "stats", "other"};
+const int         CRASH_STAGE_OTHER = int(std::size(CRASH_STAGES)) - 1;
+std::atomic<int>  g_crash_stage{0};
+
+struct CrashResult
+{
+    std::string head, tail;
 #ifdef _WIN32
-std::wstring g_crash_out, g_crash_tmp;
+    std::wstring out, tmp;
 #else
-std::string g_crash_out, g_crash_tmp;
+    std::string out, tmp;
 #endif
+};
+std::atomic<CrashResult *> g_crash_result{nullptr};
+
+// A message built in a fixed buffer, with no allocation or formatting library (snprintf is not
+// async-signal-safe).
+struct CrashText
+{
+    char   text[384] = {0};
+    size_t size = 0;
+    CrashText &add(const char *s)
+    {
+        for (; s != nullptr && *s != 0 && size + 1 < sizeof(text); ++s)
+            text[size++] = *s;
+        text[size] = 0;
+        return *this;
+    }
+    // Hexadecimal, at least `digits` digits.
+    CrashText &hex(unsigned long long v, int digits, bool upper)
+    {
+        char buf[17];
+        int  n = 0;
+        do {
+            const int d = int(v & 0xf);
+            buf[n++]    = char(d < 10 ? '0' + d : (upper ? 'A' : 'a') + d - 10);
+            v >>= 4;
+        } while ((v != 0 || n < digits) && n < 16);
+        char out[17];
+        for (int i = 0; i < n; ++i)
+            out[i] = buf[n - 1 - i];
+        out[n] = 0;
+        return add(out);
+    }
+};
 
 void write_crash_result(const char *what)
 {
-    if (!g_crash_armed.exchange(false))
+    const CrashResult *r = g_crash_result.exchange(nullptr);
+    if (r == nullptr)
         return;
-    char message[320];
-    std::snprintf(message, sizeof(message), "the engine crashed (%s) during '%s', in Orca's code", what, g_crash_stage);
+    const int stage = g_crash_stage.load();
+    CrashText message;
+    message.add("the engine crashed (").add(what).add(") during '").add(CRASH_STAGES[stage >= 0 && stage <= CRASH_STAGE_OTHER ? stage : CRASH_STAGE_OTHER]).add("', in Orca's code");
 #ifdef _WIN32
-    HANDLE h = CreateFileW(g_crash_tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE h = CreateFileW(r->tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE)
         return;
     DWORD      written = 0;
-    const bool ok      = WriteFile(h, g_crash_head.data(), DWORD(g_crash_head.size()), &written, nullptr) &&
-                    WriteFile(h, message, DWORD(std::strlen(message)), &written, nullptr) &&
-                    WriteFile(h, g_crash_tail.data(), DWORD(g_crash_tail.size()), &written, nullptr);
+    const bool ok      = WriteFile(h, r->head.data(), DWORD(r->head.size()), &written, nullptr) &&
+                    WriteFile(h, message.text, DWORD(message.size), &written, nullptr) &&
+                    WriteFile(h, r->tail.data(), DWORD(r->tail.size()), &written, nullptr);
     CloseHandle(h);
-    if (!ok || !MoveFileExW(g_crash_tmp.c_str(), g_crash_out.c_str(), MOVEFILE_REPLACE_EXISTING))
-        DeleteFileW(g_crash_tmp.c_str());
+    if (!ok || !MoveFileExW(r->tmp.c_str(), r->out.c_str(), MOVEFILE_REPLACE_EXISTING))
+        DeleteFileW(r->tmp.c_str());
 #else
-    const int fd = ::open(g_crash_tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    const int fd = ::open(r->tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0)
         return;
-    const size_t m  = std::strlen(message);
-    const bool   ok = ::write(fd, g_crash_head.data(), g_crash_head.size()) == ssize_t(g_crash_head.size()) &&
-                    ::write(fd, message, m) == ssize_t(m) && ::write(fd, g_crash_tail.data(), g_crash_tail.size()) == ssize_t(g_crash_tail.size());
+    const bool ok = ::write(fd, r->head.data(), r->head.size()) == ssize_t(r->head.size()) &&
+                    ::write(fd, message.text, message.size) == ssize_t(message.size) &&
+                    ::write(fd, r->tail.data(), r->tail.size()) == ssize_t(r->tail.size());
     ::close(fd);
-    if (!ok || ::rename(g_crash_tmp.c_str(), g_crash_out.c_str()) != 0)
-        ::unlink(g_crash_tmp.c_str());
+    if (!ok || ::rename(r->tmp.c_str(), r->out.c_str()) != 0)
+        ::unlink(r->tmp.c_str());
 #endif
 }
 
@@ -374,11 +418,11 @@ void write_crash_result(const char *what)
 LONG WINAPI on_unhandled_exception(EXCEPTION_POINTERS *info)
 {
     const EXCEPTION_RECORD *record = info != nullptr ? info->ExceptionRecord : nullptr;
-    char                    what[128];
-    int                     n = std::snprintf(what, sizeof(what), "exception 0x%08lX", record != nullptr ? (unsigned long) record->ExceptionCode : 0ul);
+    CrashText               what;
+    what.add("exception 0x").hex(record != nullptr ? (unsigned long long) record->ExceptionCode : 0ull, 8, true);
     // Where: the module's file name (not its folder) and the offset in it, for a crash report.
     HMODULE module = nullptr;
-    if (record != nullptr && n > 0 &&
+    if (record != nullptr &&
         GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR) record->ExceptionAddress, &module)) {
         wchar_t path[MAX_PATH];
         const DWORD len = GetModuleFileNameW(module, path, MAX_PATH);
@@ -393,10 +437,9 @@ LONG WINAPI on_unhandled_exception(EXCEPTION_POINTERS *info)
                 path[i] == L'_')
                 name[k++] = char(path[i]);
         name[k] = 0;
-        std::snprintf(what + n, sizeof(what) - size_t(n), " at %s+0x%llx", name,
-                      (unsigned long long) ((const char *) record->ExceptionAddress - (const char *) module));
+        what.add(" at ").add(name).add("+0x").hex((unsigned long long) ((const char *) record->ExceptionAddress - (const char *) module), 1, false);
     }
-    write_crash_result(what);
+    write_crash_result(what.text);
     crash_exit();
 }
 #endif
@@ -428,29 +471,29 @@ void install_crash_handler()
 
 void arm_crash_result(const std::string &out_path, const std::string &head, const std::string &tail)
 {
-    g_crash_armed = false;
-    g_crash_head  = head;
-    g_crash_tail  = tail;
+    auto *r = new CrashResult;
+    r->head = head;
+    r->tail = tail;
 #ifdef _WIN32
-    g_crash_out = boost::nowide::widen(out_path);
-    g_crash_tmp = boost::nowide::widen(out_path + ".crash.tmp");
+    r->out = boost::nowide::widen(out_path);
+    r->tmp = boost::nowide::widen(out_path + ".crash.tmp");
 #else
-    g_crash_out = out_path;
-    g_crash_tmp = out_path + ".crash.tmp";
+    r->out = out_path;
+    r->tmp = out_path + ".crash.tmp";
 #endif
-    g_crash_armed = true;
+    // The one this replaces is no handler's: a handler that took it left nullptr in its place.
+    delete g_crash_result.exchange(r);
 }
 
-void disarm_crash_result() { g_crash_armed = false; }
+void disarm_crash_result() { delete g_crash_result.exchange(nullptr); }
 
 void note_crash_stage(const std::string &stage)
 {
-    // The stage goes into a JSON string unescaped, so only plain characters are kept.
-    size_t n = 0;
-    for (char c : stage)
-        if (n + 1 < sizeof(g_crash_stage) && (std::isalnum((unsigned char) c) || c == '-' || c == '_' || c == ' '))
-            g_crash_stage[n++] = c;
-    g_crash_stage[n] = 0;
+    int index = CRASH_STAGE_OTHER;
+    for (int i = 0; i < CRASH_STAGE_OTHER; ++i)
+        if (stage == CRASH_STAGES[i])
+            index = i;
+    g_crash_stage.store(index);
     // A crash on purpose, for the smoke case that proves the crash result: SKETCH_ORCA_TEST_CRASH
     // names a stage ("slice" for an access violation there, "slice:abort" for an abort).
     static const char *const test_crash = std::getenv("SKETCH_ORCA_TEST_CRASH");
