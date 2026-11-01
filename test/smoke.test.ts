@@ -15,6 +15,8 @@ import {
   CUBE,
   PAUSE_LAYER_INDEX,
   POCKET,
+  FLUSH,
+  FLUSH_JOBS,
   REFUSALS,
   REFUSE,
   SMOKE_CASES,
@@ -564,6 +566,7 @@ describe('jobs and the engine environment', () => {
       'z-offset',
       'override-keys',
       'preset-metadata',
+      'flush-volumes',
       'crash-result',
       'refusals',
     ])
@@ -572,7 +575,7 @@ describe('jobs and the engine environment', () => {
     // refusals; version 4 z-offset, override-keys, config-def's obsolete keys and two refusals;
     // version 5 the lowered nozzle past the top-of-print slack, config-def's stillDefined, the old
     // name Orca renames for its value (override-keys) and the refusal of the value it drops;
-    // version 6 preset-metadata.
+    // version 6 preset-metadata and flush-volumes.
     expect(SMOKE_VERSION).toBe(6)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
@@ -586,6 +589,20 @@ describe('jobs and the engine environment', () => {
     expect(SMOKE_CASES.find((c) => c.id === 'override-keys')!.title).toContain(`${VALUE_RENAME.key} ${VALUE_RENAME.renamed}, read as ${VALUE_RENAME.to} = ${VALUE_RENAME.as}`)
     expect(SMOKE_PRESETS.generic2.filaments).toEqual(['Generic PLA @System', 'Generic PLA @System'])
     expect(SMOKE_PRESETS.generic2.machine).toBe(SMOKE_PRESETS.generic.machine)
+  })
+
+  test('the flush-volumes jobs: each is refused or checks config values, and changes only its copy of the presets', () => {
+    const ids = FLUSH_JOBS.map((j) => j.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const j of FLUSH_JOBS) expect((j.refused === undefined) !== (j.config === undefined)).toBe(true)
+    // Past Orca's largest flushing volume (g_max_flush_volume, 20000) and past what an int holds.
+    expect(Number(FLUSH.outOfRange)).toBeGreaterThan(2 ** 31)
+    const machine: FlatPreset = { name: 'm', type: 'machine', from: 'system' }
+    const set: PresetSet = { machine, process: { name: 'p', type: 'process', from: 'system' }, filaments: [{ name: 'f', type: 'filament', from: 'system' }] }
+    const copy = structuredClone(set)
+    FLUSH_JOBS.find((j) => j.id === 'nozzle-volume-out-of-range')!.presets!(copy)
+    expect(copy.machine.nozzle_volume).toEqual([FLUSH.outOfRange])
+    expect(set.machine.nozzle_volume).toBeUndefined()
   })
 
   test('toolChanges lists the T commands without their comments', () => {
@@ -752,6 +769,7 @@ describe('exit codes, refusals and info', () => {
       'gcode-folder-unmakeable',
     ])
     for (const r of REFUSALS) expect(`${r.code} ${table.get(r.code)}`).toBe(`${r.code} ${r.exitCode}`)
+    for (const j of FLUSH_JOBS) if (j.refused) expect(`${j.refused.code} ${table.get(j.refused.code)}`).toBe(`${j.refused.code} ${j.refused.exitCode}`)
     const dir = resolve(scratch, 'refuse')
     const res = resolve(scratch, 'resources')
     const presets = { machine: join(dir, 'machine.json'), process: join(dir, 'process.json'), filaments: [join(dir, 'filament_1.json')] }

@@ -347,6 +347,17 @@ bool bool_values(const DynamicPrintConfig &cfg, const char *key, std::vector<uns
     return true;
 }
 
+// A volume or length the flush computation takes as a whole number, as Orca's int() does. A value
+// past the largest flushing volume Orca computes cannot be meant, and its conversion to int would be
+// undefined (sketch-orca, 2026-11-01).
+int flush_input(double v, const char *key)
+{
+    if (!std::isfinite(v) || std::fabs(v) > double(g_max_flush_volume))
+        fail("config-invalid", std::string(key) + " cannot be " + format_number(v) + " for the flushing volumes (at most " +
+                                   std::to_string(g_max_flush_volume) + " either way)");
+    return int(v);
+}
+
 // get_min_flush_volumes in slic3r/GUI/Plater.cpp, which the stock command line calls.
 std::vector<int> min_flush_volumes(const DynamicPrintConfig &cfg, size_t nozzle_id)
 {
@@ -354,7 +365,7 @@ std::vector<int> min_flush_volumes(const DynamicPrintConfig &cfg, size_t nozzle_
     std::vector<double> nozzle_volume;
     if (float_values(cfg, "nozzle_volume", nozzle_volume) && !nozzle_volume.empty()) {
         const double v    = nozzle_id < nozzle_volume.size() ? nozzle_volume[nozzle_id] : nozzle_volume.front();
-        nozzle_volume_val = std::isnan(v) ? 0 : int(v);
+        nozzle_volume_val = std::isnan(v) ? 0 : flush_input(v, "nozzle_volume");
     }
 
     int machine_enabled_level = 0;
@@ -378,7 +389,7 @@ std::vector<int> min_flush_volumes(const DynamicPrintConfig &cfg, size_t nozzle_
     std::vector<int> out;
     for (size_t idx = 0; idx < filament_size; ++idx) {
         int extra_flush_volume = nozzle_volume_val;
-        int retract_length     = machine_enabled_level && machine_activated ? int(at(printer_distance, nozzle_id, 18.)) : 0;
+        int retract_length     = machine_enabled_level && machine_activated ? flush_input(at(printer_distance, nozzle_id, 18.), "retraction_distances_when_cut") : 0;
 
         const unsigned char filament_activated     = at(filament_long, idx, (unsigned char) 0);
         const double        filament_retract_length = at(filament_distance, idx, 18.);
@@ -386,9 +397,9 @@ std::vector<int> min_flush_volumes(const DynamicPrintConfig &cfg, size_t nozzle_
             retract_length = 0;
         else if (filament_activated == 1 && machine_enabled_level == LongRectrationLevel::EnableFilament) {
             if (!std::isnan(filament_retract_length))
-                retract_length = int(filament_retract_length);
+                retract_length = flush_input(filament_retract_length, "filament_retraction_distances_when_cut");
             else
-                retract_length = int(at(printer_distance, nozzle_id, 18.));
+                retract_length = flush_input(at(printer_distance, nozzle_id, 18.), "retraction_distances_when_cut");
         }
         extra_flush_volume -= int(PI * 1.75 * 1.75 / 4 * retract_length);
         out.push_back(extra_flush_volume);
@@ -672,9 +683,10 @@ std::string find_printer_model_id(const std::string &resources, const std::strin
 BedType default_bed_type(const DynamicPrintConfig &machine, const std::string &model_id)
 {
     if (const auto *opt = machine.option<ConfigOptionString>("default_bed_type"); opt != nullptr && !opt->value.empty()) {
-        const int v = std::atoi(opt->value.c_str());
-        if (v > 0 && v < int(btCount))
-            return BedType(v);
+        // atoi's number, read without its undefined overflow (sketch-orca, 2026-11-01).
+        const long v = std::strtol(opt->value.c_str(), nullptr, 10);
+        if (v > 0 && v < long(btCount))
+            return BedType(int(v));
         return btPEI;
     }
     if (model_id == "BL-P001" || model_id == "BL-P002" || model_id == "C13")

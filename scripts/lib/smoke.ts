@@ -28,6 +28,8 @@
 //   preset-metadata  preset files that carry the lists the engine fills in itself (inherits_group...), shorter or
 //                    longer than its own, and a process with a filament setting as an empty list: the cube slices,
 //                    with the filament's filament_type and none of the files' lists
+//   flush-volumes    the flushing volumes between filaments: a nozzle_volume past what an int holds is refused
+//                    (config-invalid) instead of being converted
 //   crash-result     an engine that crashes in Orca's code (SKETCH_ORCA_TEST_CRASH) still writes its result:
 //                    internal-error, exit code 255, no outputs
 //   refusals         a missing model, an unknown setting (also one with capital letters), a key of the preset files as
@@ -1092,6 +1094,30 @@ export const REFUSALS: Refusal[] = [
   },
 ]
 
+/** A volume past the largest flushing volume Orca computes (20000 mm³), which its int() would overflow. */
+export const FLUSH = { outOfRange: '1e100' } as const
+
+/** A job of the flush-volumes case: the cube, sliced with these presets and overrides, refused or giving these config values. */
+export interface FlushJob {
+  id: string
+  set: keyof typeof SMOKE_PRESETS
+  presets?: (set: PresetSet) => void
+  overrides?: Overrides
+  refused?: RefusalExpectation
+  config?: Record<string, string>
+}
+
+export const FLUSH_JOBS: FlushJob[] = [
+  {
+    id: 'nozzle-volume-out-of-range',
+    set: 'generic',
+    presets: (set) => {
+      set.machine.nozzle_volume = [FLUSH.outOfRange]
+    },
+    refused: { code: 'config-invalid', exitCode: -18, mentions: 'nozzle_volume' },
+  },
+]
+
 export const SMOKE_CASES: SmokeCase[] = [
   {
     id: 'version',
@@ -1407,6 +1433,36 @@ export const SMOKE_CASES: SmokeCase[] = [
         if (got?.includes(PRESET_METADATA_MARK)) problems.push(`the G-code's config block gives ${key} = ${JSON.stringify(got)}, a preset file's list`)
       }
       return { problems, warnings: r.warnings }
+    },
+  },
+  {
+    id: 'flush-volumes',
+    title: `the flushing volumes between filaments: a nozzle_volume of ${FLUSH.outOfRange} mm³ is refused (config-invalid), not converted past an int`,
+    async run(env) {
+      const problems: string[] = []
+      const warnings: string[] = []
+      for (const j of FLUSH_JOBS) {
+        const dir = join(env.dir, j.id)
+        mkdirSync(dir, { recursive: true })
+        const set = structuredClone(env.sets[j.set])
+        j.presets?.(set)
+        const files = writePresetSet(join(dir, 'presets'), set)
+        const job = smokeJob({ command: 'slice', dir, resources: env.resources, presets: files, overrides: { ...cubeOverrides, ...j.overrides } })
+        const r = await runJob({ ...env, dir }, job, cube(CUBE.size), 'cube 20 mm', j.refused ? 'refused' : 'done')
+        const named = (s: string) => `${j.id}: ${s}`
+        problems.push(...r.problems.map(named))
+        warnings.push(...r.warnings.map(named))
+        if (!r.result) continue
+        if (j.refused) {
+          problems.push(...checkRefusal(r.result, r.code, j.refused).map(named))
+          continue
+        }
+        if (!r.result.ok) continue
+        const g = readGcode(r.result, job)
+        problems.push(...g.problems.map(named))
+        if (g.scan) for (const [key, want] of Object.entries(j.config ?? {})) problems.push(...checkConfigValue(g.scan, key, want).map(named))
+      }
+      return { problems, warnings }
     },
   },
   {
