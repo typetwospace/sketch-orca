@@ -84,6 +84,9 @@ describe('checkout', () => {
     // MinGW.cmake checks for the tools the pipeline's toolchain provides.
     expect(added).toContain('foreach (_tool usr/bin/bash.exe usr/bin/make.exe usr/bin/m4.exe usr/bin/cygpath.exe mingw64/bin/gcc.exe mingw64/bin/strip.exe)')
     expect(added).toContain('option(DEP_MINGW_CHECK ')
+    // The archives keep their own time stamps (Orca sets CMP0135 NEW), or make may remake gmp.info with a makeinfo the tree lacks.
+    expect(added).toContain('set(_timestamps DOWNLOAD_EXTRACT_TIMESTAMP ON)')
+    expect(added).toMatch(/DOWNLOAD_DIR \$\{DEP_DOWNLOAD_DIR\}\/\$\{name\}\n\s+\$\{_timestamps\}\n/)
     // build.sh: only the tree's programs, no time stamps, libgcc linked in, and the .def files lib.exe reads.
     const buildSh = text.slice(text.indexOf('diff --git a/deps/MinGW/build.sh'))
     expect(buildSh).toContain('+export PATH=/usr/bin\n')

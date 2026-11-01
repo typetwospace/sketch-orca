@@ -10,7 +10,10 @@ DEP_MINGW_ROOT, an MSYS2 tree with bash, make, m4 and the GCC toolchain of its m
 environment: with it, an MSVC build builds those same two archives, pinned by the same SHA-256s,
 as DLLs with that GCC (deps/MinGW/MinGW.cmake and deps/MinGW/build.sh, which runs their own
 configure scripts and makefiles), runs their test suites (DEP_MINGW_CHECK, on by default), and
-makes MSVC import libraries for them with lib.exe from the .def files their builds write. GMP and
+makes MSVC import libraries for them with lib.exe from the .def files their builds write. The
+archives are unpacked with their own time stamps, so make builds them as released: with the
+unpacking times that Orca's CMP0135 NEW gives instead, a generated file such as gmp.info can come
+out older than its source, and make would remake it with tools the tree does not have. GMP and
 MPFR build with GCC, not MSVC. The DLLs load only Windows' own DLLs (msvcrt.dll, the C runtime
 CGAL's DLLs load too, and MPFR also GMP's), link libgcc statically, and carry no time stamp and no
 symbols. GMP 6 keeps GMP 5's ABI and DLL name, libgmp-10.dll; MPFR 4 is libmpfr-6.dll, which
@@ -94,7 +97,7 @@ diff --git a/deps/MinGW/MinGW.cmake b/deps/MinGW/MinGW.cmake
 new file mode 100644
 --- /dev/null
 +++ b/deps/MinGW/MinGW.cmake
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,87 @@
 +# Sketch (sketch-orca), 2026-11-01: added for Sketch.
 +#
 +# GMP and MPFR for an MSVC build, built from their source packages. Upstream copies prebuilt DLLs on
@@ -152,6 +155,15 @@ new file mode 100644
 +    if (P_DEPENDS)
 +        set(_depends DEPENDS ${P_DEPENDS})
 +    endif ()
++    # The package's own time stamps. Orca's deps set CMP0135 NEW, which gives each unpacked file the time
++    # it was unpacked, in the archive's order, so a generated file (gmp.info, configure, Makefile.in)
++    # could come out older than what it is made from, and make would remake it with tools that are not in
++    # the tree (makeinfo, automake) instead of building the package as released. Before CMake 3.24 (no
++    # CMP0135) the archive's time stamps are kept anyway.
++    set(_timestamps "")
++    if (NOT CMAKE_VERSION VERSION_LESS 3.24)
++        set(_timestamps DOWNLOAD_EXTRACT_TIMESTAMP ON)
++    endif ()
 +    set(_headers "")
 +    foreach (_h ${P_HEADERS})
 +        list(APPEND _headers COMMAND ${CMAKE_COMMAND} -E copy ${_prefix}/include/${_h} ${DESTDIR}/include/)
@@ -160,6 +172,7 @@ new file mode 100644
 +        URL ${P_URL}
 +        URL_HASH ${P_URL_HASH}
 +        DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/${name}
++        ${_timestamps}
 +        ${_patch}
 +        BUILD_IN_SOURCE ON
 +        CONFIGURE_COMMAND ""
