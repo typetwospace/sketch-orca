@@ -34,6 +34,8 @@
 //   prime-tower      where the prime tower goes (wipe_tower_x/y): an object that sets only raft_layers keeps the
 //                    print's support on filament 2, so its tower is placed as for a filament change; on the printer's
 //                    bed moved by -150, -150 (0,0 at its centre, as a delta's) the tower moves with the bed
+//   imported-settings a 3MF project (a .gcode.3mf the engine wrote) whose object has wall_loops 6 slices, as a model
+//                    the job does not list, with the plate's wall_loops 2: its inner walls are the plain cube's
 //   file-collisions  a --progress on the job or the model, and a --out on the job, the model or output.gcode, are
 //                    refused before anything is written over them: invalid-params (exit -2), and when the result
 //                    itself would replace an input, nothing written at all; the job and the model keep their bytes
@@ -1234,6 +1236,13 @@ export const PRIME_TOWER_JOBS: SettingsJob[] = [
   },
 ]
 
+/**
+ * imported-settings: the cube sliced with wall_loops PLAIN for the plate and WALLS for its object
+ * (an object override), written to a .gcode.3mf whose object carries WALLS, then that project
+ * sliced as a model with the plate at PLAIN and no object listed.
+ */
+export const IMPORTED_WALLS = { plain: 2, object: 6, tolerance: 0.03 } as const
+
 /** The files of a run in file-collisions: the job file, --out, --progress, the model and output.gcode. */
 export type RunFile = 'job' | 'result' | 'progress' | 'model' | 'gcode'
 
@@ -1613,6 +1622,55 @@ export const SMOKE_CASES: SmokeCase[] = [
       const shifted = at('bed-shifted')
       if (tower && shifted && (Number(shifted.x) !== Number(tower.x) + BED_SHIFT[0] || Number(shifted.y) !== Number(tower.y) + BED_SHIFT[1]))
         problems.push(`bed-shifted: the tower is at ${shifted.x}, ${shifted.y}; on the bed moved by ${BED_SHIFT.join(', ')} it belongs at ${Number(tower.x) + BED_SHIFT[0]}, ${Number(tower.y) + BED_SHIFT[1]}`)
+      return { problems, warnings }
+    },
+  },
+  {
+    id: 'imported-settings',
+    title: `a 3MF project whose object has wall_loops ${IMPORTED_WALLS.object} slices, unlisted, with the plate's ${IMPORTED_WALLS.plain}: its inner walls are the plain cube's`,
+    async run(env) {
+      const problems: string[] = []
+      const warnings: string[] = []
+      const plate: Overrides = { ...cubeOverrides, wall_loops: String(IMPORTED_WALLS.plain) }
+      const innerWall = async (id: string, setUp: (dir: string) => { job: Job; model?: Mesh }) => {
+        const dir = join(env.dir, id)
+        rmSync(dir, { recursive: true, force: true })
+        mkdirSync(dir, { recursive: true })
+        const { job, model } = setUp(dir)
+        const r = await runJob({ ...env, dir }, job, model, 'cube 20 mm')
+        const named = (s: string) => `${id}: ${s}`
+        problems.push(...r.problems.map(named))
+        warnings.push(...r.warnings.map(named))
+        const mm = r.result?.ok ? r.result.stats?.features['Inner wall']?.mm : undefined
+        if (r.result?.ok && mm === undefined) problems.push(named('the result has no Inner wall length'))
+        return { job, mm }
+      }
+      // The object's own walls, written into the project.
+      const exported = await innerWall('export', (dir) => ({
+        job: smokeJob({
+          command: 'slice',
+          dir,
+          resources: env.resources,
+          presets: env.files.generic,
+          overrides: plate,
+          objects: [{ index: 0, overrides: { wall_loops: String(IMPORTED_WALLS.object) }, layerHeights: { mode: 'fixed' }, heightRanges: [] }],
+          bambu3mf: true,
+        }),
+        model: cube(CUBE.size),
+      }))
+      const plain = await innerWall('plain', (dir) => ({ job: smokeJob({ command: 'slice', dir, resources: env.resources, presets: env.files.generic, overrides: plate }), model: cube(CUBE.size) }))
+      const project = exported.job.output.bambu3mf
+      if (!project || !existsSync(project)) return { problems: [...problems, 'export: no .gcode.3mf was written'], warnings }
+      const imported = await innerWall('from-3mf', (dir) => {
+        const path = join(dir, 'model.3mf')
+        writeFileSync(path, readFileSync(project))
+        return { job: { ...smokeJob({ command: 'slice', dir, resources: env.resources, presets: env.files.generic, overrides: plate }), model: { path } } }
+      })
+      if (exported.mm === undefined || plain.mm === undefined || imported.mm === undefined) return { problems, warnings }
+      // The object's walls took effect where the job set them: more inner wall than the plain cube.
+      if (!(exported.mm > plain.mm * 1.5)) problems.push(`the expectation itself is off: the object's ${IMPORTED_WALLS.object} walls gave ${exported.mm} mm of inner wall, the plain cube ${plain.mm} mm`)
+      if (Math.abs(imported.mm - plain.mm) > plain.mm * IMPORTED_WALLS.tolerance)
+        problems.push(`from-3mf: ${imported.mm} mm of inner wall, the plain cube ${plain.mm} mm: the project's wall_loops ${IMPORTED_WALLS.object} was used`)
       return { problems, warnings }
     },
   },

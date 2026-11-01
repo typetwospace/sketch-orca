@@ -277,6 +277,23 @@ Model load_model(const Job &job)
         fail("model-unreadable", "the model " + job.model_path + " has no objects");
     // Custom G-code per layer comes from the job only.
     model.plates_custom_gcodes.clear();
+    // So do the settings (sketch-orca, 2026-11-01): an object the job does not list prints with the
+    // plate's settings, so the settings a 3MF project gives its objects and parts, its height ranges
+    // and its variable layer heights are dropped (Orca's loader reads them even without the project's
+    // configuration). The geometry, the painting (colour, supports, seams, fuzzy skin, brim ears) and
+    // the filament each object and part prints with (extruder) stay.
+    const auto keep_filament_only = [](ModelConfig &config) {
+        for (const std::string &key : config.keys())
+            if (key != "extruder")
+                config.erase(key);
+    };
+    for (ModelObject *mo : model.objects) {
+        keep_filament_only(mo->config);
+        mo->layer_config_ranges.clear();
+        mo->layer_height_profile.clear();
+        for (ModelVolume *v : mo->volumes)
+            keep_filament_only(v->config);
+    }
     model.curr_plate_index = 0;
     for (ModelObject *mo : model.objects)
         mo->ensure_on_bed();

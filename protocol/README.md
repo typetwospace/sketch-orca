@@ -95,7 +95,7 @@ fatal to 5 trace; 1, errors, by default).
 | `command` | `slice` (G-code, and a project file when asked), `layers` (the layer list only) or `info` (the model and presets only, nothing sliced). |
 | `resources` | The engine's resources folder: `engine.resources` of its manifest, made absolute. |
 | `workDir` | A folder the engine may write scratch files to. |
-| `model.path` | A `.3mf`, `.stl` or `.obj` file. |
+| `model.path` | A `.3mf`, `.stl` or `.obj` file. Of a 3MF project the engine takes the objects, their parts and painting, and the filament each object and part prints with (`extruder`); the project's own settings for its objects and parts, height ranges and layer heights are not used. |
 | `presets` | Flattened preset files (no `inherits` left to resolve): one machine, one process, and one filament for each filament the print uses, in extruder order. |
 | `overrides` | Settings for the whole print, applied over the presets. |
 | `objects` | Per object of the model, by its 0-based `index`: its own `overrides`, its `layerHeights` and its `heightRanges` (settings for a height range of the object). Objects not listed print with the plate's settings. |

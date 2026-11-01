@@ -571,6 +571,7 @@ describe('jobs and the engine environment', () => {
       'preset-metadata',
       'flush-volumes',
       'prime-tower',
+      'imported-settings',
       'file-collisions',
       'crash-result',
       'refusals',
@@ -580,8 +581,8 @@ describe('jobs and the engine environment', () => {
     // refusals; version 4 z-offset, override-keys, config-def's obsolete keys and two refusals;
     // version 5 the lowered nozzle past the top-of-print slack, config-def's stillDefined, the old
     // name Orca renames for its value (override-keys) and the refusal of the value it drops;
-    // version 6 preset-metadata, flush-volumes, prime-tower, file-collisions and the drive-rooted
-    // work folder refusal.
+    // version 6 preset-metadata, flush-volumes, prime-tower, imported-settings, file-collisions and
+    // the drive-rooted work folder refusal.
     expect(SMOKE_VERSION).toBe(6)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
