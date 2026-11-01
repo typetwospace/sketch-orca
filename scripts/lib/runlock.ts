@@ -9,8 +9,14 @@
 // and no run removes the record of a run that may hold the lock (only lower numbers). It gives the
 // lock back by creating the next number again, as free, which fails when another run has taken it
 // over since.
+//
+// A record is published whole (sketch-orca, 2026-11-01): it is written to a file of the run's own
+// first and then hard-linked as <n>.json, which fails when that number exists. So no run ever sees
+// a record half written, and a record that cannot be read is never taken for a dead run's, however
+// old it is: the lock stays held until someone removes it.
 
-import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { StepError } from './run.ts'
 
@@ -62,21 +68,28 @@ function generations(dir: string): number[] {
   return out.sort((a, b) => a - b)
 }
 
-/** Creates record `n`; false when it exists. */
-function createRecord(dir: string, n: number, record: RunLockInfo | { free: true }): boolean {
-  let fd: number
+/**
+ * Creates record `n`, whole: written to a file of this run's own, then linked as <n>.json (a link
+ * is made at once, and not over a file that exists). False when record `n` exists. `beforePublish`
+ * runs between the two (tests).
+ */
+function createRecord(dir: string, n: number, record: RunLockInfo | { free: true }, beforePublish?: (n: number) => void): boolean {
+  const own = join(dir, `${process.pid}-${randomUUID()}.tmp`)
+  writeFileSync(own, JSON.stringify(record) + '\n', { flag: 'wx' })
   try {
-    fd = openSync(join(dir, `${n}.json`), 'wx')
+    beforePublish?.(n)
+    linkSync(own, join(dir, `${n}.json`))
+    return true
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'EEXIST') return false
+    if (code === 'EPERM' || code === 'ENOTSUP' || code === 'ENOSYS') {
+      throw new StepError(`cannot create the lock record ${join(dir, `${n}.json`)}: the file system of the work folder makes no hard links (${code}); use a work folder on one that does (SKETCH_ORCA_HOME)`)
+    }
     throw err
-  }
-  try {
-    writeSync(fd, JSON.stringify(record) + '\n')
   } finally {
-    closeSync(fd)
+    rmSync(own, { force: true })
   }
-  return true
 }
 
 function removeBelow(dir: string, n: number): void {
@@ -99,6 +112,8 @@ export interface RunLockOptions {
   pid?: number
   alive?: (pid: number) => boolean
   now?: () => number
+  /** Runs when record `n` is written and not yet published (tests). */
+  beforePublish?: (n: number) => void
 }
 
 function busy(held: RunLockInfo, home: string, path: string): StepError {
@@ -109,7 +124,8 @@ function busy(held: RunLockInfo, home: string, path: string): StepError {
  * Takes the lock of `home` (<home>/run.lock.d) for `command`, or throws a StepError naming the run
  * that holds it (or the run of an earlier pipeline that holds <home>/run.lock). The returned
  * function gives the lock back, unless another run has taken it over since. A record that cannot
- * be read is a run that is just starting while it is younger than 10 s, and stale after that.
+ * be read (damaged, or being written by an earlier version of the pipeline, which did not publish
+ * records whole) holds the lock however old it is.
  */
 export function takeRunLock(home: string, command: string, opts: RunLockOptions = {}): () => void {
   const pid = opts.pid ?? process.pid
@@ -126,21 +142,16 @@ export function takeRunLock(home: string, command: string, opts: RunLockOptions 
       const path = join(dir, `${top}.json`)
       const held = readRecord(path)
       if (held === undefined) {
-        let age = Infinity
-        try {
-          age = now() - statSync(path).mtimeMs
-        } catch {
-          // Gone in the meantime: look again.
-          continue
-        }
-        if (age < 10_000) throw new StepError(`another pipeline run is starting in ${home} (${path} was just created); wait for it to finish`)
+        // Removed in the meantime (a higher number came): look again.
+        if (!existsSync(path)) continue
+        throw new StepError(`the pipeline lock record ${path} cannot be read; another run may hold ${home}. If no pipeline run is going, delete ${dir}`)
       } else if (held !== 'free' && held.pid !== pid && alive(held.pid)) {
         throw busy(held, home, dir)
       }
     }
     // The holder is gone, or the lock is free: the next number is the lock, for whichever run creates it.
     const mine = top + 1
-    if (!createRecord(dir, mine, { pid, command, startedAt: new Date(now()).toISOString() })) continue
+    if (!createRecord(dir, mine, { pid, command, startedAt: new Date(now()).toISOString() }, opts.beforePublish)) continue
     // A run that read an older number may have created one below ours since lower numbers were
     // removed; it is not the highest, and that run gives up below. Ours is lower than another only
     // the same way.

@@ -82,17 +82,56 @@ describe('run lock', () => {
     })
   })
 
-  test('an unreadable lock is a run that is starting while it is young, and stale after 10 s', () => {
+  test('an unreadable record holds the lock however old it is: it is never taken for a dead run', () => {
     withHome((home) => {
       mkdirSync(join(home, RUN_LOCK_DIR))
       const path = join(home, RUN_LOCK_DIR, '1.json')
+      // An empty record, as an earlier pipeline leaves while it writes one.
       writeFileSync(path, '')
       const t = Date.now()
-      expect(() => takeRunLock(home, 'build', { pid: 404, alive: () => true, now: () => t })).toThrow(/is starting/)
-      utimesSync(path, new Date(t - 60_000), new Date(t - 60_000))
-      const release = takeRunLock(home, 'build', { pid: 404, alive: () => true, now: () => t })
-      expect(runLockHolder(home)?.pid).toBe(404)
-      release()
+      expect(() => takeRunLock(home, 'build', { pid: 404, alive: () => true, now: () => t })).toThrow(/cannot be read; another run may hold/)
+      utimesSync(path, new Date(t - 3_600_000), new Date(t - 3_600_000))
+      expect(() => takeRunLock(home, 'build', { pid: 404, alive: () => false, now: () => t })).toThrow(/If no pipeline run is going, delete/)
+      expect(readdirSync(join(home, RUN_LOCK_DIR))).toEqual(['1.json'])
+      // Removed by hand, the lock is free.
+      rmSync(join(home, RUN_LOCK_DIR), { recursive: true })
+      takeRunLock(home, 'build', { pid: 404, alive: () => true, now: () => t })()
+    })
+  })
+
+  test('a record is published whole: a run that writes its record while another takes the lock does not get it too', () => {
+    withHome((home) => {
+      // The audit's interleaving: run A has written its record and stalls before publishing it; run
+      // B looks meanwhile. B must not see a half-written record, and only one of the two holds the lock.
+      let releaseB: (() => void) | undefined
+      const seenByB: string[][] = []
+      const stallA = (n: number): void => {
+        if (releaseB) return
+        expect(existsSync(join(home, RUN_LOCK_DIR, `${n}.json`))).toBe(false)
+        seenByB.push(readdirSync(join(home, RUN_LOCK_DIR)).filter((f) => f.endsWith('.json')))
+        releaseB = takeRunLock(home, 'stage', { pid: 202, alive: (p) => p === 202 || p === 101 })
+      }
+      expect(() => takeRunLock(home, 'build', { pid: 101, alive: (p) => p === 202, beforePublish: stallA })).toThrow(/another pipeline run \(stage, process 202/)
+      expect(seenByB).toEqual([[]])
+      expect(runLockHolder(home)).toMatchObject({ pid: 202, command: 'stage' })
+      // A left no record and no file of its own behind.
+      expect(readdirSync(join(home, RUN_LOCK_DIR))).toEqual(['1.json'])
+      releaseB!()
+      expect(runLockHolder(home)).toBeUndefined()
+      // Over a dead holder, the same.
+      writeFileSync(join(home, RUN_LOCK_DIR, '9.json'), JSON.stringify({ pid: 999_999, command: 'smoke', startedAt: 'then' }))
+      let releaseC: (() => void) | undefined
+      expect(() =>
+        takeRunLock(home, 'build', {
+          pid: 101,
+          alive: (p) => p === 303,
+          beforePublish: () => {
+            if (!releaseC) releaseC = takeRunLock(home, 'source', { pid: 303, alive: (p) => p === 303 })
+          },
+        }),
+      ).toThrow(/another pipeline run \(source, process 303/)
+      expect(runLockHolder(home)).toMatchObject({ pid: 303, command: 'source' })
+      releaseC!()
     })
   })
 

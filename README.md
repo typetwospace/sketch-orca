@@ -89,7 +89,10 @@ take (an unknown command, or `--step` with another value). The commands that wri
 `check` and `env`) hold `<work>/run.lock.d`, which names their process, while they run: a second
 run on the same work folder stops with exit 3 and names the first, and a lock whose process is
 gone is taken over, by one run only (each run's record is created once, numbered, and the highest
-holds). A run of an earlier pipeline that holds `<work>/run.lock` holds the folder too.
+holds; a record is written first and then linked into place whole, so the work folder's file
+system must make hard links). A record that cannot be read is never taken over, however old: delete
+`<work>/run.lock.d` by hand when no run is going. A run of an earlier pipeline that holds
+`<work>/run.lock` holds the folder too.
 
 ## Where things go
 
