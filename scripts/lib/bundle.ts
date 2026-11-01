@@ -12,9 +12,9 @@
 //                                   refused, so no local file is published)
 //   dependencies/<Name>/<file>      the source packages Orca's dependency build downloaded, each one
 //                                   checked against the SHA-256 that Orca's recipe pins
-//   prebuilt/<Name>/<file>          the source packages of the libraries Orca ships prebuilt (GMP on
-//                                   Windows), each pinned to the very binary the engine ships
-//                                   (PREBUILT_SOURCES); the Orca archive keeps these binaries
+//   prebuilt/<Name>/<file>          the source packages of the libraries Orca ships prebuilt (GMP and
+//                                   MPFR on Windows), each pinned to the very binaries the engine
+//                                   ships and the Orca archive keeps (PREBUILT_SOURCES)
 //   LICENSES/                       the licence texts shipped with the engine
 //   BUILDING.md                     how to build the engine from this folder
 //   bundle.json                     sketch-orca-source/1: what this is the source of, and what it holds
@@ -28,6 +28,7 @@
 // source, stop the step, unless --allow-missing; bundle.json and BUILDING.md then say the bundle is
 // not complete.
 
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { Context } from '../orca.ts'
@@ -43,7 +44,7 @@ import { currentPlatform } from './toolchain.ts'
 
 export const SOURCE_FORMAT = 'sketch-orca-source/1'
 /** Bump when the bundle's layout changes: a bundle of an older version is made again. */
-export const SOURCE_VERSION = 4
+export const SOURCE_VERSION = 5
 
 /**
  * The toolchain the engine has been built with, on Windows x64 (2026-10-30, 2026-11-01), as BUILDING.md (the
@@ -186,6 +187,11 @@ export interface PrebuiltLibrary {
   binarySha256?: string
   /** Its source package, when PREBUILT_SOURCES pins that very binary; in the bundle as prebuilt/<name>/<file>. */
   source?: { file: string; urls: string[]; size: number; sha256: string; provenance: string; recipe?: string }
+  /**
+   * Its binaries the bundle's Orca archive keeps (withArchivedSources), each `sourced` when a pin
+   * lists that very file and its source package is `source`.
+   */
+  archived?: { path: string; sha256: string; sourced: boolean }[]
 }
 
 export function gmpHeaderVersion(text: string): string | undefined {
@@ -276,6 +282,12 @@ export interface PrebuiltSource {
   /** How the binary was made from it, as far as is known (BUILDING.md: "The binary is ..."). */
   provenance: string
   /**
+   * The files of OrcaSlicer's tree at the locked commit that are this very build, by path and
+   * SHA-256: the DLL and the import library made from it. The Orca archive keeps them, and the
+   * bundle carries the package as their source only when these match (withArchivedSources).
+   */
+  archived: readonly { path: string; sha256: string }[]
+  /**
    * The bundle's recipe that makes this very binary from the package (a file of engine/), when there
    * is one. Without it the bundle has the source but not the scripts to rebuild the binary, and is
    * not complete (`source` stops unless --allow-missing).
@@ -296,6 +308,21 @@ export interface PrebuiltSource {
  * SHA-256 from gmplib.org, ftp.gnu.org, ftpmirror.gnu.org and mirrors.kernel.org, and a good
  * signature (gmp-5.0.1.tar.bz2.sig) by the GMP Project key
  * 73D4 6C36 6746 1E4B D939 7249 5D6D 47DF DB89 9F46 from the GNU keyring (checked 2026-10-31).
+ *
+ * MPFR 3.0.0, Windows x64. OrcaSlicer's deps/MPFR/mpfr at v2.4.2 (libmpfr-4.dll, libmpfr-4.lib,
+ * include/mpfr.h, include/mpf2mpfr.h, mpfr.README, mpfr.COPYING, mpfr.COPYING.LESSER) is byte for
+ * byte the MPFR of the same CGAL package (checked 2026-11-01): a MinGW-w64 build of the MPFR 3.0.0
+ * release by the same compiler as the GMP above, linked against that libgmp-10.dll. The DLL's debug
+ * strings name the mpfr-3.0.0/ sources and GNU C 4.4.5 20100604 (prerelease) [svn/rev.160271 -
+ * mingw-w64/oz]; mpfr.h and mpf2mpfr.h are the release's own, unchanged, and its version string is
+ * 3.0.0, so none of MPFR's later 3.0.0 patches was applied. The package is the MPFR release archive:
+ * the same SHA-256 from www.mpfr.org and ftp.gnu.org, and a good signature (mpfr-3.0.0.tar.bz2.sig
+ * and .asc) by Vincent Lefevre's key 07F3 DBBE CC1A 3960 5078 094D 980C 1976 98C3 739D from the GNU
+ * keyring (checked 2026-11-01). The engine does not load MPFR; Orca's Windows dependency build
+ * copies it, so the Orca archive keeps it.
+ *
+ * Each .lib is an import library in Microsoft's format (__IMPORT_DESCRIPTOR_libgmp-10), made from
+ * its DLL's exports, so it is pinned with the DLL.
  */
 export const PREBUILT_SOURCES: readonly PrebuiltSource[] = [
   {
@@ -310,6 +337,27 @@ export const PREBUILT_SOURCES: readonly PrebuiltSource[] = [
     sha256: 'a2a610f01fd3298dc08c87bf30498c2402590e1bcb227fc40b15ee6d280939fb',
     provenance:
       "CGAL's MinGW-w64 build of this release (GCC 4.4.5 20100604, binutils 2.20.51; gmp.h records CC gcc and CFLAGS -O2 -pedantic -m64 -std=gnu99 -mtune=k8 -march=k8), as CGAL publishes it in its win64 auxiliary libraries; OrcaSlicer's build copies it from deps/GMP/gmp and does not rebuild it, and CGAL's package does not say how it was configured",
+    archived: [
+      { path: 'deps/GMP/gmp/lib/win-x64/libgmp-10.dll', sha256: 'fec43cb18ce0ec8a5dd6ad1db745747167310ccb92b5acff0d445a8b3013f009' },
+      { path: 'deps/GMP/gmp/lib/win-x64/libgmp-10.lib', sha256: '63fbb59cd3b7879f71cf2d3d9133f6edcd6d6afb122a1fff085afb7c2f486f0f' },
+    ],
+  },
+  {
+    name: 'MPFR',
+    version: '3.0.0',
+    binary: 'libmpfr-4.dll',
+    arch: 'x64',
+    binarySha256: '09b3b868b96433991fc15c9c5ae6f9a44c62d2e21194110442607917391ed927',
+    file: 'mpfr-3.0.0.tar.bz2',
+    urls: ['https://www.mpfr.org/mpfr-3.0.0/mpfr-3.0.0.tar.bz2', 'https://ftp.gnu.org/gnu/mpfr/mpfr-3.0.0.tar.bz2'],
+    size: 1138685,
+    sha256: '8f4e5f9c53536cb798a30455ac429b1f9fc75a0f8af32d6e0ac31ebf1024821f',
+    provenance:
+      "CGAL's MinGW-w64 build of this release (GNU C 4.4.5 20100604, the compiler of the GMP above, against whose libgmp-10.dll it is linked), as CGAL publishes it in its win64 auxiliary libraries; OrcaSlicer's build copies it from deps/MPFR/mpfr and does not rebuild it, the engine does not load it, and CGAL's package does not say how it was configured",
+    archived: [
+      { path: 'deps/MPFR/mpfr/lib/win-x64/libmpfr-4.dll', sha256: '09b3b868b96433991fc15c9c5ae6f9a44c62d2e21194110442607917391ed927' },
+      { path: 'deps/MPFR/mpfr/lib/win-x64/libmpfr-4.lib', sha256: 'db89bd46fcbbd99b56197284e5593b3f9ce744ccb8ead9aebee9b714bd2547dc' },
+    ],
   },
 ]
 
@@ -328,9 +376,60 @@ export function withPrebuiltSources(libs: PrebuiltLibrary[], m: Pick<EngineManif
     if (!bin) return { ...lib }
     const out: PrebuiltLibrary = { ...lib, binary: bin.path, binarySha256: bin.sha256 }
     const pin = pins.find((p) => p.name === lib.name && p.version === lib.version && p.arch === m.arch && `bin/${p.binary}` === bin.path && p.binarySha256 === bin.sha256)
-    if (pin) out.source = { file: pin.file, urls: [...pin.urls], size: pin.size, sha256: pin.sha256, provenance: pin.provenance, ...(pin.recipe ? { recipe: pin.recipe } : {}) }
+    if (pin) out.source = sourceOf(pin)
     return out
   })
+}
+
+function sourceOf(pin: PrebuiltSource): NonNullable<PrebuiltLibrary['source']> {
+  return { file: pin.file, urls: [...pin.urls], size: pin.size, sha256: pin.sha256, provenance: pin.provenance, ...(pin.recipe ? { recipe: pin.recipe } : {}) }
+}
+
+/** A binary of OrcaSlicer's tree that the bundle's Orca archive keeps: its path at the locked commit and its SHA-256. */
+export interface ArchivedBinary {
+  path: string
+  sha256: string
+}
+
+/** The Windows architecture a prebuilt binary's folder names (lib/win-x64/...), if any. */
+export function binaryArch(path: string): string | undefined {
+  return /\/win-([a-z0-9]+)\/[^/]+$/.exec(path)?.[1]
+}
+
+/**
+ * The prebuilt libraries with the binaries the Orca archive keeps of each (`binaries`), apart from
+ * the binaries the staged engine ships (withPrebuiltSources): a binary counts as sourced when a pin
+ * of that library and version lists that very file (its path, the architecture its folder names
+ * and its SHA-256) and the pin's package is the library's source in the bundle. A library the
+ * engine does not ship (MPFR, which only the build reads) takes its source from the pin that lists
+ * every one of its archived binaries.
+ */
+export function withArchivedSources(libs: PrebuiltLibrary[], binaries: ArchivedBinary[], pins: readonly PrebuiltSource[] = PREBUILT_SOURCES): PrebuiltLibrary[] {
+  return libs.map((lib) => {
+    const dir = PREBUILT_BINARY_DIRS[lib.name]
+    const files = dir === undefined ? [] : binaries.filter((b) => b.path.startsWith(`${dir}/`))
+    if (files.length === 0) return { ...lib }
+    const pinOf = (b: ArchivedBinary) =>
+      pins.find((p) => p.name === lib.name && p.version === lib.version && p.arch === binaryArch(b.path) && p.archived.some((a) => a.path === b.path && a.sha256 === b.sha256))
+    const out: PrebuiltLibrary = { ...lib }
+    if (!out.source && !out.binary) {
+      const pin = pinOf(files[0]!)
+      if (pin && files.every((b) => pinOf(b) === pin)) out.source = sourceOf(pin)
+    }
+    out.archived = files.map((b) => {
+      const pin = pinOf(b)
+      return { path: b.path, sha256: b.sha256, sourced: pin !== undefined && out.source !== undefined && pin.file === out.source.file && pin.sha256 === out.source.sha256 }
+    })
+    return out
+  })
+}
+
+/** The SHA-256 of a file of `commit` (`rel`, with forward slashes), as `git archive` writes a binary. */
+export function commitFileSha256(git: string, dir: string, commit: string, rel: string): string {
+  const r = spawnSync(git, ['-C', dir, 'cat-file', 'blob', `${commit}:${rel}`], { windowsHide: true, maxBuffer: 1 << 30 })
+  if (r.error) throw r.error
+  if (r.status !== 0) throw new StepError(`git cat-file blob ${commit}:${rel} failed in ${dir}: ${r.stderr.toString().trim()}`)
+  return sha256Bytes(r.stdout)
 }
 
 /** A prebuilt library for messages: GMP 5.0.1 (bin/libgmp-10.dll, SHA-256 ...). */
@@ -628,7 +727,8 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
 
 /** BUILDING.md's line for a library Orca ships prebuilt: where it comes from, and where its source is. */
 export function prebuiltLine(p: PrebuiltLibrary, withDeps: boolean): string {
-  const ships = `- ${p.name} ${p.version}: OrcaSlicer ships it prebuilt for Windows in ${p.dir}${p.binary ? `, and the engine ships it as ${p.binary} (SHA-256 ${p.binarySha256})` : ''}; its licence is in LICENSES/deps/${p.name}.`
+  const kept = (p.archived ?? []).length > 0 ? ` The OrcaSlicer archive keeps ${(p.archived ?? []).map((a) => `${a.path} (SHA-256 ${a.sha256})`).join(' and ')}.` : ''
+  const ships = `- ${p.name} ${p.version}: OrcaSlicer ships it prebuilt for Windows in ${p.dir}${p.binary ? `, and the engine ships it as ${p.binary} (SHA-256 ${p.binarySha256})` : ''}; its licence is in LICENSES/deps/${p.name}.${kept}`
   if (!p.source) return `${ships} Its source is NOT in this bundle: no source package is pinned for this binary (PREBUILT_SOURCES in engine/scripts/lib/bundle.ts).`
   const from = `${p.source.urls[0]} (SHA-256 ${p.source.sha256})`
   const where = withDeps ? `Its source is prebuilt/${p.name}/${p.source.file}, from ${from}.` : `Its source, ${p.source.file}, was left out of this bundle; it is at ${from}.`
@@ -704,12 +804,16 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   const tree = capture(git, ['-C', w.src, '-c', 'core.quotePath=false', 'ls-tree', '-r', '-z', '--name-only', ctx.lock.commit])
   if (tree.code !== 0) throw new StepError(`git ls-tree failed in ${w.src}: ${tree.stderr.trim()}`)
   const archived = archivedBinaries(tree.stdout.split('\0').filter((rel) => rel !== ''), orcaExcluded)
-  const prebuilt = withPrebuiltSources(prebuiltLibraries(w.src, [...archived.prebuilt.values()].flat().map((rel) => rel.split('/').pop()!)), m)
+  // The prebuilt binaries the engine ships, and apart from them the ones the archive keeps, each matched to its pin by path and SHA-256.
+  const archivedFiles = [...archived.prebuilt.values()].flat().map((rel) => ({ path: rel, sha256: commitFileSha256(git, w.src, ctx.lock.commit, rel) }))
+  const prebuilt = withArchivedSources(withPrebuiltSources(prebuiltLibraries(w.src, archivedFiles.map((f) => f.path.split('/').pop()!)), m), archivedFiles)
   const unsourced = prebuilt.filter((p) => !p.source)
+  const unsourcedFiles = prebuilt.filter((p) => p.source).flatMap((p) => (p.archived ?? []).filter((a) => !a.sourced))
   const unrecipied = prebuilt.filter((p) => p.source && !p.source.recipe)
   const missing = [
     ...(plan.missing.length > 0 ? [`no pinned source package for the built dependencies ${plan.missing.join(', ')}; fetch them with build`] : []),
     ...(unsourced.length > 0 ? [`no pinned source for the prebuilt ${unsourced.map(prebuiltLabel).join(', ')}, whose binaries the Orca archive keeps (${unsourced.flatMap((p) => archived.prebuilt.get(p.name) ?? []).join(', ')}); PREBUILT_SOURCES (scripts/lib/bundle.ts) pins the binaries whose source is known`] : []),
+    ...(unsourcedFiles.length > 0 ? [`the Orca archive keeps ${unsourcedFiles.map((f) => `${f.path} (SHA-256 ${f.sha256})`).join(', ')}, which no pin of the source the bundle carries lists by path and SHA-256 (PREBUILT_SOURCES archived)`] : []),
     ...(unrecipied.length > 0 ? [`no recipe that rebuilds the prebuilt ${unrecipied.map(prebuiltLabel).join(', ')} from its pinned source (how it was configured and built is not known)`] : []),
     ...(archived.unknown.length > 0 ? [`the Orca archive keeps binaries whose source the bundle does not have: ${archived.unknown.join(', ')}; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or pin their source`] : []),
   ]

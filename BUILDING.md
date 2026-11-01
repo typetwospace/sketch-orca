@@ -92,16 +92,27 @@ checked; `README.md` (Open items) says what is still not known about how that DL
 Until the bundle has a recipe that rebuilds that DLL from the archive (the pin's `recipe`),
 `source` stops for GMP too unless given `--allow-missing`, and the bundle says it is not complete.
 
+MPFR's exact source is known too: OrcaSlicer's `deps/MPFR/mpfr` at v2.4.2 is byte for byte the MPFR
+of the same CGAL package, a MinGW-w64 build of the MPFR 3.0.0 release archive by the same compiler,
+linked against that GMP. `source` downloads `mpfr-3.0.0.tar.bz2` (1,138,685 bytes, SHA-256
+8f4e5f9c53536cb798a30455ac429b1f9fc75a0f8af32d6e0ac31ebf1024821f) from
+https://www.mpfr.org/mpfr-3.0.0/mpfr-3.0.0.tar.bz2 or https://ftp.gnu.org/gnu/mpfr/mpfr-3.0.0.tar.bz2
+into `<work>/prebuilt/MPFR/` and puts it in the bundle as `prebuilt/MPFR/mpfr-3.0.0.tar.bz2`. The
+engine does not load MPFR, but Orca's Windows dependency build copies its header, import library
+and DLL, so the Orca archive keeps them for the engine's architecture.
+
 The bundle's Orca archive leaves out the binaries of OrcaSlicer's tree that the engine's build does
 not use (the WebView2 loader, the programs in `tools/`, and GMP and MPFR for other architectures;
-`orcaArchiveExcludes`). It keeps MPFR's header, import library and DLL for the engine's
-architecture, which Orca's Windows dependency build copies; their source is not pinned yet, so
-`source` stops unless given `--allow-missing`.
+`orcaArchiveExcludes`). Every binary it keeps must be listed, by its path and SHA-256 at the locked
+commit, by the pin whose source package the bundle carries (`archived` in `PREBUILT_SOURCES`: the
+DLL and the import library made from it); any other stops `source` unless given
+`--allow-missing`. Neither pin has a recipe yet, so `source` stops for both unless given
+`--allow-missing`, and the bundle says it is not complete.
 
 ## From a source bundle
 
 A source bundle holds OrcaSlicer at the locked commit, this repository as `engine/`, the
-dependency source packages, the GMP source and the licences. Its own `BUILDING.md`, written by
+dependency source packages, the GMP and MPFR sources and the licences. Its own `BUILDING.md`, written by
 `source` for that engine, gives every command to build it from the bundle alone, without network
 access: unpack Orca, apply the patches, build the dependencies from `dependencies/`, then the
 engine.

@@ -122,7 +122,7 @@ The work folder is `%LOCALAPPDATA%\SketchDev\orca-engine` on Windows and
 ```
 src/            OrcaSlicer at the locked commit, with patches/ applied
 downloads/      the dependency source packages, one folder per dependency, kept across rebuilds
-prebuilt/       the source packages of the libraries Orca ships prebuilt (GMP), kept across runs
+prebuilt/       the source packages of the libraries Orca ships prebuilt (GMP, MPFR), kept across runs
 deps/           Orca's dependency build; its install prefix is deps/OrcaSlicer_dep/usr/local
 build/          Orca's build; the engine is build/sketch-orca/sketch-orca(.exe)
 smoke/          the smoke run: presets, one folder per case, report.json
@@ -196,7 +196,8 @@ engine/                        this repository: lock, patches, cli, protocol, li
 dependencies/<Name>/<file>     the source packages Orca's dependency build downloaded, each
                                matched against the SHA-256 its recipe pins
 prebuilt/<Name>/<file>         the source packages of the libraries Orca ships prebuilt, when
-                               their binary is the one pinned (GMP 5.0.1 on Windows x64)
+                               their binaries are the ones pinned (GMP 5.0.1 and MPFR 3.0.0 on
+                               Windows x64)
 LICENSES/                      the staged engine's licences
 BUILDING.md                    how to build the engine from the bundle alone
 bundle.json                    sketch-orca-source/1: the engine it belongs to (its manifest's
@@ -423,9 +424,11 @@ These are for the maintainers to decide, and some for a lawyer. The first two we
   `recipe`), `source` refuses, or makes an incomplete bundle with `--allow-missing`.
 - **MPFR (Windows).** Orca ships MPFR 3.0.0 prebuilt too. The engine does not load it, but Orca's
   Windows dependency build copies its header, import library and DLL from the tree, so the Orca
-  archive keeps them (for the engine's architecture only), and `source` refuses until their source
-  is pinned like GMP's (or makes an incomplete bundle with `--allow-missing`). Not known yet: which
-  MPFR release and build CGAL's binary is.
+  archive keeps them (for the engine's architecture only). Their source is pinned and bundled like
+  GMP's (`BUILDING.md`, Prebuilt libraries): CGAL's MinGW-w64 build of the MPFR 3.0.0 release
+  archive, matched by path and SHA-256. Not known, as for GMP: CGAL's configure command line and
+  build scripts, so there is no recipe yet and `source` refuses, or makes an incomplete bundle with
+  `--allow-missing`.
 - **libnoise.** The package Orca pins dropped libnoise's `COPYING.txt`. Staging ships the grant
   from its sources (`src/noise.h`, LGPL 2.1 or later) and the LGPL 2.1 text from `licenses/`.
 - **The toolchain record.** `BUILT_WITH` (`scripts/lib/bundle.ts`, and so each bundle's

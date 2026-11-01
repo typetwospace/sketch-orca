@@ -8,7 +8,9 @@ import {
   BUILT_WITH,
   bundleCopies,
   archivedBinaries,
+  binaryArch,
   bundleName,
+  commitFileSha256,
   ensurePrebuiltSource,
   excludePathspecs,
   gmpHeaderVersion,
@@ -30,6 +32,7 @@ import {
   repositoryFiles,
   SOURCE_VERSION,
   verifySums,
+  withArchivedSources,
   withPrebuiltSources,
   type DependencyArchive,
   type DownloadedFile,
@@ -414,7 +417,63 @@ describe('prebuilt libraries and their sources', () => {
         expect(u).toStartWith('https://')
         expect(u.endsWith(`/${p.file}`)).toBe(true)
       }
+      // The DLL and its import library, in Orca's folder for the pin's architecture; the DLL is the binary the engine would ship.
+      expect(p.archived.map((a) => a.path.split('/').pop())).toEqual([p.binary, p.binary.replace(/\.dll$/, '.lib')])
+      for (const a of p.archived) {
+        expect(binaryArch(a.path)).toBe(p.arch)
+        expect(a.sha256).toMatch(/^[0-9a-f]{64}$/)
+      }
+      expect(p.archived[0]!.sha256).toBe(p.binarySha256)
     }
+    expect(GMP_PIN.archived).toEqual([
+      { path: 'deps/GMP/gmp/lib/win-x64/libgmp-10.dll', sha256: 'fec43cb18ce0ec8a5dd6ad1db745747167310ccb92b5acff0d445a8b3013f009' },
+      { path: 'deps/GMP/gmp/lib/win-x64/libgmp-10.lib', sha256: '63fbb59cd3b7879f71cf2d3d9133f6edcd6d6afb122a1fff085afb7c2f486f0f' },
+    ])
+  })
+
+  test("the MPFR pin: OrcaSlicer's prebuilt Windows x64 DLL and import library, and the MPFR 3.0.0 release archive", () => {
+    const pin = PREBUILT_SOURCES.find((p) => p.name === 'MPFR')!
+    expect(pin).toMatchObject({ version: '3.0.0', binary: 'libmpfr-4.dll', arch: 'x64', file: 'mpfr-3.0.0.tar.bz2', size: 1138685 })
+    expect(pin.sha256).toBe('8f4e5f9c53536cb798a30455ac429b1f9fc75a0f8af32d6e0ac31ebf1024821f')
+    expect(pin.urls).toEqual(['https://www.mpfr.org/mpfr-3.0.0/mpfr-3.0.0.tar.bz2', 'https://ftp.gnu.org/gnu/mpfr/mpfr-3.0.0.tar.bz2'])
+    expect(pin.archived).toEqual([
+      { path: 'deps/MPFR/mpfr/lib/win-x64/libmpfr-4.dll', sha256: '09b3b868b96433991fc15c9c5ae6f9a44c62d2e21194110442607917391ed927' },
+      { path: 'deps/MPFR/mpfr/lib/win-x64/libmpfr-4.lib', sha256: 'db89bd46fcbbd99b56197284e5593b3f9ce744ccb8ead9aebee9b714bd2547dc' },
+    ])
+    // No recipe yet: a bundle that carries it is not complete.
+    expect(pin.recipe).toBeUndefined()
+  })
+
+  test('withArchivedSources: binaries only the Orca archive keeps (MPFR) match their pin by path, architecture and SHA-256', () => {
+    const MPFR_PIN = PREBUILT_SOURCES.find((p) => p.name === 'MPFR')!
+    const mpfr = (): PrebuiltLibrary => ({ name: 'MPFR', version: '3.0.0', dir: 'deps/MPFR/mpfr' })
+    const kept = MPFR_PIN.archived.map((a) => ({ ...a }))
+    // The engine does not ship MPFR: withPrebuiltSources leaves it without a source, the archive's files give it one.
+    const [runtimeOnly] = withPrebuiltSources([mpfr()], shipping(GMP_PIN.binarySha256))
+    expect(runtimeOnly).toEqual(mpfr())
+    const [lib] = withArchivedSources([runtimeOnly!], kept)
+    expect(lib!.source).toMatchObject({ file: 'mpfr-3.0.0.tar.bz2', sha256: MPFR_PIN.sha256 })
+    expect(lib!.archived).toEqual(kept.map((a) => ({ ...a, sourced: true })))
+    // Another DLL at that path, or the pinned bytes for another architecture: no source.
+    expect(withArchivedSources([mpfr()], [{ ...kept[0]!, sha256: H('b') }, kept[1]!])[0]!.source).toBeUndefined()
+    const arm = kept.map((a) => ({ ...a, path: a.path.replace('win-x64', 'win-arm64') }))
+    expect(withArchivedSources([mpfr()], arm)[0]).toEqual({ ...mpfr(), archived: arm.map((a) => ({ ...a, sourced: false })) })
+    // GMP, which the engine ships: the pin found by the shipped DLL must also list the import library the archive keeps.
+    const gmpKept = GMP_PIN.archived.map((a) => ({ ...a }))
+    const [g] = withArchivedSources(withPrebuiltSources([gmp()], shipping(GMP_PIN.binarySha256)), gmpKept)
+    expect(g!.archived!.every((a) => a.sourced)).toBe(true)
+    const [changedLib] = withArchivedSources(withPrebuiltSources([gmp()], shipping(GMP_PIN.binarySha256)), [gmpKept[0]!, { ...gmpKept[1]!, sha256: H('c') }])
+    expect(changedLib!.source).toBeDefined()
+    expect(changedLib!.archived!.map((a) => a.sourced)).toEqual([true, false])
+    // A shipped GMP with no pin: its archived files are not sourced either, even when a pin lists them.
+    const [unpinned] = withArchivedSources(withPrebuiltSources([gmp()], shipping(H('d'))), gmpKept)
+    expect(unpinned!.source).toBeUndefined()
+    expect(unpinned!.archived!.map((a) => a.sourced)).toEqual([false, false])
+    // A library none of whose binaries the archive keeps is left as it is.
+    expect(withArchivedSources([mpfr()], gmpKept)).toEqual([mpfr()])
+    // BUILDING.md names the files the archive keeps.
+    expect(prebuiltLine(lib!, true)).toContain(`The OrcaSlicer archive keeps deps/MPFR/mpfr/lib/win-x64/libmpfr-4.dll (SHA-256 ${MPFR_PIN.binarySha256}) and deps/MPFR/mpfr/lib/win-x64/libmpfr-4.lib`)
+    expect(prebuiltLine(lib!, true)).toContain('Its source is prebuilt/MPFR/mpfr-3.0.0.tar.bz2, from https://www.mpfr.org/mpfr-3.0.0/mpfr-3.0.0.tar.bz2')
   })
 
   test('withPrebuiltSources: the source only for the very binary it was pinned for', () => {
@@ -498,7 +557,7 @@ describe('prebuilt libraries and their sources', () => {
     expect(withRecipe.source?.recipe).toBe('prebuilt/gmp-5.0.1.sh')
     expect(prebuiltLine(withRecipe, true)).toContain('engine/prebuilt/gmp-5.0.1.sh rebuilds it from that source.')
     // The archive's binaries are accounted for, and the bundle says whether it is complete: a new bundle version.
-    expect(SOURCE_VERSION).toBe(4)
+    expect(SOURCE_VERSION).toBe(5)
   })
 
   test("orcaArchiveExcludes and archivedBinaries: the Orca archive keeps only the prebuilt binaries the engine's build uses", () => {
@@ -551,6 +610,10 @@ describe('prebuilt libraries and their sources', () => {
     run('archive', '--format=tar', '-o', tar, 'HEAD', '--', ...excludePathspecs(orcaArchiveExcludes('win32', 'x64')))
     const names = readFileSync(tar, 'latin1').match(/(deps|tools|src)\/[\w./-]+/g) ?? []
     expect([...new Set(names)].filter((n) => !n.endsWith('/')).sort()).toEqual(['deps/GMP/gmp/lib/win-x64/libgmp-10.dll', 'src/a.cpp', 'tools/README.md'])
+    // The bytes the archive keeps, from the commit and not from the working tree.
+    put('orca/deps/GMP/gmp/lib/win-x64/libgmp-10.dll', 'changed in the working tree')
+    expect(commitFileSha256(git, repo, 'HEAD', 'deps/GMP/gmp/lib/win-x64/libgmp-10.dll')).toBe(sha256Bytes('x'))
+    expect(() => commitFileSha256(git, repo, 'HEAD', 'deps/none.dll')).toThrow(/git cat-file blob HEAD:deps\/none\.dll failed/)
   })
 })
 
