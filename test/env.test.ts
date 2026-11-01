@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   cleanWinBuildPath,
@@ -22,6 +24,7 @@ import {
   vcvarsBaseEnv,
   winBaselinePath,
 } from '../scripts/lib/env.ts'
+import { vcvarsEnvironment } from '../scripts/lib/toolchain.ts'
 
 const VC = 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.42.34433\\bin\\HostX64\\x64'
 
@@ -155,5 +158,25 @@ describe('tools', () => {
     expect(findOnPath(['glibtoolize', 'libtoolize'], ['/opt/homebrew/bin', '/usr/bin'], exists)).toBe('/opt/homebrew/bin/glibtoolize')
     expect(findOnPath(['glibtoolize', 'libtoolize'], ['/usr/bin'], exists)).toBe('/usr/bin/libtoolize')
     expect(findOnPath(['m4'], ['/usr/bin'], exists)).toBeUndefined()
+  })
+})
+
+describe('vcvars (Windows)', () => {
+  // A stand-in for vcvars64.bat that sets what the real one is checked for; the environment it is
+  // run in carries a path in characters no console code page has all of.
+  test.skipIf(process.platform !== 'win32')('the environment comes back whole, also a path in Chinese characters', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sketch-orca-vcvars-'))
+    try {
+      const bat = join(dir, 'vcvars64.bat')
+      const tools = 'C:\\VC\\Tools\\MSVC\\14.42.34433\\'
+      writeFileSync(bat, `@set VCToolsInstallDir=${tools}\r\n`)
+      const wide = 'C:/\u5de5\u5177/VC'
+      const env = { SystemRoot: process.env.SystemRoot ?? 'C:\\Windows', SKETCH_ORCA_TEST_WIDE: wide }
+      const out = vcvarsEnvironment(bat, env)
+      expect(out.VCToolsInstallDir).toBe(tools)
+      expect(out.SKETCH_ORCA_TEST_WIDE).toBe(wide)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

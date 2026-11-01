@@ -59,7 +59,9 @@ export function vcvarsEnvironment(vcvars: string, env: NodeJS.ProcessEnv): Recor
   // them) and without the variables that steer compilers and CMake (env.ts, LEAKY_ENV).
   const base = vcvarsBaseEnv(env, winBaselinePath(systemRoot))
   const cmdExe = join(systemRoot, 'System32', 'cmd.exe')
-  const r = capture(cmdExe, ['/d', '/s', '/c', `"call "${vcvars}" >nul 2>&1 && set"`], { env: base, verbatim: true })
+  // /u: set writes UTF-16 to the pipe, so a path in any script or user name comes back whole; in
+  // the console's code page it would come back with ? for what the code page lacks.
+  const r = capture(cmdExe, ['/u', '/d', '/s', '/c', `"call "${vcvars}" >nul 2>&1 && set"`], { env: base, verbatim: true, encoding: 'utf16le' })
   if (r.code !== 0) throw new StepError(`vcvars64.bat failed (${r.code}): ${r.stderr.trim()}`)
   const out = parseSetOutput(r.stdout)
   if (!Object.keys(out).some((k) => k.toUpperCase() === 'VCTOOLSINSTALLDIR')) throw new StepError('vcvars64.bat did not set up the MSVC environment')

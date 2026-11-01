@@ -80,6 +80,8 @@ export interface CaptureOptions {
   input?: string
   /** Pass arguments to the program as written (cmd.exe /s /c on Windows). */
   verbatim?: boolean
+  /** How the program writes its output: UTF-8 by default; utf16le for cmd.exe /u. */
+  encoding?: 'utf8' | 'utf16le'
 }
 
 /** Runs a short command and captures its output (for git queries, vcvars, version checks). */
@@ -88,13 +90,14 @@ export function capture(exe: string, args: string[], opts: CaptureOptions = {}):
     cwd: opts.cwd,
     env: opts.env ?? (process.env as Record<string, string>),
     input: opts.input,
-    encoding: 'utf8',
+    encoding: opts.encoding ?? 'utf8',
     windowsHide: true,
     windowsVerbatimArguments: opts.verbatim ?? false,
     maxBuffer: 256 * 1024 * 1024,
   })
   if (r.error) throw r.error
-  return { code: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
+  const text = (s: string | null) => (s ?? '').replace(/^\uFEFF/, '')
+  return { code: r.status ?? -1, stdout: text(r.stdout), stderr: text(r.stderr) }
 }
 
 export function captureOk(exe: string, args: string[], opts: CaptureOptions = {}): string {
