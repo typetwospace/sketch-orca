@@ -489,28 +489,31 @@ void set_filament_colours(DynamicPrintConfig &cfg, DynamicPrintConfig &extra, co
 // The flushing volumes between filaments, computed from their colours as the stock command line
 // computes them (OrcaSlicer.cpp, "compute the flush volume"), for every job: Orca reads
 // flush_volumes_matrix as n x n per nozzle for n filaments, and a matrix from a preset is sized for
-// some other set of filaments. A job's own flush_volumes_matrix override replaces it, and must have
-// n x n values per nozzle.
-void compute_flush_volumes(DynamicPrintConfig &cfg, const DynamicPrintConfig &extra, size_t extruder_count, size_t printer_variant_count)
+// some other set of filaments. `cfg` holds the job's overrides already, so the ones the
+// computation reads (filament_is_support, nozzle_volume, the retractions when cut...) count
+// (sketch-orca, 2026-11-01). A job's own flush_volumes_matrix (`matrix_given`) is kept as it is,
+// and must have n x n values per nozzle.
+void compute_flush_volumes(DynamicPrintConfig &cfg, bool matrix_given, size_t extruder_count, size_t printer_variant_count)
 {
     const std::vector<std::string> colors = cfg.option<ConfigOptionStrings>("filament_colour", true)->values;
     const size_t                   n      = colors.size();
     if (n == 0)
         return;
-    if (const auto *given = extra.option<ConfigOptionFloats>("flush_volumes_matrix"); given != nullptr && given->values.size() != n * n * extruder_count)
-        fail("setting-invalid", "overrides: flush_volumes_matrix has " + std::to_string(given->values.size()) + " values; with " + std::to_string(n) +
-                                    " filament(s) and " + std::to_string(extruder_count) + " nozzle(s) it needs " + std::to_string(n * n * extruder_count) +
-                                    " (one row of " + std::to_string(n) + " per filament, for each nozzle)");
-
-    ConfigOptionBools     *is_support  = cfg.option<ConfigOptionBools>("filament_is_support", true);
-    const std::vector<int> min_volumes = min_flush_volumes(cfg, 0);
-    if (is_support->size() != n)
-        fail("preset-invalid", "the filament presets give " + std::to_string(is_support->size()) + " filament_is_support values for " + std::to_string(n) +
-                                   " filaments");
-
-    std::vector<double> &matrix = cfg.option<ConfigOptionFloats>("flush_volumes_matrix", true)->values;
-    matrix.assign(n * n * extruder_count, 0.);
     cfg.option<ConfigOptionFloats>("flush_multiplier", true)->values.resize(extruder_count, 1.);
+    if (matrix_given) {
+        const size_t given = cfg.option<ConfigOptionFloats>("flush_volumes_matrix", true)->values.size();
+        if (given != n * n * extruder_count)
+            fail("setting-invalid", "overrides: flush_volumes_matrix has " + std::to_string(given) + " values; with " + std::to_string(n) + " filament(s) and " +
+                                        std::to_string(extruder_count) + " nozzle(s) it needs " + std::to_string(n * n * extruder_count) + " (one row of " +
+                                        std::to_string(n) + " per filament, for each nozzle)");
+        return;
+    }
+
+    ConfigOptionBools *is_support = cfg.option<ConfigOptionBools>("filament_is_support", true);
+    if (is_support->size() != n)
+        fail("preset-invalid", "the settings give " + std::to_string(is_support->size()) + " filament_is_support values for " + std::to_string(n) + " filaments");
+
+    std::vector<double> matrix(n * n * extruder_count, 0.);
 
     std::vector<int> dataset(extruder_count, 0);
     {
@@ -522,8 +525,6 @@ void compute_flush_volumes(DynamicPrintConfig &cfg, const DynamicPrintConfig &ex
         std::vector<int> volume_types(1, int(nvtStandard));
         if (const auto *opt = dynamic_cast<const ConfigOptionEnumsGeneric *>(cfg.option("nozzle_volume_type")))
             volume_types = opt->values;
-        if (const auto *opt = dynamic_cast<const ConfigOptionEnumsGeneric *>(extra.option("nozzle_volume_type")))
-            volume_types = opt->values;
         for (size_t e = 0; e < extruder_count; ++e) {
             int index = 0;
             if (cfg.has("printer_extruder_id") && cfg.has("printer_extruder_variant") && !extruders.empty() && !volume_types.empty())
@@ -534,7 +535,9 @@ void compute_flush_volumes(DynamicPrintConfig &cfg, const DynamicPrintConfig &ex
     }
 
     for (size_t nozzle = 0; nozzle < extruder_count; ++nozzle) {
-        std::vector<double> m(n * n, 0.);
+        // Each nozzle's own volume and retraction (the stock loop asks for nozzle_id; 2026-11-01).
+        const std::vector<int> min_volumes = min_flush_volumes(cfg, nozzle);
+        std::vector<double>    m(n * n, 0.);
         for (size_t from = 0; from < n; ++from) {
             unsigned char from_rgb[4];
             parse_color4(colors[from], from_rgb);
@@ -558,6 +561,7 @@ void compute_flush_volumes(DynamicPrintConfig &cfg, const DynamicPrintConfig &ex
         }
         set_flush_volumes_matrix(matrix, m, nozzle, extruder_count);
     }
+    cfg.option<ConfigOptionFloats>("flush_volumes_matrix", true)->values = matrix;
 }
 
 // Settings of Preset::filament_options that hold one value per filament. The ones with extruder
@@ -841,11 +845,6 @@ Settings load_settings(const Job &job, Warnings &warnings)
     const std::string printer_model = cfg.has("printer_model") ? cfg.opt_string("printer_model") : std::string();
     apply_cli_safe_limits(cfg, job.resources, printer_model);
 
-    s.extruder_count = 1;
-    if (const auto *nozzles = cfg.option<ConfigOptionFloats>("nozzle_diameter"))
-        s.extruder_count = std::max<size_t>(1, nozzles->values.size());
-    const size_t printer_variant_count = cfg.option<ConfigOptionStrings>("printer_extruder_variant", true)->values.size();
-
     s.process.config.set_key_value("print_settings_id", new ConfigOptionString(s.process.name));
     {
         std::vector<std::string> compatible;
@@ -996,7 +995,6 @@ Settings load_settings(const Job &job, Warnings &warnings)
     pad_filament_options(cfg, given, n);
     set_filament_colours(cfg, extra, s.filaments);
     check_filament_overrides(extra, cfg, n);
-    compute_flush_volumes(cfg, extra, s.extruder_count, printer_variant_count);
 
     s.printer_model_id = find_printer_model_id(job.resources, printer_model);
     s.is_bbl           = boost::starts_with(printer_model, "Bambu Lab") ||
@@ -1006,7 +1004,14 @@ Settings load_settings(const Job &job, Warnings &warnings)
     if (!extra.has("curr_bed_type"))
         cfg.set_key_value("curr_bed_type", new ConfigOptionEnum<BedType>(default_bed_type(s.machine.config, s.printer_model_id)));
 
+    // The overrides go in before the flushing volumes are computed, which read some of them, and the
+    // nozzles are counted on the settings the print gets (sketch-orca, 2026-11-01).
     cfg.apply(extra, true);
+    s.extruder_count = 1;
+    if (const auto *nozzles = cfg.option<ConfigOptionFloats>("nozzle_diameter"))
+        s.extruder_count = std::max<size_t>(1, nozzles->values.size());
+    const size_t printer_variant_count = cfg.option<ConfigOptionStrings>("printer_extruder_variant", true)->values.size();
+    compute_flush_volumes(cfg, extra.has("flush_volumes_matrix"), s.extruder_count, printer_variant_count);
     try {
         cfg.normalize_fdm();
     } catch (const std::exception &e) {

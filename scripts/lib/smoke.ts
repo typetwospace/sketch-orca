@@ -28,8 +28,9 @@
 //   preset-metadata  preset files that carry the lists the engine fills in itself (inherits_group...), shorter or
 //                    longer than its own, and a process with a filament setting as an empty list: the cube slices,
 //                    with the filament's filament_type and none of the files' lists
-//   flush-volumes    the flushing volumes between filaments: a nozzle_volume past what an int holds is refused
-//                    (config-invalid) instead of being converted
+//   flush-volumes    the flushing volumes between filaments: a nozzle_volume past what an int holds, in the machine
+//                    preset or as an override, is refused (config-invalid) instead of being converted; an override
+//                    that makes filament 2 a support filament gives the matrix Orca's support volumes (0,230,700,0)
 //   crash-result     an engine that crashes in Orca's code (SKETCH_ORCA_TEST_CRASH) still writes its result:
 //                    internal-error, exit code 255, no outputs
 //   refusals         a missing model, an unknown setting (also one with capital letters), a key of the preset files as
@@ -1116,6 +1117,21 @@ export const FLUSH_JOBS: FlushJob[] = [
     },
     refused: { code: 'config-invalid', exitCode: -18, mentions: 'nozzle_volume' },
   },
+  {
+    // The same volume as an override: the overrides are in the settings the volumes are computed from.
+    id: 'nozzle-volume-override',
+    set: 'generic',
+    overrides: { nozzle_volume: FLUSH.outOfRange },
+    refused: { code: 'config-invalid', exitCode: -18, mentions: 'nozzle_volume' },
+  },
+  {
+    // Filament 2 made a support filament by an override: Orca flushes 230 mm³ into a support filament
+    // and at least 700 mm³ out of one (g_flush_volume_to_support, g_min_flush_volume_from_support).
+    id: 'support-filament-override',
+    set: 'generic2',
+    overrides: { filament_is_support: '0,1' },
+    config: { filament_is_support: '0,1', flush_volumes_matrix: '0,230,700,0' },
+  },
 ]
 
 export const SMOKE_CASES: SmokeCase[] = [
@@ -1437,7 +1453,7 @@ export const SMOKE_CASES: SmokeCase[] = [
   },
   {
     id: 'flush-volumes',
-    title: `the flushing volumes between filaments: a nozzle_volume of ${FLUSH.outOfRange} mm³ is refused (config-invalid), not converted past an int`,
+    title: `the flushing volumes between filaments: a nozzle_volume of ${FLUSH.outOfRange} mm³, in the preset or as an override, is refused (config-invalid), not converted past an int; filament_is_support given as an override counts`,
     async run(env) {
       const problems: string[] = []
       const warnings: string[] = []

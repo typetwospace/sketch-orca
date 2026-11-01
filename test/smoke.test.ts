@@ -594,7 +594,12 @@ describe('jobs and the engine environment', () => {
   test('the flush-volumes jobs: each is refused or checks config values, and changes only its copy of the presets', () => {
     const ids = FLUSH_JOBS.map((j) => j.id)
     expect(new Set(ids).size).toBe(ids.length)
-    for (const j of FLUSH_JOBS) expect((j.refused === undefined) !== (j.config === undefined)).toBe(true)
+    for (const j of FLUSH_JOBS) {
+      expect((j.refused === undefined) !== (j.config === undefined)).toBe(true)
+      // The job format takes the overrides: the engine is what refuses them.
+      const presets = { machine: join(scratch, 'm.json'), process: join(scratch, 'p.json'), filaments: [join(scratch, 'f.json')] }
+      expect(() => validateJob(smokeJob({ command: 'slice', dir: scratch, resources: scratch, presets, overrides: j.overrides ?? {} }))).not.toThrow()
+    }
     // Past Orca's largest flushing volume (g_max_flush_volume, 20000) and past what an int holds.
     expect(Number(FLUSH.outOfRange)).toBeGreaterThan(2 ** 31)
     const machine: FlatPreset = { name: 'm', type: 'machine', from: 'system' }
