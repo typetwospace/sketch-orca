@@ -99,7 +99,7 @@ LICENSE          the GNU Affero General Public License, version 3 (OrcaSlicer's 
 NOTICE           what sketch-orca is based on, the code of others it carries, and what changed when
 AUTHORS          the copyright holders of the changes
 BUILDING.md      the tools, their versions, and the order of the commands
-CONTRIBUTING.md  how to contribute: licences and the Developer Certificate of Origin sign-off
+CONTRIBUTING.md  no outside contributions; the rules for changes made here
 orca.lock.json   the OrcaSlicer release we build: repo, tag, commit, version, publish date, licence
 patches/         our changes to Orca's build (no GUI dependencies; the front end in Orca's tree),
                  applied in order with git apply
