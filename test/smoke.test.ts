@@ -17,6 +17,7 @@ import {
   POCKET,
   FLUSH,
   FLUSH_JOBS,
+  PRIME_TOWER_JOBS,
   REFUSALS,
   REFUSE,
   SMOKE_CASES,
@@ -567,6 +568,7 @@ describe('jobs and the engine environment', () => {
       'override-keys',
       'preset-metadata',
       'flush-volumes',
+      'prime-tower',
       'crash-result',
       'refusals',
     ])
@@ -575,7 +577,7 @@ describe('jobs and the engine environment', () => {
     // refusals; version 4 z-offset, override-keys, config-def's obsolete keys and two refusals;
     // version 5 the lowered nozzle past the top-of-print slack, config-def's stillDefined, the old
     // name Orca renames for its value (override-keys) and the refusal of the value it drops;
-    // version 6 preset-metadata and flush-volumes.
+    // version 6 preset-metadata, flush-volumes and prime-tower.
     expect(SMOKE_VERSION).toBe(6)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
@@ -591,15 +593,27 @@ describe('jobs and the engine environment', () => {
     expect(SMOKE_PRESETS.generic2.machine).toBe(SMOKE_PRESETS.generic.machine)
   })
 
-  test('the flush-volumes jobs: each is refused or checks config values, and changes only its copy of the presets', () => {
-    const ids = FLUSH_JOBS.map((j) => j.id)
-    expect(new Set(ids).size).toBe(ids.length)
-    for (const j of FLUSH_JOBS) {
-      expect((j.refused === undefined) !== (j.config === undefined)).toBe(true)
-      // The job format takes the overrides: the engine is what refuses them.
-      const presets = { machine: join(scratch, 'm.json'), process: join(scratch, 'p.json'), filaments: [join(scratch, 'f.json')] }
-      expect(() => validateJob(smokeJob({ command: 'slice', dir: scratch, resources: scratch, presets, overrides: j.overrides ?? {} }))).not.toThrow()
+  test('the flush-volumes and prime-tower jobs: each is refused or slices, and changes only its copy of the presets', () => {
+    for (const jobs of [FLUSH_JOBS, PRIME_TOWER_JOBS]) {
+      const ids = jobs.map((j) => j.id)
+      expect(new Set(ids).size).toBe(ids.length)
+      for (const j of jobs) {
+        expect(j.refused !== undefined && j.config !== undefined).toBe(false)
+        // The job format takes the settings: the engine is what refuses them.
+        const presets = { machine: join(scratch, 'm.json'), process: join(scratch, 'p.json'), filaments: [join(scratch, 'f.json'), join(scratch, 'f.json')] }
+        const customGcodes = j.customGcodes?.(expectedFixedLayers(CUBE.size, CUBE.firstLayer, CUBE.layerHeight, 0.08))
+        expect(() => validateJob(smokeJob({ command: 'slice', dir: scratch, resources: scratch, presets, overrides: j.overrides ?? {}, objects: j.objects, customGcodes }))).not.toThrow()
+      }
     }
+    for (const j of FLUSH_JOBS) expect((j.refused === undefined) !== (j.config === undefined)).toBe(true)
+    // The tower job changes to filament 2 inside the cube; the raft job's object sets raft_layers only.
+    const changes = PRIME_TOWER_JOBS.find((j) => j.id === 'tower')!.customGcodes!(expectedFixedLayers(CUBE.size, CUBE.firstLayer, CUBE.layerHeight, 0.08))
+    expect(changes).toEqual([{ printZ: expect.any(Number), type: 'filament', extruder: 2 }])
+    expect(changes[0]!.printZ).toBeGreaterThan(CUBE.firstLayer)
+    expect(changes[0]!.printZ).toBeLessThan(CUBE.size)
+    const raft = PRIME_TOWER_JOBS.find((j) => j.id === 'support-raft-object')!
+    expect(raft.objects?.map((o) => Object.keys(o.overrides))).toEqual([['raft_layers']])
+    expect(raft.overrides).toMatchObject({ enable_support: '1', support_filament: '2' })
     // Past Orca's largest flushing volume (g_max_flush_volume, 20000) and past what an int holds.
     expect(Number(FLUSH.outOfRange)).toBeGreaterThan(2 ** 31)
     const machine: FlatPreset = { name: 'm', type: 'machine', from: 'system' }

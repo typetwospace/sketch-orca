@@ -520,7 +520,8 @@ std::set<int> plate_filaments(const Model &model, const DynamicPrintConfig &cfg,
         const ConfigOption *o = mo->config.option(key);
         return o != nullptr ? o->getInt() : fallback;
     };
-    const bool global_support = cfg_bool(cfg, "enable_support") || cfg_enum(cfg, "raft_layers", 0) > 0;
+    const bool global_enable = cfg_bool(cfg, "enable_support");
+    const int  global_raft   = cfg_enum(cfg, "raft_layers", 0);
     for (const ModelObject *mo : model.objects) {
         if (!mo->printable || std::none_of(mo->instances.begin(), mo->instances.end(), [](const ModelInstance *i) { return i->printable; }))
             continue;
@@ -537,11 +538,10 @@ std::set<int> plate_filaments(const Model &model, const DynamicPrintConfig &cfg,
         for (const auto &range : mo->layer_config_ranges)
             if (const ConfigOption *o = range.second.option("extruder"))
                 add(o->getInt());
-        bool support = global_support;
-        if (mo->config.has("enable_support") || mo->config.has("raft_layers")) {
-            const ConfigOption *o = mo->config.option("enable_support");
-            support = (o != nullptr && o->getBool()) || object_int(mo, "raft_layers", 0) > 0;
-        }
+        // Each of the two from the object when it sets it, else from the print: an object that sets
+        // only raft_layers keeps the print's enable_support (sketch-orca, 2026-11-01).
+        const ConfigOption *enable  = mo->config.option("enable_support");
+        const bool          support = (enable != nullptr ? enable->getBool() : global_enable) || object_int(mo, "raft_layers", global_raft) > 0;
         if (support)
             for (const char *key : {"support_filament", "support_interface_filament"})
                 add(object_int(mo, key, 0) != 0 ? object_int(mo, key, 0) : cfg_enum(cfg, key, 0));

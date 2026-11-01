@@ -31,6 +31,8 @@
 //   flush-volumes    the flushing volumes between filaments: a nozzle_volume past what an int holds, in the machine
 //                    preset or as an override, is refused (config-invalid) instead of being converted; an override
 //                    that makes filament 2 a support filament gives the matrix Orca's support volumes (0,230,700,0)
+//   prime-tower      where the prime tower goes (wipe_tower_x/y): an object that sets only raft_layers keeps the
+//                    print's support on filament 2, so its tower is placed as for a filament change
 //   crash-result     an engine that crashes in Orca's code (SKETCH_ORCA_TEST_CRASH) still writes its result:
 //                    internal-error, exit code 255, no outputs
 //   refusals         a missing model, an unknown setting (also one with capital letters), a key of the preset files as
@@ -1098,17 +1100,56 @@ export const REFUSALS: Refusal[] = [
 /** A volume past the largest flushing volume Orca computes (20000 mm³), which its int() would overflow. */
 export const FLUSH = { outOfRange: '1e100' } as const
 
-/** A job of the flush-volumes case: the cube, sliced with these presets and overrides, refused or giving these config values. */
-export interface FlushJob {
+/**
+ * A job of the flush-volumes and prime-tower cases: the cube, sliced with a copy of one of the
+ * smoke's preset sets (changed by `presets`) and these settings, refused as `refused` says or done,
+ * giving `config` in the G-code's config block.
+ */
+export interface SettingsJob {
   id: string
   set: keyof typeof SMOKE_PRESETS
   presets?: (set: PresetSet) => void
   overrides?: Overrides
+  objects?: JobObject[]
+  /** The filament changes and other custom G-codes, from the expected layers of the cube. */
+  customGcodes?: (expected: number[]) => CustomGcode[]
   refused?: RefusalExpectation
   config?: Record<string, string>
 }
 
-export const FLUSH_JOBS: FlushJob[] = [
+/** Runs each job in `<case>/<id>`; the G-code of each job that was done is in `scans`. */
+async function runSettingsJobs(env: CaseEnv, jobs: SettingsJob[]): Promise<CaseOutcome & { scans: Map<string, GcodeScan> }> {
+  const problems: string[] = []
+  const warnings: string[] = []
+  const scans = new Map<string, GcodeScan>()
+  for (const j of jobs) {
+    const dir = join(env.dir, j.id)
+    mkdirSync(dir, { recursive: true })
+    const set = structuredClone(env.sets[j.set])
+    j.presets?.(set)
+    const files = writePresetSet(join(dir, 'presets'), set)
+    const customGcodes = j.customGcodes?.(cubeExpected(set))
+    const job = smokeJob({ command: 'slice', dir, resources: env.resources, presets: files, overrides: { ...cubeOverrides, ...j.overrides }, objects: j.objects, customGcodes })
+    const r = await runJob({ ...env, dir }, job, cube(CUBE.size), 'cube 20 mm', j.refused ? 'refused' : 'done')
+    const named = (s: string) => `${j.id}: ${s}`
+    problems.push(...r.problems.map(named))
+    warnings.push(...r.warnings.map(named))
+    if (!r.result) continue
+    if (j.refused) {
+      problems.push(...checkRefusal(r.result, r.code, j.refused).map(named))
+      continue
+    }
+    if (!r.result.ok) continue
+    const g = readGcode(r.result, job)
+    problems.push(...g.problems.map(named))
+    if (!g.scan) continue
+    scans.set(j.id, g.scan)
+    for (const [key, want] of Object.entries(j.config ?? {})) problems.push(...checkConfigValue(g.scan, key, want).map(named))
+  }
+  return { problems, warnings, scans }
+}
+
+export const FLUSH_JOBS: SettingsJob[] = [
   {
     id: 'nozzle-volume-out-of-range',
     set: 'generic',
@@ -1131,6 +1172,26 @@ export const FLUSH_JOBS: FlushJob[] = [
     set: 'generic2',
     overrides: { filament_is_support: '0,1' },
     config: { filament_is_support: '0,1', flush_volumes_matrix: '0,230,700,0' },
+  },
+]
+
+/** A filament change to filament 2 a quarter of the way up the cube: two filaments on the plate. */
+const changeToFilament2 = (expected: number[]): CustomGcode[] => [{ printZ: Number(expected[PAUSE_LAYER_INDEX]!.toFixed(6)), type: 'filament', extruder: 2 }]
+
+export const PRIME_TOWER_JOBS: SettingsJob[] = [
+  {
+    // Where the tower goes for two filaments on a bed at 0,0; the jobs below are compared with it.
+    id: 'tower',
+    set: 'generic2',
+    customGcodes: changeToFilament2,
+  },
+  {
+    // Support on filament 2 from the print, and an object that sets only raft_layers (0, as the
+    // print has it): the object keeps the print's enable_support, so filament 2 is on the plate.
+    id: 'support-raft-object',
+    set: 'generic2',
+    overrides: { enable_support: '1', support_filament: '2' },
+    objects: [{ index: 0, overrides: { raft_layers: '0' }, layerHeights: { mode: 'fixed' }, heightRanges: [] }],
   },
 ]
 
@@ -1455,29 +1516,29 @@ export const SMOKE_CASES: SmokeCase[] = [
     id: 'flush-volumes',
     title: `the flushing volumes between filaments: a nozzle_volume of ${FLUSH.outOfRange} mm³, in the preset or as an override, is refused (config-invalid), not converted past an int; filament_is_support given as an override counts`,
     async run(env) {
-      const problems: string[] = []
-      const warnings: string[] = []
-      for (const j of FLUSH_JOBS) {
-        const dir = join(env.dir, j.id)
-        mkdirSync(dir, { recursive: true })
-        const set = structuredClone(env.sets[j.set])
-        j.presets?.(set)
-        const files = writePresetSet(join(dir, 'presets'), set)
-        const job = smokeJob({ command: 'slice', dir, resources: env.resources, presets: files, overrides: { ...cubeOverrides, ...j.overrides } })
-        const r = await runJob({ ...env, dir }, job, cube(CUBE.size), 'cube 20 mm', j.refused ? 'refused' : 'done')
-        const named = (s: string) => `${j.id}: ${s}`
-        problems.push(...r.problems.map(named))
-        warnings.push(...r.warnings.map(named))
-        if (!r.result) continue
-        if (j.refused) {
-          problems.push(...checkRefusal(r.result, r.code, j.refused).map(named))
-          continue
-        }
-        if (!r.result.ok) continue
-        const g = readGcode(r.result, job)
-        problems.push(...g.problems.map(named))
-        if (g.scan) for (const [key, want] of Object.entries(j.config ?? {})) problems.push(...checkConfigValue(g.scan, key, want).map(named))
+      const { problems, warnings } = await runSettingsJobs(env, FLUSH_JOBS)
+      return { problems, warnings }
+    },
+  },
+  {
+    id: 'prime-tower',
+    title: 'the prime tower: an object that sets only raft_layers keeps the print\'s support, whose filament puts a tower on the plate',
+    async run(env) {
+      const { problems, warnings, scans } = await runSettingsJobs(env, PRIME_TOWER_JOBS)
+      const at = (id: string) => {
+        const scan = scans.get(id)
+        return scan ? { x: configValue(scan.lines, 'wipe_tower_x'), y: configValue(scan.lines, 'wipe_tower_y') } : undefined
       }
+      const tower = at('tower')
+      // A process setting; Orca's default is 15, 220. The tower placed for two filaments must be elsewhere.
+      const preset = { x: settingList(env.sets.generic2.process, 'wipe_tower_x')[0] ?? '15', y: settingList(env.sets.generic2.process, 'wipe_tower_y')[0] ?? '220' }
+      if (!tower) problems.push('the expectation itself is off: the tower job gave no G-code')
+      else if (Number(tower.x) === Number(preset.x) && Number(tower.y) === Number(preset.y))
+        problems.push(`the expectation itself is off: the placed tower is at the presets' own ${preset.x}, ${preset.y}`)
+      // Support on filament 2 counts 2 filaments, so the tower is placed as for a filament change.
+      const raft = at('support-raft-object')
+      if (tower && raft && (Number(raft.x) !== Number(tower.x) || Number(raft.y) !== Number(tower.y)))
+        problems.push(`support-raft-object: the tower is at ${raft.x}, ${raft.y}, not placed as for two filaments (${tower.x}, ${tower.y})`)
       return { problems, warnings }
     },
   },
