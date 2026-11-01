@@ -494,6 +494,8 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
           '   dependencies/ with that toolchain\'s GCC, as DLLs, and runs their test suites; without it',
           '   Orca\'s build would copy the prebuilt DLLs of its tree, whose source this folder does not',
           '   hold (the OrcaSlicer archive leaves them out).',
+          '   Keep the path of <deps> short: Visual C++ takes no path over 259 characters, and the',
+          '   dependency build writes files up to 178 characters below <deps>.',
         ]
       : []),
     '',

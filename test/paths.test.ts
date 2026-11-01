@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { enginePaths, readStamp, sha256File, sha256Text, workHome, workPaths, writeStamp } from '../scripts/lib/paths.ts'
+import { enginePaths, readStamp, sha256File, sha256Text, WINDOWS_WORK_PATH_MAX, workHome, workPathProblem, workPaths, writeStamp } from '../scripts/lib/paths.ts'
 
 describe('paths', () => {
   test('workHome: SKETCH_ORCA_HOME first, then LOCALAPPDATA on Windows, XDG_DATA_HOME or ~/.local/share elsewhere', () => {
@@ -11,6 +11,21 @@ describe('paths', () => {
     expect(workHome({}, 'win32', 'H')).toBe(join('H', 'AppData', 'Local', 'SketchDev', 'orca-engine'))
     expect(workHome({ XDG_DATA_HOME: 'X' }, 'linux', 'H')).toBe(join('X', 'SketchDev', 'orca-engine'))
     expect(workHome({}, 'darwin', 'H')).toBe(join('H', '.local', 'share', 'SketchDev', 'orca-engine'))
+  })
+
+  test('workPathProblem: on Windows a work folder too long for Visual C++ is refused, and the default one of any user name fits', () => {
+    expect(WINDOWS_WORK_PATH_MAX).toBe(65)
+    const longest = 'C:\\' + 'w'.repeat(WINDOWS_WORK_PATH_MAX - 3)
+    expect(workPathProblem(longest, 'win32')).toBeUndefined()
+    const problem = workPathProblem(`${longest}x`, 'win32')
+    expect(problem).toContain(`is ${WINDOWS_WORK_PATH_MAX + 1} characters long`)
+    expect(problem).toContain('SKETCH_ORCA_HOME')
+    // Elsewhere there is no such limit.
+    expect(workPathProblem(`/${'w'.repeat(300)}`, 'linux')).toBeUndefined()
+    // A Windows user name has at most 20 characters.
+    const home = workHome({}, 'win32', `C:\\Users\\${'u'.repeat(20)}`)
+    expect(home.length).toBe(WINDOWS_WORK_PATH_MAX)
+    expect(workPathProblem(home, 'win32')).toBeUndefined()
   })
 
   test('workPaths lays the work folder out', () => {

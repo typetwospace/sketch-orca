@@ -100,7 +100,8 @@ newest date of the patch headers.
     2026-10-30 and changed 2026-10-31 (the source bundle takes the files git tracks) and
     2026-11-01 (the static runtime, which stage checks, a cap on the dependency build's jobs, the
     build's provenance, the run lock, the privacy and smoke gates, the source bundle's
-    binaries, and the MinGW-w64 toolchain that builds GMP and MPFR).
+    binaries, the MinGW-w64 toolchain that builds GMP and MPFR, and the longest work folder a
+    Windows build takes).
     scripts/lib/smoke.ts carries a TypeScript port of layer-height code from
     src/libslic3r/Slicing.cpp, to predict the layers the engine must make; those portions are
     copyright the OrcaSlicer contributors.

@@ -41,7 +41,7 @@ import { hashTree } from './lib/files.ts'
 import { githubGetter, resolveLatestRelease } from './lib/github.ts'
 import { compareLock, lockForRelease, readLock, releaseDecision, serializeLock, writeLock, type OrcaLock, type ReleaseDecision } from './lib/lock.ts'
 import { ensureMingw, mingwPinsDigest, mingwRoot } from './lib/mingw.ts'
-import { depsStampProblems, enginePaths, readStamp, sha256File, sha256Text, workHome, workPaths, writeStamp, type DepsRecord, type WorkPaths } from './lib/paths.ts'
+import { depsStampProblems, enginePaths, readStamp, sha256File, sha256Text, workHome, workPathProblem, workPaths, writeStamp, type DepsRecord, type WorkPaths } from './lib/paths.ts'
 import { runSteps, stepArgs, type ReleaseStep } from './lib/release.ts'
 import { EXIT, Log, runLogged, StepError, UsageError } from './lib/run.ts'
 import { takeRunLock } from './lib/runlock.ts'
@@ -321,6 +321,9 @@ async function cmdBuild(ctx: Context): Promise<number> {
   if (step !== undefined && step !== 'deps' && step !== 'orca') throw new UsageError(`--step must be deps or orca, got ${step}`)
   const fresh = flag(ctx.args, '--fresh')
   if (fresh && step === 'orca') throw new UsageError('--fresh starts the dependency build over; it does not go with --step orca')
+  // Refused before anything is built, not part of the way through the dependency build.
+  const longPath = workPathProblem(ctx.work.home, currentPlatform())
+  if (longPath) throw new StepError(longPath)
   const t = findToolchain()
   for (const n of checkToolchain(t)) log.line(`toolchain: ${n}`)
   log.line(`toolchain: cmake ${t.cmake}, ninja ${t.ninja}, git ${t.git}${t.ignorePrefixes.length ? `, ignoring prefix ${t.ignorePrefixes.join(', ')}` : ''}`)

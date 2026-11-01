@@ -52,7 +52,9 @@ or `bun run engine release --offline`, which runs them in that order and stops a
 failure. Every step can be run again: it skips what is done and verified.
 
 The work folder, where all of this happens, is `%LOCALAPPDATA%\SketchDev\orca-engine` on Windows
-and `~/.local/share/SketchDev/orca-engine` elsewhere; `SKETCH_ORCA_HOME` puts it somewhere else.
+and `~/.local/share/SketchDev/orca-engine` elsewhere; `SKETCH_ORCA_HOME` puts it somewhere else
+(on Windows, a folder whose path has at most 65 characters: Visual C++ takes no path over 259
+characters, and the dependency build writes files up to 183 characters below the work folder).
 The staged engine is `<work>/dist/engine`, the source bundle `<work>/dist/source/<name>`.
 
 The first `build` downloads and builds OrcaSlicer's dependencies (Boost, OpenCV, OCCT, CGAL and

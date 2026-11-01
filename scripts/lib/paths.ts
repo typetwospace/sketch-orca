@@ -18,6 +18,22 @@ export function workHome(env: NodeJS.ProcessEnv, platform: Platform, home = home
   return join(base, 'SketchDev', 'orca-engine')
 }
 
+/**
+ * Windows: the longest work folder `build` works in. Visual C++'s compiler and MSBuild take no path
+ * longer than 259 characters (MAX_PATH), and the dependency build writes files up to 183 characters
+ * below the work folder (Draco's MSBuild logs in deps/, in a finished build of v2.4.2), so in a
+ * longer work folder it fails part of the way through, with cl's C1083 "Cannot open compiler
+ * generated file". 10 characters are kept spare for files that live only while the build runs. The
+ * default work folder fits for any Windows user name (at most 20 characters).
+ */
+export const WINDOWS_WORK_PATH_MAX = 259 - 1 - 183 - 10
+
+/** Why `build` cannot work in the work folder `home` (WINDOWS_WORK_PATH_MAX), or undefined. */
+export function workPathProblem(home: string, platform: Platform): string | undefined {
+  if (platform !== 'win32' || home.length <= WINDOWS_WORK_PATH_MAX) return undefined
+  return `the work folder ${home} is ${home.length} characters long; on Windows the build needs one of at most ${WINDOWS_WORK_PATH_MAX} (Visual C++ takes no path over 259 characters, and the dependency build writes files up to 183 characters below the work folder). Set SKETCH_ORCA_HOME to a shorter one`
+}
+
 export interface WorkPaths {
   home: string
   /** The Orca checkout at the locked commit, with our patches applied. */

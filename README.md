@@ -117,7 +117,10 @@ package.json     the scripts above and the development dependencies; bun.lock pi
 
 The work folder is `%LOCALAPPDATA%\SketchDev\orca-engine` on Windows and
 `$XDG_DATA_HOME/SketchDev/orca-engine` (`~/.local/share/SketchDev/orca-engine`) elsewhere;
-`SKETCH_ORCA_HOME` overrides it.
+`SKETCH_ORCA_HOME` overrides it. On Windows `build` refuses a work folder whose path is longer than
+65 characters (`WINDOWS_WORK_PATH_MAX` in `scripts/lib/paths.ts`): Visual C++ takes no path over 259
+characters, and the dependency build writes files up to 183 characters below the work folder. The
+default fits for any user name.
 
 ```
 src/            OrcaSlicer at the locked commit, with patches/ applied
@@ -269,7 +272,7 @@ passes no deployment target yet.
 
 | Variable | Use |
 | --- | --- |
-| `SKETCH_ORCA_HOME` | The work folder. |
+| `SKETCH_ORCA_HOME` | The work folder (on Windows at most 65 characters long). |
 | `SKETCH_ORCA_VS` | The Visual Studio install folder, instead of asking vswhere. |
 | `SKETCH_ORCA_CMAKE`, `SKETCH_ORCA_NINJA`, `SKETCH_ORCA_PERL`, `SKETCH_ORCA_GIT` | The programs to use, by path. |
 | `SKETCH_ORCA_JOBS` | Compile jobs for the Orca build (default: one per core, at most one per 2.5 GB of memory). When set, it caps the dependency build too: one dependency at a time, and in it MSBuild one project at a time with `cl /MP<jobs>` (`make -j<jobs>` elsewhere), so no more than that many compilers run (`depsParallelEnv` in `scripts/lib/cmake.ts`). |
