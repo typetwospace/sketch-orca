@@ -33,7 +33,10 @@
 //                    that makes filament 2 a support filament gives the matrix Orca's support volumes (0,230,700,0)
 //   prime-tower      where the prime tower goes (wipe_tower_x/y): an object that sets only raft_layers keeps the
 //                    print's support on filament 2, so its tower is placed as for a filament change; on the printer's
-//                    bed moved by -150, -150 (0,0 at its centre, as a delta's) the tower moves with the bed
+//                    bed moved by -150, -150 (0,0 at its centre, as a delta's) the tower moves with the bed; on the
+//                    bed cut to a diamond, and with its back half excluded, the tower prints on the diamond and off
+//                    the excluded half; a place the job sets off the diamond is config-invalid, and a tower wider
+//                    than the bed arrange-failed
 //   imported-settings a 3MF project (a .gcode.3mf the engine wrote) whose object has wall_loops 6 slices, as a model
 //                    the job does not list, with the plate's wall_loops 2: its inner walls are the plain cube's
 //   file-collisions  a --progress on the job, the model or a preset, and a --out on the job, the model, a preset or
@@ -67,7 +70,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import type { Context } from '../orca.ts'
 import type { Platform } from './env.ts'
 import { hashTree } from './files.ts'
-import { commandsAfter, configValue, extrusions, featureLengths, firstExtrusionLine, layerAtLine, layerBounds, layerHitsRect, scanGcode, type GcodeScan, type Rect } from './gcode.ts'
+import { commandsAfter, configValue, extrusions, featureLengths, firstExtrusionLine, layerAtLine, layerBounds, layerHitsRect, scanGcode, segmentHitsRect, type Extrusion, type GcodeScan, type Rect } from './gcode.ts'
 import { isEngineAbsolute, parseProgress, readResult, validateJob, writeJob, type CustomGcode, type Job, type JobObject, type JobResult, type Overrides } from './job.ts'
 import type { OrcaLock } from './lock.ts'
 import { boxTriangles, boxWithPocket, cube, meshBounds, uvSphere, writeStl, type Mesh } from './models.ts'
@@ -1215,6 +1218,12 @@ export const BED_SHIFT = [-150, -150] as const
 /** A filament change to filament 2 a quarter of the way up the cube: two filaments on the plate. */
 const changeToFilament2 = (expected: number[]): CustomGcode[] => [{ printZ: Number(expected[PAUSE_LAYER_INDEX]!.toFixed(6)), type: 'filament', extruder: 2 }]
 
+/** A prime tower width past every smoke printer's bed (300 mm). */
+export const TOWER_TOO_WIDE = 400
+
+/** How far, in mm, the tower's extrusions may pass an edge of the bed or the excluded area: half a 0.4 mm line. */
+export const TOWER_TOLERANCE = 0.2
+
 export const PRIME_TOWER_JOBS: SettingsJob[] = [
   {
     // Where the tower goes for two filaments on a bed at 0,0; the jobs below are compared with it.
@@ -1239,7 +1248,107 @@ export const PRIME_TOWER_JOBS: SettingsJob[] = [
     },
     customGcodes: changeToFilament2,
   },
+  {
+    // The bed cut to the diamond between its edges' midpoints: the tower's default place is partly
+    // off it, so the tower moves onto it.
+    id: 'bed-diamond',
+    set: 'generic2',
+    presets: diamondBed,
+    customGcodes: changeToFilament2,
+  },
+  {
+    // The back half of the bed excluded (bed_exclude_area), where the default place is: the tower moves off it.
+    id: 'bed-excluded',
+    set: 'generic2',
+    presets: (set) => {
+      set.machine.bed_exclude_area = rectPoints(backHalf(bedOutline(set.machine)))
+    },
+    customGcodes: changeToFilament2,
+  },
+  {
+    // A place the job sets itself (wipe_tower_x/y) off the diamond is refused, not moved.
+    id: 'tower-set-off-bed',
+    set: 'generic2',
+    presets: diamondBed,
+    overrides: { wipe_tower_x: '5', wipe_tower_y: '5' },
+    customGcodes: changeToFilament2,
+    refused: { code: 'config-invalid', exitCode: -18, mentions: 'wipe_tower_x' },
+  },
+  {
+    // A tower wider than the bed fits nowhere.
+    id: 'tower-too-wide',
+    set: 'generic2',
+    overrides: { prime_tower_width: String(TOWER_TOO_WIDE) },
+    customGcodes: changeToFilament2,
+    refused: { code: 'arrange-failed', exitCode: -21, mentions: 'prime tower' },
+  },
 ]
+
+/** prime-tower's diamond: the corners are the midpoints of the bed outline's bounding box edges. */
+export function diamondOutline(outline: [number, number][]): [number, number][] {
+  const xs = outline.map(([x]) => x)
+  const ys = outline.map(([, y]) => y)
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
+  const cx = (x0 + x1) / 2
+  const cy = (y0 + y1) / 2
+  return [[cx, y0], [x1, cy], [cx, y1], [x0, cy]]
+}
+
+function diamondBed(set: PresetSet): void {
+  set.machine.printable_area = diamondOutline(bedOutline(set.machine)).map(([x, y]) => `${x}x${y}`)
+}
+
+/** prime-tower's excluded area: the back half of the bed outline's bounding box. */
+export function backHalf(outline: [number, number][]): Rect {
+  const xs = outline.map(([x]) => x)
+  const ys = outline.map(([, y]) => y)
+  const [y0, y1] = [Math.min(...ys), Math.max(...ys)]
+  return { minX: Math.min(...xs), minY: (y0 + y1) / 2, maxX: Math.max(...xs), maxY: y1 }
+}
+
+/** A rectangle as bed_exclude_area gives one: its four corners, XxY. */
+export function rectPoints(r: Rect): string[] {
+  return [`${r.minX}x${r.minY}`, `${r.maxX}x${r.minY}`, `${r.maxX}x${r.maxY}`, `${r.minX}x${r.maxY}`]
+}
+
+/** How far a point is outside a polygon, 0 when it is inside or on it. */
+export function distanceOutside(x: number, y: number, poly: [number, number][]): number {
+  let inside = false
+  let nearest = Infinity
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i]!
+    const [xj, yj] = poly[j]!
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside
+    const dx = xj - xi
+    const dy = yj - yi
+    const t = dx === 0 && dy === 0 ? 0 : Math.max(0, Math.min(1, ((x - xi) * dx + (y - yi) * dy) / (dx * dx + dy * dy)))
+    nearest = Math.min(nearest, Math.hypot(x - (xi + t * dx), y - (yi + t * dy)))
+  }
+  return inside ? 0 : nearest
+}
+
+/** The prime tower's extrusions from the first layer up (Orca tags them "Prime tower"). */
+export function towerMoves(moves: Extrusion[]): Extrusion[] {
+  return moves.filter((m) => m.layer >= 0 && m.role !== undefined && /tower/i.test(m.role))
+}
+
+/** Problems with where the tower printed: off `bed` by more than `tolerance` mm, or into `excluded`. */
+export function towerPlacementProblems(moves: Extrusion[], o: { bed?: [number, number][]; excluded?: Rect; tolerance: number }): string[] {
+  const tower = towerMoves(moves)
+  if (tower.length === 0) return ['the G-code has no prime tower extrusions']
+  const p: string[] = []
+  if (o.bed) {
+    const off = tower.find((m) => distanceOutside(m.x0, m.y0, o.bed!) > o.tolerance || distanceOutside(m.x1, m.y1, o.bed!) > o.tolerance)
+    if (off) p.push(`the prime tower prints off the printable area (G-code line ${off.line + 1}, ${off.x1}, ${off.y1})`)
+  }
+  if (o.excluded) {
+    const t = o.tolerance
+    const inner: Rect = { minX: o.excluded.minX + t, minY: o.excluded.minY + t, maxX: o.excluded.maxX - t, maxY: o.excluded.maxY - t }
+    const into = tower.find((m) => segmentHitsRect(m.x0, m.y0, m.x1, m.y1, inner))
+    if (into) p.push(`the prime tower prints on the excluded area (G-code line ${into.line + 1}, ${into.x1}, ${into.y1})`)
+  }
+  return p
+}
 
 /**
  * imported-settings: the cube sliced with wall_loops PLAIN for the plate and WALLS for its object
@@ -1640,7 +1749,7 @@ export const SMOKE_CASES: SmokeCase[] = [
   },
   {
     id: 'prime-tower',
-    title: `the prime tower: an object that sets only raft_layers keeps the print's support, whose filament puts a tower on the plate; on a bed moved by ${BED_SHIFT.join(', ')} the tower moves with it`,
+    title: `the prime tower: an object that sets only raft_layers keeps the print's support, whose filament puts a tower on the plate; on a bed moved by ${BED_SHIFT.join(', ')} the tower moves with it; it prints on a diamond bed and off an excluded half, a place set off the bed is refused, and a tower wider than the bed fits nowhere`,
     async run(env) {
       const { problems, warnings, scans } = await runSettingsJobs(env, PRIME_TOWER_JOBS)
       const at = (id: string) => {
@@ -1661,6 +1770,24 @@ export const SMOKE_CASES: SmokeCase[] = [
       const shifted = at('bed-shifted')
       if (tower && shifted && (Number(shifted.x) !== Number(tower.x) + BED_SHIFT[0] || Number(shifted.y) !== Number(tower.y) + BED_SHIFT[1]))
         problems.push(`bed-shifted: the tower is at ${shifted.x}, ${shifted.y}; on the bed moved by ${BED_SHIFT.join(', ')} it belongs at ${Number(tower.x) + BED_SHIFT[0]}, ${Number(tower.y) + BED_SHIFT[1]}`)
+      // The tower printed on the diamond and off the excluded half, where its default place is not.
+      const outline = bedOutline(env.sets.generic2.machine)
+      const diamond = diamondOutline(outline)
+      const excluded = backHalf(outline)
+      const moves = (id: string) => {
+        const scan = scans.get(id)
+        return scan ? extrusions(scan) : undefined
+      }
+      const plain = moves('tower')
+      if (plain && towerMoves(plain).length === 0) problems.push('the expectation itself is off: the tower job printed no prime tower')
+      else if (plain) {
+        if (towerPlacementProblems(plain, { bed: diamond, tolerance: TOWER_TOLERANCE }).length === 0) problems.push('the expectation itself is off: on the full bed the tower already prints inside the diamond')
+        if (towerPlacementProblems(plain, { excluded, tolerance: TOWER_TOLERANCE }).length === 0) problems.push('the expectation itself is off: on the full bed the tower already prints off the back half')
+      }
+      for (const [id, o] of [['bed-diamond', { bed: diamond }], ['bed-excluded', { bed: outline, excluded }]] as const) {
+        const m = moves(id)
+        if (m) problems.push(...towerPlacementProblems(m, { ...o, tolerance: TOWER_TOLERANCE }).map((s) => `${id}: ${s}`))
+      }
       return { problems, warnings }
     },
   },

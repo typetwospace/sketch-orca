@@ -27,9 +27,15 @@ import {
   SMOKE_CASES,
   SMOKE_PRESETS,
   SMOKE_VERSION,
+  TOWER_TOO_WIDE,
   VALUE_RENAME,
   Z_OFFSETS,
+  backHalf,
   bedOutline,
+  diamondOutline,
+  distanceOutside,
+  rectPoints,
+  towerPlacementProblems,
   checkAdaptiveLayers,
   checkBambu3mf,
   checkConfigDef,
@@ -637,6 +643,25 @@ describe('jobs and the engine environment', () => {
     expect(moved.machine.printable_area).toEqual(['-150x-150', '150x-150', '150x150', '-150x150'])
     expect(bedOutline(moved.machine)).toEqual(bedOutline(bed.machine).map(([x, y]) => [x + BED_SHIFT[0], y + BED_SHIFT[1]]))
     expect(bed.machine.printable_area).toEqual(['0x0', '300x0', '300x300', '0x300'])
+    // The diamond and the excluded back half, each on its own copy; the job's own place is off the
+    // diamond, and the tower is wider than the bed.
+    const job = (id: string) => PRIME_TOWER_JOBS.find((j) => j.id === id)!
+    const diamond = structuredClone(bed)
+    job('bed-diamond').presets!(diamond)
+    expect(diamond.machine.printable_area).toEqual(['150x0', '300x150', '150x300', '0x150'])
+    const excluded = structuredClone(bed)
+    job('bed-excluded').presets!(excluded)
+    expect(excluded.machine.bed_exclude_area).toEqual(['0x150', '300x150', '300x300', '0x300'])
+    expect(excluded.machine.printable_area).toEqual(bed.machine.printable_area)
+    const setOff = structuredClone(bed)
+    job('tower-set-off-bed').presets!(setOff)
+    expect(setOff.machine.printable_area).toEqual(diamond.machine.printable_area)
+    const { wipe_tower_x: tx, wipe_tower_y: ty } = job('tower-set-off-bed').overrides as Record<string, string>
+    expect(distanceOutside(Number(tx), Number(ty), bedOutline(diamond.machine))).toBeGreaterThan(0)
+    expect(job('tower-set-off-bed').refused).toMatchObject({ code: 'config-invalid', mentions: 'wipe_tower_x' })
+    expect(Number((job('tower-too-wide').overrides as Record<string, string>).prime_tower_width)).toBe(TOWER_TOO_WIDE)
+    expect(TOWER_TOO_WIDE).toBeGreaterThan(300)
+    expect(job('tower-too-wide').refused).toMatchObject({ code: 'arrange-failed', exitCode: -21 })
     // Past Orca's largest flushing volume (g_max_flush_volume, 20000) and past what an int holds.
     expect(Number(FLUSH.outOfRange)).toBeGreaterThan(2 ** 31)
     const machine: FlatPreset = { name: 'm', type: 'machine', from: 'system' }
@@ -710,6 +735,32 @@ describe('jobs and the engine environment', () => {
     // The command line's failure results go through the same check; nothing else in main.cpp writes one.
     expect(main).not.toContain('write_failure_result(')
     expect(main).toContain('write_command_line_failure(')
+  })
+
+  test('the prime tower\'s place: diamondOutline, backHalf, distanceOutside and towerPlacementProblems', () => {
+    const square: [number, number][] = [[-10, 0], [290, 0], [290, 300], [-10, 300]]
+    expect(diamondOutline(square)).toEqual([[140, 0], [290, 150], [140, 300], [-10, 150]])
+    expect(backHalf(square)).toEqual({ minX: -10, minY: 150, maxX: 290, maxY: 300 })
+    expect(rectPoints({ minX: 0, minY: 150, maxX: 300, maxY: 300 })).toEqual(['0x150', '300x150', '300x300', '0x300'])
+    const diamond = diamondOutline([[0, 0], [300, 0], [300, 300], [0, 300]])
+    expect(distanceOutside(150, 150, diamond)).toBe(0)
+    expect(distanceOutside(150, 0, diamond)).toBe(0)
+    expect(distanceOutside(75, 75, diamond)).toBeCloseTo(0, 9)
+    expect(distanceOutside(0, 0, diamond)).toBeCloseTo(75 * Math.SQRT2, 9)
+    expect(distanceOutside(300, 300, diamond)).toBeCloseTo(75 * Math.SQRT2, 9)
+    const move = (x0: number, y0: number, x1: number, y1: number, role = 'Prime tower', layer = 0) => ({ line: 0, layer, x0, y0, x1, y1, z: 0.2, role })
+    expect(towerPlacementProblems([move(1, 1, 2, 2, 'Outer wall')], { bed: diamond, tolerance: 0.2 })).toEqual(['the G-code has no prime tower extrusions'])
+    // Before the first layer (a purge line of the start G-code) does not count.
+    expect(towerPlacementProblems([move(140, 140, 160, 160), move(0, 0, 1, 0, 'Prime tower', -1)], { bed: diamond, tolerance: 0.2 })).toEqual([])
+    expect(towerPlacementProblems([move(140, 140, 160, 160), move(160, 160, 230, 250)], { bed: diamond, tolerance: 0.2 })).toEqual([
+      'the prime tower prints off the printable area (G-code line 1, 230, 250)',
+    ])
+    // Within the tolerance of the edge it is on the bed; through the excluded area it is not.
+    expect(towerPlacementProblems([move(74.95, 74.95, 150, 150)], { bed: diamond, tolerance: 0.2 })).toEqual([])
+    expect(towerPlacementProblems([move(74.7, 74.7, 150, 150)], { bed: diamond, tolerance: 0.2 })).toHaveLength(1)
+    const back = backHalf([[0, 0], [300, 0], [300, 300], [0, 300]])
+    expect(towerPlacementProblems([move(10, 100, 50, 149.9)], { excluded: back, tolerance: 0.2 })).toEqual([])
+    expect(towerPlacementProblems([move(10, 100, 50, 160)], { excluded: back, tolerance: 0.2 })).toEqual(['the prime tower prints on the excluded area (G-code line 1, 50, 160)'])
   })
 
   test('toolChanges lists the T commands without their comments', () => {

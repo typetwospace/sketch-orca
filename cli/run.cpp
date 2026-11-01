@@ -46,6 +46,7 @@
 #include "libslic3r/Arrange.hpp"
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/BuildVolume.hpp"
+#include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/CustomGCode.hpp"
 #include "libslic3r/Exception.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
@@ -53,6 +54,7 @@
 #include "libslic3r/GCode/ThumbnailData.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
 #include "libslic3r/GCode/WipeTower.hpp"
+#include "libslic3r/Geometry/ConvexHull.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/MaterialType.hpp"
 #include "libslic3r/Model.hpp"
@@ -625,6 +627,106 @@ Vec3d estimate_wipe_tower_size(const DynamicPrintConfig &cfg, const Model &model
     return size;
 }
 
+// The areas of the bed nothing is placed on, with the names arrange gives them
+// (PartPlateList::preprocess_exclude_areas): the clumping detection area when it is on, then each
+// excluded rectangle (bed_exclude_area, four points each).
+std::vector<std::pair<std::string, Polygon>> excluded_areas(const DynamicPrintConfig &cfg)
+{
+    std::vector<std::pair<std::string, Polygon>> out;
+    if (cfg_bool(cfg, "enable_wrapping_detection")) {
+        if (const auto *opt = cfg.option<ConfigOptionPoints>("wrapping_exclude_area"); opt && !opt->values.empty()) {
+            Polygon poly;
+            for (const Vec2d &p : opt->values)
+                poly.append(Point::new_scale(p.x(), p.y()));
+            out.emplace_back("WrappingRegion", std::move(poly));
+        }
+    }
+    if (const auto *opt = cfg.option<ConfigOptionPoints>("bed_exclude_area")) {
+        const Pointfs &pts = opt->values;
+        for (size_t i = 0, index = 0; i + 3 < pts.size(); i += 4, ++index) {
+            BoundingBoxf bb;
+            for (size_t k = 0; k < 4; ++k)
+                bb.merge(pts[i + k]);
+            out.emplace_back("ExcludedRegion" + std::to_string(index), Polygon({{scaled(bb.min.x()), scaled(bb.min.y())},
+                                                                                 {scaled(bb.max.x()), scaled(bb.min.y())},
+                                                                                 {scaled(bb.max.x()), scaled(bb.max.y())},
+                                                                                 {scaled(bb.min.x()), scaled(bb.max.y())}}));
+        }
+    }
+    return out;
+}
+
+// The printer's printable area (printable_area) as a polygon; empty when it has fewer than three points.
+Polygon printable_polygon(const DynamicPrintConfig &cfg)
+{
+    Polygon out;
+    if (const auto *opt = cfg.option<ConfigOptionPoints>("printable_area"); opt && opt->values.size() >= 3) {
+        for (const Vec2d &p : opt->values)
+            out.append(Point::new_scale(p.x(), p.y()));
+        out.make_counter_clockwise();
+    }
+    return out;
+}
+
+// The rectangle from x0, y0 to x1, y1, in mm.
+Polygon rect_mm(double x0, double y0, double x1, double y1)
+{
+    return Polygon({{scaled(x0), scaled(y0)}, {scaled(x1), scaled(y0)}, {scaled(x1), scaled(y1)}, {scaled(x0), scaled(y1)}});
+}
+
+// Whether the prime tower's footprint `foot` lies on the printable area (when the printer gives
+// one) and clear of the excluded areas and of `objects`: "" when it does, else why not
+// (sketch-orca, 2026-11-01).
+std::string tower_misfit(const Polygon &foot, const Polygon &printable, const std::vector<std::pair<std::string, Polygon>> &excluded, const Polygons &objects)
+{
+    const double tolerance = sqr(scale_(0.01));
+    if (!printable.empty()) {
+        for (const Point &corner : foot.points)
+            if (!printable.contains(corner))
+                return "is not all on the printable area";
+        if (area(diff(Polygons{foot}, Polygons{printable})) > tolerance)
+            return "is not all on the printable area";
+    }
+    for (const auto &named : excluded)
+        if (area(intersection(Polygons{foot}, Polygons{named.second})) > tolerance)
+            return "is on an excluded area of the bed (" + named.first + ")";
+    if (!objects.empty() && area(intersection(Polygons{foot}, objects)) > tolerance)
+        return "is on an object";
+    return std::string();
+}
+
+// The shortest move, in whole millimetres along x and y, after which `foot` fits (tower_misfit)
+// within the bounding box of the printable area; none when no such move exists or the printer gives
+// no printable area.
+std::optional<Vec2d> nearest_tower_move(const Polygon &foot, const Polygon &printable, const std::vector<std::pair<std::string, Polygon>> &excluded,
+                                        const Polygons &objects)
+{
+    if (printable.empty())
+        return std::nullopt;
+    const BoundingBox bed = printable.bounding_box(), fb = foot.bounding_box();
+    const double      x0 = std::ceil(unscale<double>(bed.min.x() - fb.min.x())), x1 = unscale<double>(bed.max.x() - fb.max.x());
+    const double      y0 = std::ceil(unscale<double>(bed.min.y() - fb.min.y())), y1 = unscale<double>(bed.max.y() - fb.max.y());
+    std::vector<Vec2d> moves;
+    for (double dx = x0; dx <= x1; dx += 1.)
+        for (double dy = y0; dy <= y1; dy += 1.)
+            moves.emplace_back(dx, dy);
+    std::stable_sort(moves.begin(), moves.end(), [](const Vec2d &a, const Vec2d &b) { return a.squaredNorm() < b.squaredNorm(); });
+    for (const Vec2d &d : moves) {
+        Polygon moved = foot;
+        moved.translate(Point(scaled(d.x()), scaled(d.y())));
+        if (tower_misfit(moved, printable, excluded, objects).empty())
+            return d;
+    }
+    return std::nullopt;
+}
+
+// Whether the job sets the prime tower's place itself (wipe_tower_x or wipe_tower_y).
+bool tower_set_by_job(const Settings &s)
+{
+    return std::find(s.overridden.begin(), s.overridden.end(), "wipe_tower_x") != s.overridden.end() ||
+           std::find(s.overridden.begin(), s.overridden.end(), "wipe_tower_y") != s.overridden.end();
+}
+
 // Where Orca's prime tower goes on plate 1, set in wipe_tower_x/y, and its footprint for arrange.
 // The stock command line starts from the GUI's default corner (165, 250; 0, 250 on a bed slinger),
 // then PartPlate::estimate_wipe_tower_polygon keeps it on the plate. A job that sets wipe_tower_x or
@@ -644,8 +746,7 @@ std::optional<arrangement::ArrangePolygon> place_prime_tower(DynamicPrintConfig 
 
     auto *xs = cfg.option<ConfigOptionFloats>("wipe_tower_x", true);
     auto *ys = cfg.option<ConfigOptionFloats>("wipe_tower_y", true);
-    const bool overridden = std::find(s.overridden.begin(), s.overridden.end(), "wipe_tower_x") != s.overridden.end() ||
-                            std::find(s.overridden.begin(), s.overridden.end(), "wipe_tower_y") != s.overridden.end();
+    const bool overridden = tower_set_by_job(s);
     const float w = float(cfg_float(cfg, "prime_tower_width", 35.));
     float       x, y;
     if (overridden) {
@@ -682,8 +783,30 @@ std::optional<arrangement::ArrangePolygon> place_prime_tower(DynamicPrintConfig 
     if (brim < 0)
         brim = WipeTower::get_auto_brim_by_height(float(size.z()));
     const auto clamp = [](float value, float lo, float hi) { return hi < lo ? lo : std::clamp(value, lo, hi); };
-    x = clamp(x, bed_x + margin, bed_x + plate_width - w - margin - brim);
-    y = clamp(y, bed_y + margin, bed_y + plate_depth - depth - margin - brim);
+    const float lo_x = bed_x + margin, hi_x = bed_x + plate_width - w - margin - brim;
+    const float lo_y = bed_y + margin, hi_y = bed_y + plate_depth - depth - margin - brim;
+    x = clamp(x, lo_x, hi_x);
+    y = clamp(y, lo_y, hi_y);
+    // Between the bed's edges is not on the bed when the printable area is not a rectangle, nor clear
+    // of its excluded areas. The tower, its brim included, must be on the printable area and off
+    // every excluded area (sketch-orca, 2026-11-01): from the default corner it moves to the nearest
+    // place that is, and none is arrange-failed; a place the job sets itself (wipe_tower_x/y) that is
+    // not is config-invalid. Its depth is Orca's estimate here; run checks the tower as sliced.
+    {
+        const Polygon printable = printable_polygon(cfg);
+        const auto    excluded  = excluded_areas(cfg);
+        const Polygon foot      = rect_mm(x - brim, y - brim, x + w + brim, y + depth + brim);
+        if (const std::string why = tower_misfit(foot, printable, excluded, {}); !why.empty()) {
+            const std::string extent = mm(w + 2 * brim) + " x " + mm(depth + 2 * brim) + " mm with its brim";
+            if (overridden)
+                fail("config-invalid", "the prime tower at wipe_tower_x " + mm(x) + ", wipe_tower_y " + mm(y) + " (" + extent + ") " + why);
+            const std::optional<Vec2d> move = nearest_tower_move(foot, printable, excluded, {});
+            if (!move)
+                fail("arrange-failed", "the prime tower (" + extent + ") fits nowhere on the printable area clear of its excluded areas");
+            x += float(move->x());
+            y += float(move->y());
+        }
+    }
     if (xs->values.empty())
         xs->values.push_back(x);
     else
@@ -707,51 +830,47 @@ std::optional<arrangement::ArrangePolygon> place_prime_tower(DynamicPrintConfig 
     return ap;
 }
 
+// The prime tower's first layer as sliced, its brim and the base of its cone included
+// (Print::first_layer_wipe_tower_corners), as a convex polygon on the bed; none without a tower.
+std::optional<Polygon> sliced_tower(const Print &print)
+{
+    const Points corners = print.first_layer_wipe_tower_corners();
+    if (corners.size() < 3)
+        return std::nullopt;
+    return Geometry::convex_hull(corners);
+}
+
+// The printable objects' footprints on the bed, for a tower moved after arranging: each instance's
+// bounding box, widened by the objects' brim and a millimetre.
+Polygons object_footprints(const Model &model, const DynamicPrintConfig &cfg)
+{
+    const double around = std::max(0., cfg_float(cfg, "brim_width", 0.)) + WIPE_TOWER_MARGIN;
+    Polygons     out;
+    for (const ModelObject *mo : model.objects)
+        for (size_t ii = 0; ii < mo->instances.size(); ++ii)
+            if (mo->printable && mo->instances[ii]->printable) {
+                const BoundingBoxf3 bb = mo->instance_bounding_box(ii);
+                out.push_back(rect_mm(bb.min.x() - around, bb.min.y() - around, bb.max.x() + around, bb.max.y() + around));
+            }
+    return out;
+}
+
 // PartPlateList::preprocess_exclude_areas: the bed's excluded rectangles (bed_exclude_area, four
 // points each) and the clumping detection area, as fixed items on plates 0..num_plates-1.
 void add_exclusion_regions(arrangement::ArrangePolygons &out, const DynamicPrintConfig &cfg, int num_plates, coord_t inflation)
 {
-    if (cfg_bool(cfg, "enable_wrapping_detection")) {
-        if (const auto *opt = cfg.option<ConfigOptionPoints>("wrapping_exclude_area"); opt && !opt->values.empty()) {
-            Polygon poly;
-            for (const Vec2d &p : opt->values)
-                poly.append(Point::new_scale(p.x(), p.y()));
-            for (int j = 0; j < num_plates; ++j) {
-                arrangement::ArrangePolygon ret;
-                ret.poly.contour   = poly;
-                ret.translation    = Vec2crd(0, 0);
-                ret.rotation       = 0.;
-                ret.is_virt_object = true;
-                ret.bed_idx        = j;
-                ret.height         = 1;
-                ret.name           = "WrappingRegion";
-                ret.inflation      = inflation;
-                out.push_back(std::move(ret));
-            }
-        }
-    }
-    if (const auto *opt = cfg.option<ConfigOptionPoints>("bed_exclude_area")) {
-        const Pointfs &pts = opt->values;
-        for (size_t i = 0, index = 0; i + 3 < pts.size(); i += 4, ++index) {
-            BoundingBoxf bb;
-            for (size_t k = 0; k < 4; ++k)
-                bb.merge(pts[i + k]);
-            const Polygon poly({{scaled(bb.min.x()), scaled(bb.min.y())},
-                                {scaled(bb.max.x()), scaled(bb.min.y())},
-                                {scaled(bb.max.x()), scaled(bb.max.y())},
-                                {scaled(bb.min.x()), scaled(bb.max.y())}});
-            for (int j = 0; j < num_plates; ++j) {
-                arrangement::ArrangePolygon ret;
-                ret.poly.contour   = poly;
-                ret.translation    = Vec2crd(0, 0);
-                ret.rotation       = 0.;
-                ret.is_virt_object = true;
-                ret.bed_idx        = j;
-                ret.height         = 1;
-                ret.name           = "ExcludedRegion" + std::to_string(index);
-                ret.inflation      = inflation;
-                out.push_back(std::move(ret));
-            }
+    for (const auto &[name, poly] : excluded_areas(cfg)) {
+        for (int j = 0; j < num_plates; ++j) {
+            arrangement::ArrangePolygon ret;
+            ret.poly.contour   = poly;
+            ret.translation    = Vec2crd(0, 0);
+            ret.rotation       = 0.;
+            ret.is_virt_object = true;
+            ret.bed_idx        = j;
+            ret.height         = 1;
+            ret.name           = name;
+            ret.inflation      = inflation;
+            out.push_back(std::move(ret));
         }
     }
 }
@@ -1597,16 +1716,50 @@ void run(const Job &job, json &result, Warnings &warnings, Progress &progress)
 
     Model::setExtruderParams(new_cfg, int(n));
     Model::setPrintSpeedTable(new_cfg, print.config());
-    try {
-        print.process();
-    } catch (const Failure &) {
-        throw;
-    } catch (const std::bad_alloc &) {
-        fail("out-of-memory", "out of memory while slicing");
-    } catch (const std::exception &e) {
-        fail_slicing(e, print, model);
+    const auto slice_print = [&]() {
+        try {
+            print.process();
+        } catch (const Failure &) {
+            throw;
+        } catch (const std::bad_alloc &) {
+            fail("out-of-memory", "out of memory while slicing");
+        } catch (const std::exception &e) {
+            fail_slicing(e, print, model);
+        }
+        check_critical();
+    };
+    slice_print();
+    // The prime tower as sliced, whose depth only now is known (it was placed with Orca's estimate),
+    // must be on the printable area and clear of the excluded areas too. A place the engine chose
+    // moves once, to the nearest place where it is and clear of the objects, and the tower is made
+    // again there; a place the job set, or a tower that fits nowhere, is gcode-in-unprintable-area
+    // (sketch-orca, 2026-11-01).
+    if (const std::optional<Polygon> sliced = sliced_tower(print)) {
+        const Polygon printable = printable_polygon(new_cfg);
+        const auto    excluded  = excluded_areas(new_cfg);
+        if (const std::string why = tower_misfit(*sliced, printable, excluded, {}); !why.empty()) {
+            const BoundingBox box  = sliced->bounding_box();
+            const std::string what = "the prime tower as sliced (" + mm(unscale<double>(box.max.x() - box.min.x())) + " x " +
+                                     mm(unscale<double>(box.max.y() - box.min.y())) + " mm with its brim, from x " + mm(unscale<double>(box.min.x())) +
+                                     ", y " + mm(unscale<double>(box.min.y())) + ") " + why;
+            if (tower_set_by_job(s))
+                fail("gcode-in-unprintable-area", what + "; give wipe_tower_x and wipe_tower_y a place where it fits");
+            const std::optional<Vec2d> move = nearest_tower_move(*sliced, printable, excluded, object_footprints(model, new_cfg));
+            if (!move)
+                fail("gcode-in-unprintable-area", what + ", and fits nowhere else on it clear of the objects");
+            for (const auto &[key, by] : {std::make_pair("wipe_tower_x", move->x()), std::make_pair("wipe_tower_y", move->y())}) {
+                auto *opt = new_cfg.option<ConfigOptionFloats>(key, true);
+                if (opt->values.empty())
+                    opt->values.push_back(0.);
+                opt->values.front() += by;
+            }
+            print.apply(model, new_cfg);
+            slice_print();
+            if (const std::optional<Polygon> moved = sliced_tower(print))
+                if (const std::string still = tower_misfit(*moved, printable, excluded, {}); !still.empty())
+                    fail("gcode-in-unprintable-area", "the prime tower as sliced, moved by " + mm(move->x()) + ", " + mm(move->y()) + " mm, " + still);
+        }
     }
-    check_critical();
     if (const std::string conflict = print.get_conflict_string(); !conflict.empty()) {
         std::string message = conflict;
         int         index   = -1;

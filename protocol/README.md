@@ -204,8 +204,8 @@ gives it as the result's `exitCode`:
 | `output-failed` | -13 | an output that cannot be written |
 | `out-of-memory` | -14 | out of memory |
 | `process-not-compatible` | -17 | the process preset is not made for the printer |
-| `config-invalid` | -18 | the merged settings fail OrcaSlicer's checks |
-| `arrange-failed` | -21 | an object does not fit on the plate |
+| `config-invalid` | -18 | the merged settings fail OrcaSlicer's checks, or put the prime tower (`wipe_tower_x`, `wipe_tower_y`) off the printable area or on an excluded area |
+| `arrange-failed` | -21 | an object, or the prime tower, does not fit on the plate |
 | `orient-failed` | -22 | an object cannot be oriented |
 | `empty-plate` | -50 | nothing left to slice |
 | `validate-error` | -51 | the print fails OrcaSlicer's validation |
@@ -215,7 +215,7 @@ gives it as the result's `exitCode`:
 | `collision` | -63 | objects collide printing one by one (-64 printing layer by layer) |
 | `slice-failed` | -100 | slicing failed |
 | `path-conflicts` | -101 | the G-code paths conflict |
-| `gcode-in-unprintable-area` | -102 | the G-code reaches outside the printable area |
+| `gcode-in-unprintable-area` | -102 | the G-code reaches outside the printable area, or the prime tower as sliced is off it or on an excluded area |
 
 Other codes may appear in later versions; they are lower-case words joined by `-`. A crash inside
 OrcaSlicer's code still writes an `internal-error` result, and the process ends with -1.
