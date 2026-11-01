@@ -60,23 +60,26 @@
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { Context } from '../orca.ts'
 import type { Platform } from './env.ts'
+import { hashTree } from './files.ts'
 import { commandsAfter, configValue, extrusions, featureLengths, firstExtrusionLine, layerAtLine, layerBounds, layerHitsRect, scanGcode, type GcodeScan, type Rect } from './gcode.ts'
 import { isEngineAbsolute, parseProgress, readResult, validateJob, writeJob, type CustomGcode, type Job, type JobObject, type JobResult, type Overrides } from './job.ts'
 import type { OrcaLock } from './lock.ts'
 import { boxTriangles, boxWithPocket, cube, meshBounds, uvSphere, writeStl, type Mesh } from './models.ts'
 import { checkPresetSet, loadProfileTree, presetSet, serializePreset, settingList, settingNumber, writePresetSet, type PresetFiles, type PresetSet } from './profiles.ts'
 import { readStamp, sha256File, sha256Text, writeStamp, type WorkPaths } from './paths.ts'
-import { resolveRuntime, windowsRuntimeIo } from './pe.ts'
+import { resolveRuntime, windowsRuntimeIo, type RuntimeIo } from './pe.ts'
 import { Log, StepError } from './run.ts'
 import { currentPlatform } from './toolchain.ts'
 import { extractZipEntry, readZipEntries } from './zip.ts'
 
 /** Bump when the cases or their expectations change: a passed stamp of an older version does not count. */
 export const SMOKE_VERSION = 6
+/** Folders of Orca's resources/ that libslic3r reads (resources_dir()): presets, nozzle tables, flush volumes. */
+export const ENGINE_RESOURCES = ['profiles', 'info', 'flush'] as const
 
 /**
  * Presets the cases slice with: a generic Klipper printer (plain G-code), the same printer with two
@@ -1771,6 +1774,8 @@ export interface SmokeReport {
   format: 'sketch-orca-smoke/1'
   smokeVersion: number
   exeSha256: string
+  /** What the run was for (smokeFingerprint). */
+  fingerprint: string
   orcaCommit: string
   passed: boolean
   cases: { id: string; title: string; ok: boolean; problems: string[]; warnings: string[] }[]
@@ -1869,14 +1874,15 @@ export async function runSmoke(ctx: Context, exe: string, log: Log): Promise<num
   const all = cases.length === SMOKE_CASES.length
   const sets = smokePresetSets(join(w.src, 'resources', 'profiles'))
   const exeSha256 = sha256File(exe)
+  const fingerprint = smokeFingerprint(w, exe, ctx.lock, platform)
   const inputs = sha256Text(
-    JSON.stringify({ exeSha256, commit: ctx.lock.commit, SMOKE_VERSION, presets: Object.values(sets).flatMap((s) => [s.machine, s.process, ...s.filaments].map(serializePreset)) }),
+    JSON.stringify({ exeSha256, fingerprint, commit: ctx.lock.commit, SMOKE_VERSION, presets: Object.values(sets).flatMap((s) => [s.machine, s.process, ...s.filaments].map(serializePreset)) }),
   )
   const reportPath = join(w.smoke, 'report.json')
   if (all && readStamp(w.state, 'smoke')?.inputs === inputs && existsSync(reportPath)) {
     try {
       const report = JSON.parse(readFileSync(reportPath, 'utf8')) as SmokeReport
-      if (report.passed && report.exeSha256 === exeSha256) {
+      if (report.passed && report.exeSha256 === exeSha256 && report.fingerprint === fingerprint) {
         log.line(`smoke: already passed for this engine build (${exeSha256.slice(0, 12)}); skipping`)
         return 0
       }
@@ -1898,7 +1904,7 @@ export async function runSmoke(ctx: Context, exe: string, log: Log): Promise<num
   // A full run decides afresh: the pass of an earlier run no longer counts, whatever this one does
   // (it may fail, or stop half-way).
   if (all) forgetSmokePass(w)
-  const report: SmokeReport = { format: 'sketch-orca-smoke/1', smokeVersion: SMOKE_VERSION, exeSha256, orcaCommit: ctx.lock.commit, passed: false, cases: [] }
+  const report: SmokeReport = { format: 'sketch-orca-smoke/1', smokeVersion: SMOKE_VERSION, exeSha256, fingerprint, orcaCommit: ctx.lock.commit, passed: false, cases: [] }
   report.cases = await runCases(cases, { exe, resources: join(w.src, 'resources'), orcaSource: w.src, env, root: w.smoke, lock: ctx.lock, sets, timeoutMs: smokeTimeoutMs() }, log)
   report.passed = report.cases.every((c) => c.ok)
   writeFileSync(join(w.smoke, all ? 'report.json' : 'report-partial.json'), JSON.stringify(report, null, 2) + '\n')
@@ -1909,7 +1915,7 @@ export async function runSmoke(ctx: Context, exe: string, log: Log): Promise<num
     log.line(`smoke: ${failed} of ${report.cases.length} cases failed (details in ${w.smoke})`)
     return 1
   }
-  if (all) writeStamp(w.state, 'smoke', inputs, { exeSha256, smokeVersion: SMOKE_VERSION })
+  if (all) writeStamp(w.state, 'smoke', inputs, { exeSha256, smokeVersion: SMOKE_VERSION, fingerprint })
   log.line(`smoke: all ${report.cases.length} cases passed${all ? '' : ' (a subset; no stamp written)'}`)
   return 0
 }
@@ -1920,14 +1926,32 @@ export function forgetSmokePass(work: WorkPaths): void {
 }
 
 /**
- * True when a full run passed every case, at this case version, for `exe` as it is now: the pass
- * stamp names its hash, and the full run's report.json says the same (every case of SMOKE_CASES,
- * passed, for this build).
+ * What a smoke pass is for: the cases' version, the locked commit, the engine, every library it
+ * loads from its library folders (engineLibraryDirs: on Windows the import closure, elsewhere the
+ * shared libraries there), and the resource folders it reads (ENGINE_RESOURCES of
+ * <work>/src/resources). A changed library or resource file is another fingerprint, whose engine
+ * has not passed.
  */
-export function smokePassedFor(work: WorkPaths, exe: string): boolean {
+export function smokeFingerprint(work: WorkPaths, exe: string, lock: Pick<OrcaLock, 'commit'>, platform: Platform = currentPlatform(), io?: RuntimeIo): string {
+  const libDirs = engineLibraryDirs(work, exe, platform)
+  const runtime =
+    platform === 'win32'
+      ? resolveRuntime(exe, libDirs, io ?? windowsRuntimeIo()).copy.map((c) => [c.name, sha256File(c.path)])
+      : libDirs.flatMap((d) => (existsSync(d) ? readdirSync(d).filter((n) => /\.so(\.\d+)*$|\.dylib$/.test(n)).sort().map((n) => [n, sha256File(join(d, n))]) : []))
+  const resources = ENGINE_RESOURCES.map((r) => [r, hashTree(join(work.src, 'resources', r))])
+  return sha256Text(JSON.stringify({ smokeVersion: SMOKE_VERSION, commit: lock.commit, exeSha256: sha256File(exe), runtime, resources }))
+}
+
+/**
+ * True when a full run passed every case, at this case version, for `exe` as it is now with its
+ * libraries and resources (`fingerprint`, smokeFingerprint): the pass stamp names its hash and the
+ * fingerprint, and the full run's report.json says the same (every case of SMOKE_CASES, passed,
+ * for this build).
+ */
+export function smokePassedFor(work: WorkPaths, exe: string, fingerprint: string): boolean {
   const stamp = readStamp(work.state, 'smoke')
-  const detail = stamp?.detail as { exeSha256?: string; smokeVersion?: number } | undefined
-  if (!detail || detail.smokeVersion !== SMOKE_VERSION || !existsSync(exe)) return false
+  const detail = stamp?.detail as { exeSha256?: string; smokeVersion?: number; fingerprint?: string } | undefined
+  if (!detail || detail.smokeVersion !== SMOKE_VERSION || detail.fingerprint !== fingerprint || !existsSync(exe)) return false
   const exeSha256 = sha256File(exe)
   if (detail.exeSha256 !== exeSha256) return false
   let report: SmokeReport
@@ -1940,6 +1964,7 @@ export function smokePassedFor(work: WorkPaths, exe: string): boolean {
   return (
     report.passed === true &&
     report.exeSha256 === exeSha256 &&
+    report.fingerprint === fingerprint &&
     report.smokeVersion === SMOKE_VERSION &&
     Array.isArray(report.cases) &&
     report.cases.length === ids.length &&

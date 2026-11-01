@@ -63,9 +63,11 @@ import {
   samePath,
   selectedCases,
   smokeJob,
+  smokeFingerprint,
   smokePassedFor,
   smokeTimeoutMs,
 } from '../scripts/lib/smoke.ts'
+import type { RuntimeIo } from '../scripts/lib/pe.ts'
 import { writeZip } from './support/zip-writer.ts'
 
 const scratch = mkdtempSync(join(tmpdir(), 'sketch-orca-smoke-'))
@@ -726,38 +728,85 @@ describe('jobs and the engine environment', () => {
     const exe = join(w.build, 'sketch-orca', 'sketch-orca.exe')
     mkdirSync(dirname(exe), { recursive: true })
     writeFileSync(exe, 'engine build 1')
-    expect(smokePassedFor(w, exe)).toBe(false)
+    const fp = 'a'.repeat(64)
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
     const sha = createHash('sha256').update('engine build 1').digest('hex')
-    const report = (passed: boolean, cases = SMOKE_CASES.map((c) => c.id), exeSha256 = sha) => {
+    const report = (passed: boolean, cases = SMOKE_CASES.map((c) => c.id), exeSha256 = sha, fingerprint = fp) => {
       mkdirSync(w.smoke, { recursive: true })
-      const r = { format: 'sketch-orca-smoke/1', smokeVersion: SMOKE_VERSION, exeSha256, orcaCommit: 'c', passed, cases: cases.map((id, i) => ({ id, title: id, ok: passed || i > 0, problems: [], warnings: [] })) }
+      const r = { format: 'sketch-orca-smoke/1', smokeVersion: SMOKE_VERSION, exeSha256, fingerprint, orcaCommit: 'c', passed, cases: cases.map((id, i) => ({ id, title: id, ok: passed || i > 0, problems: [], warnings: [] })) }
       writeFileSync(join(w.smoke, 'report.json'), JSON.stringify(r))
     }
-    writeStamp(w.state, 'smoke', 'inputs', { exeSha256: sha, smokeVersion: SMOKE_VERSION })
+    writeStamp(w.state, 'smoke', 'inputs', { exeSha256: sha, smokeVersion: SMOKE_VERSION, fingerprint: fp })
     // The stamp alone is not enough: the full run's report must say so too.
-    expect(smokePassedFor(w, exe)).toBe(false)
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
     report(true)
-    expect(smokePassedFor(w, exe)).toBe(true)
+    expect(smokePassedFor(w, exe, fp)).toBe(true)
+    // Another fingerprint (a library or resource changed): not passed.
+    expect(smokePassedFor(w, exe, 'b'.repeat(64))).toBe(false)
+    report(true, undefined, sha, 'b'.repeat(64))
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
     // A later full run of the same build that failed (the stamp of the earlier pass still there).
     report(false)
-    expect(smokePassedFor(w, exe)).toBe(false)
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
     // A report of a subset, or of another build.
     report(true, SMOKE_CASES.slice(1).map((c) => c.id))
-    expect(smokePassedFor(w, exe)).toBe(false)
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
     report(true, undefined, 'f'.repeat(64))
-    expect(smokePassedFor(w, exe)).toBe(false)
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
     report(true)
-    expect(smokePassedFor(w, exe)).toBe(true)
+    expect(smokePassedFor(w, exe, fp)).toBe(true)
     forgetSmokePass(w)
-    expect(smokePassedFor(w, exe)).toBe(false)
-    writeStamp(w.state, 'smoke', 'inputs', { exeSha256: sha, smokeVersion: SMOKE_VERSION - 1 })
-    expect(smokePassedFor(w, exe)).toBe(false)
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
+    writeStamp(w.state, 'smoke', 'inputs', { exeSha256: sha, smokeVersion: SMOKE_VERSION - 1, fingerprint: fp })
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
+    // A stamp of an earlier pipeline, without a fingerprint.
     writeStamp(w.state, 'smoke', 'inputs', { exeSha256: sha, smokeVersion: SMOKE_VERSION })
-    expect(smokePassedFor(w, exe)).toBe(true)
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
+    writeStamp(w.state, 'smoke', 'inputs', { exeSha256: sha, smokeVersion: SMOKE_VERSION, fingerprint: fp })
+    expect(smokePassedFor(w, exe, fp)).toBe(true)
     writeFileSync(exe, 'engine build 2')
-    expect(smokePassedFor(w, exe)).toBe(false)
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
     rmSync(exe)
-    expect(smokePassedFor(w, exe)).toBe(false)
+    expect(smokePassedFor(w, exe, fp)).toBe(false)
+  })
+
+  test('smokeFingerprint: the engine, the libraries it loads, the resources it reads, the commit', () => {
+    const w = workPaths(resolve(scratch, 'fingerprint-home'))
+    const exe = join(w.build, 'sketch-orca', 'sketch-orca.exe')
+    const put = (path: string, text: string) => {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, text)
+    }
+    put(exe, 'engine')
+    const gmp = join(w.src, 'deps', 'GMP', 'gmp', 'lib', process.arch === 'arm64' ? 'win-arm64' : 'win-x64', 'libgmp-10.dll')
+    put(gmp, 'gmp 1')
+    put(join(w.depsPrefix, 'bin', 'unused.dll'), 'not loaded')
+    put(join(w.src, 'resources', 'profiles', 'BBL.json'), '{}')
+    put(join(w.src, 'resources', 'images', 'logo.svg'), '<svg/>')
+    // The engine loads libgmp-10.dll, which loads nothing.
+    const io: RuntimeIo = {
+      importsOf: (p) => (p === exe ? ['libgmp-10.dll', 'KERNEL32.dll'] : []),
+      find: (d, n) => (existsSync(join(d, n)) ? join(d, n) : undefined),
+      isSystem: (n) => n === 'KERNEL32.dll',
+    }
+    const fp = (commit = 'c') => smokeFingerprint(w, exe, { commit }, 'win32', io)
+    const first = fp()
+    expect(fp()).toBe(first)
+    expect(fp('d')).not.toBe(first)
+    // A library the engine does not load, and a resource folder it does not read, do not count.
+    put(join(w.depsPrefix, 'bin', 'unused.dll'), 'changed')
+    put(join(w.src, 'resources', 'images', 'logo.svg'), '<svg></svg>')
+    expect(fp()).toBe(first)
+    put(gmp, 'gmp 2')
+    const second = fp()
+    expect(second).not.toBe(first)
+    put(join(w.src, 'resources', 'profiles', 'BBL.json'), '{"name":"BBL"}')
+    const third = fp()
+    expect(third).not.toBe(second)
+    put(join(w.src, 'resources', 'flush', 'flush_data.txt'), '1')
+    expect(fp()).not.toBe(third)
+    put(exe, 'engine 2')
+    expect(fp()).not.toBe(third)
   })
 })
 

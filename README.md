@@ -155,8 +155,8 @@ last applied (`state/patches.json`, names and SHA-256) are `patches/` as it is n
 the patch files, not the patched sources, which `build` resets and patches again whenever they
 differ); that a patch header dates our changes ("Modified for Sketch, <date>."); that `cli/`
 hashes as it did when the last build started (`state/orca.json`; the build itself fails when
-`cli/` changes while Ninja runs); that a full smoke run passed for this very executable (the
-stamp and `smoke/report.json`); that every library the engine imports is found (Windows: the PE
+`cli/` changes while Ninja runs); that a full smoke run passed for this very executable, with
+the same libraries and resources (the stamp and `smoke/report.json`); that every library the engine imports is found (Windows: the PE
 import closure); that on Windows neither the engine nor any library it loads imports MSVC's
 dynamic C runtime (the Visual C++ runtime DLLs, `ucrtbase.dll` or its `api-ms-win-crt-*` API sets),
 since everything is built with the static runtime and no runtime DLL ships (Orca's prebuilt GMP
@@ -321,7 +321,8 @@ installs.
 
 The report is `<work>/smoke/report.json`; a full run (all cases) that passes also writes the stamp
 `state/smoke.json`. `stage` takes an engine only when both say that a full run of the current
-cases (`SMOKE_VERSION`) passed for the same executable: a full run removes the old stamp before it
+cases (`SMOKE_VERSION`) passed for the same executable, libraries it loads, resource folders it
+reads and locked commit (`smokeFingerprint`): a full run removes the old stamp before it
 starts, and any failing run removes it too.
 
 ## What the engine leaves as Orca has it

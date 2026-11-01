@@ -26,14 +26,14 @@ import type { OrcaLock } from './lock.ts'
 import { builtCliSha256, readStamp, sha256File, sha256Text, writeStamp, type WorkPaths } from './paths.ts'
 import { readPeDebugPaths, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from './pe.ts'
 import { capture, Log, StepError } from './run.ts'
-import { checkVersion, engineEnv, engineLibraryDirs, runCases, runEngine, SMOKE_CASES, smokePassedFor, smokePresetSets, smokeTimeoutMs, SMOKE_VERSION } from './smoke.ts'
+import { checkVersion, ENGINE_RESOURCES, engineEnv, engineLibraryDirs, runCases, runEngine, SMOKE_CASES, smokeFingerprint, smokePassedFor, smokePresetSets, smokeTimeoutMs, SMOKE_VERSION } from './smoke.ts'
 import { currentPlatform } from './toolchain.ts'
 
 export const ENGINE_FORMAT = 'sketch-orca-engine/1'
 /** Bump when the staged layout or the manifest changes: a stage of an older version is redone. */
 export const STAGE_VERSION = 2
-/** Folders of Orca's resources/ that libslic3r reads (resources_dir()): presets, nozzle tables, flush volumes. */
-export const STAGED_RESOURCES = ['profiles', 'info', 'flush'] as const
+/** Folders of Orca's resources/ that libslic3r reads (ENGINE_RESOURCES, smoke.ts): presets, nozzle tables, flush volumes. */
+export const STAGED_RESOURCES = ENGINE_RESOURCES
 /**
  * Smoke cases the staged copy slices before it is swapped in, with the staged resources and only
  * the system folders on its PATH: a plain G-code printer, and a Bambu printer with its .gcode.3mf.
@@ -784,7 +784,7 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
   if (!readStamp(w.state, 'orca')) throw new StepError('no finished engine build is recorded (state/orca.json); run build')
   const cliProblem = cliChangedSinceBuild(w, ctx.engine.cli)
   if (cliProblem) throw new StepError(`${cliProblem}; run build`)
-  const smokePassed = smokePassedFor(w, exe)
+  const smokePassed = smokePassedFor(w, exe, smokeFingerprint(w, exe, ctx.lock, platform))
   if (!smokePassed && !without) throw new StepError('smoke has not passed for this engine build; run smoke (or stage --without-smoke for a dev build, recorded in the manifest)')
   if (!smokePassed) log.line('stage: staging WITHOUT a passed smoke run (--without-smoke); the manifest says so')
 
