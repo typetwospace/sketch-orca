@@ -611,7 +611,9 @@ Vec3d estimate_wipe_tower_size(const DynamicPrintConfig &cfg, const Model &model
 // Where Orca's prime tower goes on plate 1, set in wipe_tower_x/y, and its footprint for arrange.
 // The stock command line starts from the GUI's default corner (165, 250; 0, 250 on a bed slinger),
 // then PartPlate::estimate_wipe_tower_polygon keeps it on the plate. A job that sets wipe_tower_x or
-// wipe_tower_y starts from its own position instead.
+// wipe_tower_y starts from its own position instead. The corner is taken from the bed's lowest
+// corner, and the tower is kept between the bed's own edges, so a bed whose printable_area does not
+// start at 0,0 (a delta's, centred on 0,0) gets its tower on it (sketch-orca, 2026-11-01).
 std::optional<arrangement::ArrangePolygon> place_prime_tower(DynamicPrintConfig &cfg, const Model &model, const Settings &s)
 {
     if (by_object(cfg) || !cfg_bool(cfg, "enable_prime_tower"))
@@ -649,16 +651,22 @@ std::optional<arrangement::ArrangePolygon> place_prime_tower(DynamicPrintConfig 
     if (const auto *area = cfg.option<ConfigOptionPoints>("printable_area"))
         for (const Vec2d &p : area->values)
             bed.merge(p);
+    const float bed_x       = float(bed.defined ? bed.min.x() : 0.);
+    const float bed_y       = float(bed.defined ? bed.min.y() : 0.);
     const float plate_width = float(bed.defined ? bed.size().x() : 256.);
     const float plate_depth = float(bed.defined ? bed.size().y() : 256.);
+    if (!overridden) {
+        x += bed_x;
+        y += bed_y;
+    }
     const float depth       = float(size(1));
     const float margin      = float(WIPE_TOWER_MARGIN) + tower_brim_width;
     float       brim        = tower_brim_width;
     if (brim < 0)
         brim = WipeTower::get_auto_brim_by_height(float(size.z()));
     const auto clamp = [](float value, float lo, float hi) { return hi < lo ? lo : std::clamp(value, lo, hi); };
-    x = clamp(x, margin, plate_width - w - margin - brim);
-    y = clamp(y, margin, plate_depth - depth - margin - brim);
+    x = clamp(x, bed_x + margin, bed_x + plate_width - w - margin - brim);
+    y = clamp(y, bed_y + margin, bed_y + plate_depth - depth - margin - brim);
     if (xs->values.empty())
         xs->values.push_back(x);
     else

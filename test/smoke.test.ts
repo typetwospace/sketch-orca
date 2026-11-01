@@ -15,6 +15,7 @@ import {
   CUBE,
   PAUSE_LAYER_INDEX,
   POCKET,
+  BED_SHIFT,
   FLUSH,
   FLUSH_JOBS,
   PRIME_TOWER_JOBS,
@@ -614,6 +615,17 @@ describe('jobs and the engine environment', () => {
     const raft = PRIME_TOWER_JOBS.find((j) => j.id === 'support-raft-object')!
     expect(raft.objects?.map((o) => Object.keys(o.overrides))).toEqual([['raft_layers']])
     expect(raft.overrides).toMatchObject({ enable_support: '1', support_filament: '2' })
+    // The shifted bed: every point moved, the original set left as it was.
+    const bed: PresetSet = {
+      machine: { name: 'm', type: 'machine', from: 'system', printable_area: ['0x0', '300x0', '300x300', '0x300'] },
+      process: { name: 'p', type: 'process', from: 'system' },
+      filaments: [{ name: 'f', type: 'filament', from: 'system' }],
+    }
+    const moved = structuredClone(bed)
+    PRIME_TOWER_JOBS.find((j) => j.id === 'bed-shifted')!.presets!(moved)
+    expect(moved.machine.printable_area).toEqual(['-150x-150', '150x-150', '150x150', '-150x150'])
+    expect(bedOutline(moved.machine)).toEqual(bedOutline(bed.machine).map(([x, y]) => [x + BED_SHIFT[0], y + BED_SHIFT[1]]))
+    expect(bed.machine.printable_area).toEqual(['0x0', '300x0', '300x300', '0x300'])
     // Past Orca's largest flushing volume (g_max_flush_volume, 20000) and past what an int holds.
     expect(Number(FLUSH.outOfRange)).toBeGreaterThan(2 ** 31)
     const machine: FlatPreset = { name: 'm', type: 'machine', from: 'system' }

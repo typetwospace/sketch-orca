@@ -32,7 +32,8 @@
 //                    preset or as an override, is refused (config-invalid) instead of being converted; an override
 //                    that makes filament 2 a support filament gives the matrix Orca's support volumes (0,230,700,0)
 //   prime-tower      where the prime tower goes (wipe_tower_x/y): an object that sets only raft_layers keeps the
-//                    print's support on filament 2, so its tower is placed as for a filament change
+//                    print's support on filament 2, so its tower is placed as for a filament change; on the printer's
+//                    bed moved by -150, -150 (0,0 at its centre, as a delta's) the tower moves with the bed
 //   crash-result     an engine that crashes in Orca's code (SKETCH_ORCA_TEST_CRASH) still writes its result:
 //                    internal-error, exit code 255, no outputs
 //   refusals         a missing model, an unknown setting (also one with capital letters), a key of the preset files as
@@ -1175,6 +1176,9 @@ export const FLUSH_JOBS: SettingsJob[] = [
   },
 ]
 
+/** How far prime-tower's bed-shifted job moves the bed: half the 300 mm smoke printer's, so 0,0 is its centre. */
+export const BED_SHIFT = [-150, -150] as const
+
 /** A filament change to filament 2 a quarter of the way up the cube: two filaments on the plate. */
 const changeToFilament2 = (expected: number[]): CustomGcode[] => [{ printZ: Number(expected[PAUSE_LAYER_INDEX]!.toFixed(6)), type: 'filament', extruder: 2 }]
 
@@ -1192,6 +1196,15 @@ export const PRIME_TOWER_JOBS: SettingsJob[] = [
     set: 'generic2',
     overrides: { enable_support: '1', support_filament: '2' },
     objects: [{ index: 0, overrides: { raft_layers: '0' }, layerHeights: { mode: 'fixed' }, heightRanges: [] }],
+  },
+  {
+    // The same bed moved by BED_SHIFT, as a delta's is centred on 0,0: the tower moves with it.
+    id: 'bed-shifted',
+    set: 'generic2',
+    presets: (set) => {
+      set.machine.printable_area = bedOutline(set.machine).map(([x, y]) => `${x + BED_SHIFT[0]}x${y + BED_SHIFT[1]}`)
+    },
+    customGcodes: changeToFilament2,
   },
 ]
 
@@ -1522,7 +1535,7 @@ export const SMOKE_CASES: SmokeCase[] = [
   },
   {
     id: 'prime-tower',
-    title: 'the prime tower: an object that sets only raft_layers keeps the print\'s support, whose filament puts a tower on the plate',
+    title: `the prime tower: an object that sets only raft_layers keeps the print's support, whose filament puts a tower on the plate; on a bed moved by ${BED_SHIFT.join(', ')} the tower moves with it`,
     async run(env) {
       const { problems, warnings, scans } = await runSettingsJobs(env, PRIME_TOWER_JOBS)
       const at = (id: string) => {
@@ -1539,6 +1552,10 @@ export const SMOKE_CASES: SmokeCase[] = [
       const raft = at('support-raft-object')
       if (tower && raft && (Number(raft.x) !== Number(tower.x) || Number(raft.y) !== Number(tower.y)))
         problems.push(`support-raft-object: the tower is at ${raft.x}, ${raft.y}, not placed as for two filaments (${tower.x}, ${tower.y})`)
+      // The tower keeps its place on the bed: its corner moves by the bed's shift.
+      const shifted = at('bed-shifted')
+      if (tower && shifted && (Number(shifted.x) !== Number(tower.x) + BED_SHIFT[0] || Number(shifted.y) !== Number(tower.y) + BED_SHIFT[1]))
+        problems.push(`bed-shifted: the tower is at ${shifted.x}, ${shifted.y}; on the bed moved by ${BED_SHIFT.join(', ')} it belongs at ${Number(tower.x) + BED_SHIFT[0]}, ${Number(tower.y) + BED_SHIFT[1]}`)
       return { problems, warnings }
     },
   },
