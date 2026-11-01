@@ -1,0 +1,21 @@
+{
+  "about": "Which paths the engine reads as absolute (README.md, Conventions): `win32` for an engine on Windows, `posix` for one on Linux or macOS. Every path in a job must be absolute for the engine that runs it, so a client that writes jobs checks its own rule against each case here.",
+  "cases": [
+    { "path": "C:\\jobs\\1", "what": "a drive and its root", "win32": true, "posix": false },
+    { "path": "c:/jobs/1", "what": "a drive and its root, with forward slashes", "win32": true, "posix": false },
+    { "path": "C:\\", "what": "the root of a drive", "win32": true, "posix": false },
+    { "path": "\\\\server\\share\\1", "what": "a UNC share", "win32": true, "posix": false },
+    { "path": "//server/share/1", "what": "a UNC share with forward slashes; on Linux and macOS, a root name and a root", "win32": true, "posix": true },
+    { "path": "\\\\?\\C:\\jobs\\1", "what": "a drive and its root after the \\\\?\\ prefix", "win32": true, "posix": false },
+    { "path": "\\\\server", "what": "a UNC server without a root", "win32": false, "posix": false },
+    { "path": "//server", "what": "a root name without a root", "win32": false, "posix": false },
+    { "path": "\\jobs\\1", "what": "from the root of the current drive", "win32": false, "posix": false },
+    { "path": "/jobs/1", "what": "from the root; on Windows, of the current drive", "win32": false, "posix": true },
+    { "path": "///jobs/1", "what": "from the root, with more than one slash; on Windows, of the current drive", "win32": false, "posix": true },
+    { "path": "C:jobs\\1", "what": "a drive without its root: relative to that drive's current folder", "win32": false, "posix": false },
+    { "path": "C:", "what": "a drive alone", "win32": false, "posix": false },
+    { "path": "jobs/1", "what": "relative", "win32": false, "posix": false },
+    { "path": "./jobs", "what": "relative", "win32": false, "posix": false },
+    { "path": "", "what": "empty", "win32": false, "posix": false }
+  ]
+}

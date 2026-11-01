@@ -21,6 +21,7 @@ GNU Affero General Public License, version 3 (`../LICENSE`).
 | `schema/engine-manifest.schema.json` | a staged engine's `manifest.json`, `sketch-orca-engine/1` |
 | `examples/` | files that follow the schemas, one or more per format |
 | `examples/invalid/` | files the schemas and the engine refuse |
+| `examples/paths/absolute.json` | paths the engine does and does not read as absolute, on Windows and elsewhere |
 
 The schemas are JSON Schema draft 2020-12. `test/protocol.test.ts` checks every example against its
 schema and against the engine's own validators (`scripts/lib/job.ts`, `scripts/lib/stage.ts`),
@@ -30,9 +31,12 @@ which must agree.
 
 - Every file is UTF-8 JSON. The progress file is newline-delimited JSON: one object per line.
 - Every path in a job is absolute on the system the engine runs on (`/...` on Linux and macOS;
-  `C:\...`, `C:/...` or a UNC share, `\\server\share\...`, on Windows). A Windows path from the
-  root of the current drive (`\...` or `/...`) is not absolute: the engine refuses it
-  (`job-invalid`). Paths in a manifest are relative to its folder, with forward slashes.
+  `C:\...`, `C:/...` or a UNC share, `\\server\share\...`, on Windows), as Boost.Filesystem's
+  `is_absolute` reads it. A Windows path from the root of the current drive (`\...` or `/...`), a
+  drive without its root (`C:jobs`) and a server alone (`\\server`, and `//server` anywhere) are
+  not absolute: the engine refuses them (`job-invalid`). `examples/paths/absolute.json` lists
+  cases, for clients to check their own rule against. Paths in a manifest are relative to its
+  folder, with forward slashes.
 - An optional field of a job given as `null` is the same as one left out. Fields the formats do not
   name are ignored by the engine and should be ignored by clients, so fields can be added within a
   version.

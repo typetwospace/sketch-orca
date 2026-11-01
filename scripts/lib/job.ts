@@ -169,13 +169,30 @@ function num(v: unknown, field: string): number {
 }
 
 /**
+ * Boost.Filesystem's is_absolute on Windows, which the engine asks (find_root_directory_start in its
+ * libs/filesystem/src/path.cpp): a root name and a separator right after it. The root name is a
+ * drive or device (C:, a letter then letters, digits or $, then :), a UNC server (\\server), or one
+ * of the prefixes \\?\, \\.\ and \??\ followed by a drive or device, or else by a name up to the
+ * next separator. Either separator counts.
+ */
+export const WINDOWS_ABSOLUTE = /^(?:[A-Za-z][A-Za-z0-9$]*:[\\/]|(?:[\\/]{2}[?.]|[\\/]\?\?)[\\/](?:[A-Za-z][A-Za-z0-9$]*:[\\/]|(?![A-Za-z][A-Za-z0-9$]*:)[^\\/]*[\\/])|[\\/]{2}(?![?.][\\/])[^\\/]+[\\/])/
+
+/**
+ * Boost.Filesystem's is_absolute elsewhere: a root directory. One / starts it, and so do three or
+ * more; two (//) and a name after them are a root name (//server), so the root directory is the /
+ * after that name.
+ */
+export const POSIX_ABSOLUTE = /^(?:\/(?!\/)|\/\/(?:\/|[^/]+\/))/
+
+/**
  * Whether a path is absolute as the engine reads it (Boost.Filesystem's is_absolute): on Windows a
- * drive and a root (C:\... or C:/...) or a UNC share (\\server\share...); elsewhere /... . A
- * Windows path from the root of the current drive (\jobs) is not: it would depend on the drive.
+ * drive and a root (C:\... or C:/...) or a UNC share (\\server\share...) (WINDOWS_ABSOLUTE);
+ * elsewhere /... (POSIX_ABSOLUTE). A Windows path from the root of the current drive (\jobs) is
+ * not: it would depend on the drive. protocol/examples/paths/absolute.json lists cases a client
+ * checks its own rule against.
  */
 export function isEngineAbsolute(p: string, platform: NodeJS.Platform = process.platform): boolean {
-  if (platform === 'win32') return /^[A-Za-z]:[\\/]/.test(p) || /^[\\/]{2}[^\\/]/.test(p)
-  return p.startsWith('/')
+  return (platform === 'win32' ? WINDOWS_ABSOLUTE : POSIX_ABSOLUTE).test(p)
 }
 
 function absPath(v: unknown, field: string, extensions?: readonly string[], platform: NodeJS.Platform = process.platform): string {

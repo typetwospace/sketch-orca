@@ -70,6 +70,63 @@ function job(over: Record<string, unknown>): Record<string, unknown> {
   return { ...(readJson(join(EXAMPLES, 'job-info.json')) as Record<string, unknown>), ...over }
 }
 
+/**
+ * Boost.Filesystem's path::is_absolute, which the engine asks (cli/common.cpp, is_absolute_path), step
+ * by step as its find_root_directory_start (libs/filesystem/src/path.cpp, Boost 1.84) finds the root
+ * name and the root directory: on Windows both, elsewhere a root directory. The reference that
+ * isEngineAbsolute and the schema's absolutePath are checked against.
+ */
+function boostIsAbsolute(p: string, windows: boolean): boolean {
+  const sep = (c: string | undefined) => c === '/' || (windows && c === '\\')
+  const size = p.length
+  let rootNameSize = 0
+  const rootDirectoryStart = (): number => {
+    if (size === 0) return 0
+    let parsingRootName = false
+    let unc = false
+    let pos = 0
+    if (sep(p[0])) {
+      if (size >= 2 && sep(p[1])) {
+        if (size === 2) {
+          rootNameSize = 2
+          return 2
+        } else if (windows && size >= 4 && (p[2] === '?' || p[2] === '.') && sep(p[3])) {
+          parsingRootName = true
+          pos += 4
+        } else if (sep(p[2])) {
+          return 0
+        } else {
+          parsingRootName = true
+          unc = true
+          pos += 2
+        }
+      } else if (windows && size >= 4 && p[1] === '?' && p[2] === '?' && sep(p[3])) {
+        parsingRootName = true
+        pos += 4
+      } else {
+        return 0
+      }
+    }
+    // A drive or a device: a letter, then letters, digits or $, then a colon.
+    if (windows && !unc && size - pos >= 2 && /[A-Za-z]/.test(p[pos]!)) {
+      let i = pos + 1
+      while (i < size && /[A-Za-z0-9$]/.test(p[i]!)) i++
+      if (i < size && p[i] === ':') {
+        pos = i + 1
+        rootNameSize = pos
+        parsingRootName = false
+        if (pos < size && sep(p[pos])) return pos
+      }
+    }
+    if (!parsingRootName) return size
+    while (pos < size && !sep(p[pos])) pos++
+    rootNameSize = pos
+    return pos
+  }
+  const hasRootDirectory = rootDirectoryStart() < size
+  return windows ? rootNameSize > 0 && hasRootDirectory : hasRootDirectory
+}
+
 describe('the protocol examples', () => {
   test('there are examples of every format, and invalid ones of the job, result, progress and manifest', () => {
     expect(new Set(valid.map(kindOf))).toEqual(new Set(KINDS))
@@ -180,6 +237,36 @@ describe('the schemas and the validators take the same values', () => {
     expect(win32.isAbsolute('\\jobs\\1')).toBe(true)
     for (const p of ['/jobs/1', '//server/share/1']) expect({ p, posix: isEngineAbsolute(p, 'linux') }).toEqual({ p, posix: posix.isAbsolute(p) })
     for (const p of ['\\jobs\\1', 'C:\\jobs\\1', 'c:/jobs/1', 'jobs/1']) expect({ p, posix: isEngineAbsolute(p, 'darwin') }).toEqual({ p, posix: false })
+  })
+
+  test("the absolute-path rule is Boost.Filesystem's, for every path of up to seven characters that matter to it", () => {
+    const chars = ['C', '$', ':', '?', '.', '\\', '/']
+    let paths = ['']
+    let checked = 0
+    for (let length = 1; length <= 7; length++) {
+      paths = paths.flatMap((p) => chars.map((c) => p + c))
+      for (const p of paths) {
+        const win32 = boostIsAbsolute(p, true)
+        const posix = boostIsAbsolute(p, false)
+        if (isEngineAbsolute(p, 'win32') !== win32 || isEngineAbsolute(p, 'linux') !== posix || absolutePath(p) !== (win32 || posix))
+          expect({ p, win32: isEngineAbsolute(p, 'win32'), posix: isEngineAbsolute(p, 'linux'), schema: absolutePath(p) }).toEqual({ p, win32, posix, schema: win32 || posix })
+        checked++
+      }
+    }
+    expect(checked).toBe((7 ** 8 - 7) / 6)
+  })
+
+  test('examples/paths/absolute.json: the cases a client checks its rule against are the engine\'s, drive-rooted, drive-relative and UNC paths among them', () => {
+    const { cases } = readJson(join(EXAMPLES, 'paths', 'absolute.json')) as { cases: { path: string; what: string; win32: boolean; posix: boolean }[] }
+    for (const c of cases) {
+      expect({ p: c.path, win32: boostIsAbsolute(c.path, true), posix: boostIsAbsolute(c.path, false) }).toEqual({ p: c.path, win32: c.win32, posix: c.posix })
+      expect({ p: c.path, win32: isEngineAbsolute(c.path, 'win32'), posix: isEngineAbsolute(c.path, 'linux'), schema: absolutePath(c.path) }).toEqual({ p: c.path, win32: c.win32, posix: c.posix, schema: c.win32 || c.posix })
+      expect({ p: c.path, posixJob: !throws(() => validatePosixJob(job({ workDir: c.path }))) }).toEqual({ p: c.path, posixJob: c.posix })
+    }
+    const listed = new Map(cases.map((c) => [c.path, c.win32]))
+    // Drive-rooted (the current drive's root), drive-relative, drive-qualified and UNC paths.
+    for (const [p, win32] of [['\\jobs\\1', false], ['/jobs/1', false], ['C:jobs\\1', false], ['C:\\jobs\\1', true], ['c:/jobs/1', true], ['\\\\server\\share\\1', true], ['//server/share/1', true], ['\\\\server', false]] as const)
+      expect({ p, win32: listed.get(p) }).toEqual({ p, win32 })
   })
 
   test('a manifest path is isSafeRelPath', () => {
