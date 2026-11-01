@@ -36,9 +36,11 @@
 //                    bed moved by -150, -150 (0,0 at its centre, as a delta's) the tower moves with the bed
 //   imported-settings a 3MF project (a .gcode.3mf the engine wrote) whose object has wall_loops 6 slices, as a model
 //                    the job does not list, with the plate's wall_loops 2: its inner walls are the plain cube's
-//   file-collisions  a --progress on the job or the model, and a --out on the job, the model or output.gcode, are
-//                    refused before anything is written over them: invalid-params (exit -2), and when the result
-//                    itself would replace an input, nothing written at all; the job and the model keep their bytes
+//   file-collisions  a --progress on the job, the model or a preset, and a --out on the job, the model, a preset or
+//                    output.gcode, are refused before anything is written over them: invalid-params (exit -2), and
+//                    when the result itself would replace an input, nothing written at all; also both at once, for
+//                    a job that is not valid, a wrong command line, another name for the file (a hard link, a
+//                    path through ..) and the result's temporary file; the job, the model and presets keep their bytes
 //   crash-result     an engine that crashes in Orca's code (SKETCH_ORCA_TEST_CRASH) still writes its result:
 //                    internal-error, exit code 255, no outputs
 //   refusals         a missing model, an unknown setting (also one with capital letters), a key of the preset files as
@@ -60,8 +62,8 @@
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { createWriteStream, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import type { Context } from '../orca.ts'
 import type { Platform } from './env.ts'
 import { hashTree } from './files.ts'
@@ -77,7 +79,7 @@ import { currentPlatform } from './toolchain.ts'
 import { extractZipEntry, readZipEntries } from './zip.ts'
 
 /** Bump when the cases or their expectations change: a passed stamp of an older version does not count. */
-export const SMOKE_VERSION = 6
+export const SMOKE_VERSION = 7
 /** Folders of Orca's resources/ that libslic3r reads (resources_dir()): presets, nozzle tables, flush volumes. */
 export const ENGINE_RESOURCES = ['profiles', 'info', 'flush'] as const
 
@@ -1246,18 +1248,32 @@ export const PRIME_TOWER_JOBS: SettingsJob[] = [
  */
 export const IMPORTED_WALLS = { plain: 2, object: 6, tolerance: 0.03 } as const
 
-/** The files of a run in file-collisions: the job file, --out, --progress, the model and output.gcode. */
-export type RunFile = 'job' | 'result' | 'progress' | 'model' | 'gcode'
+/** The files of a run in file-collisions: the job file, --out, --progress, the model, output.gcode and the machine and process presets. */
+export type RunFile = 'job' | 'result' | 'progress' | 'model' | 'gcode' | 'machine' | 'process'
+
+/** The files of a run the engine reads. */
+export const RUN_INPUTS: readonly RunFile[] = ['job', 'model', 'machine', 'process']
+
+/** The command of collisions' invalid jobs: the job format has no such command. */
+export const INVALID_COMMAND = 'carve'
 
 /**
- * A run of file-collisions whose command line or job names one file twice. `out` and `progress`
- * say which file --out and --progress get. The run is refused with `code` in the result at
- * `resultAt`, or (no `code`) writes nothing at all; the files in `intact` keep their bytes.
+ * A run of file-collisions whose command line or job names one file twice, or whose command line is
+ * wrong. `out` and `progress` say which file --out and --progress get, `alias` that one of them
+ * names its file another way: a hard link to it, or a path through a folder and `..`. `jobName` is
+ * the job file's name (job.json): result.json.tmp is the file the result is written through.
+ * `invalidJob` gives the job an unknown command, `args` adds to the command line. The run is refused
+ * with `code` in the result at `resultAt`, or (no `code`) writes nothing at all, --out included;
+ * the files in `intact` keep their bytes.
  */
 export interface Collision {
   id: string
   out: RunFile
   progress: RunFile
+  alias?: { of: 'out' | 'progress'; how: 'hard-link' | 'dot-dot' }
+  jobName?: string
+  invalidJob?: boolean
+  args?: string[]
   code?: string
   mentions?: string
   resultAt?: RunFile
@@ -1265,6 +1281,26 @@ export interface Collision {
 }
 
 export const COLLISIONS: Collision[] = [
+  // The result would replace the model and the progress file the job: nothing is written, the
+  // failure result over the model included.
+  { id: 'result-on-model-progress-on-job', out: 'model', progress: 'job', intact: ['job', 'model'] },
+  // A job that is not valid names its model all the same: the result is not written over it.
+  { id: 'invalid-job-result-on-model', out: 'model', progress: 'progress', invalidJob: true, intact: ['job', 'model'] },
+  // Nor is the progress file opened over it.
+  { id: 'invalid-job-progress-on-model', out: 'result', progress: 'model', invalidJob: true, code: 'invalid-params', mentions: 'model.path', resultAt: 'result', intact: ['job', 'model'] },
+  // A wrong command line still gets its result...
+  { id: 'command-line-wrong', out: 'result', progress: 'progress', args: ['--colour', 'red'], code: 'invalid-params', mentions: 'unknown option --colour', resultAt: 'result', intact: ['job', 'model'] },
+  // ...but not over a file its job names.
+  { id: 'command-line-result-on-model', out: 'model', progress: 'progress', args: ['--colour', 'red'], intact: ['job', 'model'] },
+  // The preset files are inputs as the model is.
+  { id: 'result-on-process', out: 'process', progress: 'progress', intact: ['job', 'model', 'process'] },
+  { id: 'progress-on-machine', out: 'result', progress: 'machine', code: 'invalid-params', mentions: 'presets.machine', resultAt: 'result', intact: ['job', 'model', 'machine'] },
+  // Another name for the model: a hard link, which the progress file would empty through.
+  { id: 'progress-on-model-link', out: 'result', progress: 'model', alias: { of: 'progress', how: 'hard-link' }, code: 'invalid-params', mentions: 'model.path', resultAt: 'result', intact: ['job', 'model'] },
+  // Another path to the model, through a folder and ..
+  { id: 'result-on-model-dot-dot', out: 'model', progress: 'progress', alias: { of: 'out', how: 'dot-dot' }, intact: ['job', 'model'] },
+  // The result is written through result.json.tmp, which is the job here.
+  { id: 'result-tmp-on-job', out: 'result', progress: 'progress', jobName: 'result.json.tmp', intact: ['job', 'model'] },
   // The progress file would have been opened, emptying the job, before the job was read.
   { id: 'progress-on-job', out: 'result', progress: 'job', code: 'invalid-params', mentions: 'would replace the job', resultAt: 'result', intact: ['job'] },
   // The result would replace the job: nothing is written, not even the result.
@@ -1687,13 +1723,36 @@ export const SMOKE_CASES: SmokeCase[] = [
         const dir = join(env.dir, c.id)
         rmSync(dir, { recursive: true, force: true })
         mkdirSync(dir, { recursive: true })
-        const job = smokeJob({ command: 'slice', dir, resources: env.resources, presets: env.files.generic, overrides: cubeOverrides })
-        const files: Record<RunFile, string> = { job: join(dir, 'job.json'), result: join(dir, 'result.json'), progress: join(dir, 'progress.ndjson'), model: job.model.path, gcode: job.output.gcode }
+        // The case's own copy of the presets, as some runs name them twice.
+        const presets = writePresetSet(join(dir, 'presets'), env.sets.generic)
+        const job = smokeJob({ command: 'slice', dir, resources: env.resources, presets, overrides: cubeOverrides })
+        const files: Record<RunFile, string> = {
+          job: join(dir, c.jobName ?? 'job.json'),
+          result: join(dir, 'result.json'),
+          progress: join(dir, 'progress.ndjson'),
+          model: job.model.path,
+          gcode: job.output.gcode,
+          machine: presets.machine,
+          process: presets.process,
+        }
         writeStl(job.model.path, cube(CUBE.size), 'cube 20 mm')
         mkdirSync(job.workDir, { recursive: true })
-        writeJob(files.job, job)
+        if (c.invalidJob) writeFileSync(files.job, JSON.stringify({ ...job, command: INVALID_COMMAND }, null, 2) + '\n')
+        else writeJob(files.job, job)
+        const paths = { out: files[c.out], progress: files[c.progress] }
+        if (c.alias) {
+          const target = paths[c.alias.of]
+          if (c.alias.how === 'hard-link') {
+            paths[c.alias.of] = join(dir, `link-${basename(target)}`)
+            linkSync(target, paths[c.alias.of])
+          } else {
+            mkdirSync(join(dir, 'sub'), { recursive: true })
+            paths[c.alias.of] = [dirname(target), 'sub', '..', basename(target)].join(sep)
+          }
+        }
         const before = new Map(c.intact.map((f) => [f, readFileSync(files[f])] as const))
-        const run = await env.exec(['run', '--job', files.job, '--out', files[c.out], '--progress', files[c.progress]])
+        const outBefore = existsSync(paths.out) ? readFileSync(paths.out) : undefined
+        const run = await env.exec(['run', '--job', files.job, '--out', paths.out, '--progress', paths.progress, ...(c.args ?? [])])
         const named = (s: string) => `${c.id}: ${s}`
         if (run.timedOut) {
           problems.push(named('the engine did not finish in time'))
@@ -1703,6 +1762,8 @@ export const SMOKE_CASES: SmokeCase[] = [
         if (run.code === null || exitByte(run.code) !== exitByte(-2)) problems.push(named(`the engine exited with ${run.code}, expected -2`))
         if (c.code === undefined) {
           for (const f of ['result', 'progress', 'gcode'] as const) if (existsSync(files[f])) problems.push(named(`${files[f]} was written; nothing should be`))
+          const outAfter = existsSync(paths.out) ? readFileSync(paths.out) : undefined
+          if (outBefore === undefined ? outAfter !== undefined : outAfter === undefined || !outAfter.equals(outBefore)) problems.push(named(`--out ${paths.out} was written; nothing should be`))
           continue
         }
         if (c.out !== 'gcode' && existsSync(files.gcode)) problems.push(named(`the G-code ${files.gcode} was written`))

@@ -65,11 +65,14 @@ fatal to 5 trace; 1, errors, by default).
   the progress file, `output.gcode` and `output.bambu3mf`, with the files they are written through
   (the file's name plus `.tmp`; also `<result>.crash.tmp`, `<gcode>.tmp.postprocess` and
   `<bambu3mf>.rels.tmp`). Paths are compared as files: two existing paths to one file (a link, a
-  short name) are one file, and on Windows letter case does not matter. Outputs of the job that
+  short name) are one file, and on Windows letter case does not matter. The files a job names are
+  every absolute path in its JSON, wherever it is (any setting's too), also when the job is not
+  valid; all but `output.gcode` and `output.bambu3mf` count as its inputs. Outputs of the job that
   overlap each other or an input are `job-invalid`; a `--progress` or `--out` that overlaps another
   file is `invalid-params`, refused before the progress file is opened. A result that would replace
   the job or one of its inputs is not written at all: the engine says so on stderr and exits with
-  -2.
+  -2. The same holds for a wrong command line: its result is written to `--out` unless that would
+  replace a file the command line names or one its `--job` names.
 
 ## The job (`sketch-orca-job/1`)
 

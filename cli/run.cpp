@@ -1750,79 +1750,152 @@ std::string shared_file(const std::vector<std::string> &a, const std::vector<std
     return std::string();
 }
 
-// The files a job reads and writes must be separate files (sketch-orca, 2026-11-01): the G-code
-// export removes its file first and every output replaces its file, so an output on an input
-// destroyed it, and two outputs on one file left one of them in place of the other. Fails
-// job-invalid for the job's own outputs, invalid-params for the command line's --out and
-// --progress. `progress_apart` is set once the progress file is known to be none of the others;
-// `result_on_input` says that the result itself would replace one of the job's inputs, so no result
-// is written.
-void check_job_paths(const Job &job, const std::string &job_path, const std::string &out_path, const std::string &progress_path, bool &progress_apart,
-                     bool &result_on_input)
-{
-    std::vector<std::pair<std::string, std::string>> inputs = {{"the job", job_path}, {"model.path", job.model_path}, {"presets.machine", job.machine},
-                                                               {"presets.process", job.process}};
-    for (size_t i = 0; i < job.filaments.size(); ++i)
-        inputs.emplace_back("presets.filaments[" + std::to_string(i) + "]", job.filaments[i]);
-    std::vector<Written> outputs;
-    if (!job.out_gcode.empty())
-        outputs.push_back({"output.gcode " + job.out_gcode, {job.out_gcode, job.out_gcode + ".tmp", job.out_gcode + ".tmp.postprocess"}});
-    if (!job.out_bambu3mf.empty())
-        outputs.push_back({"output.bambu3mf " + job.out_bambu3mf, {job.out_bambu3mf, job.out_bambu3mf + ".tmp", job.out_bambu3mf + ".rels.tmp"}});
-    const Written result   = result_files(out_path);
-    const Written progress = {"the progress file (--progress) " + progress_path, {progress_path}};
+// A file of a run, and what names it: a field of the job ("model.path") or the command line.
+using NamedFile = std::pair<std::string, std::string>;
 
-    progress_apart = false;
-    if (!progress_path.empty()) {
-        for (const auto &input : inputs)
-            if (same_file(progress_path, input.second))
-                fail("invalid-params", progress.what + " would replace " + input.first + " " + input.second);
-        for (const Written &out : outputs)
-            if (const std::string clash = shared_file(progress.files, out.files); !clash.empty())
-                fail("invalid-params", progress.what + " and " + out.what + " are one file (" + clash + ")");
+// Every absolute path the job's JSON gives, wherever it is, by its field ("model.path",
+// "presets.filaments[0]", "overrides.post_process"): output.gcode and output.bambu3mf in `outputs`,
+// every other one in `inputs`. Read from the JSON as it is, before the job is checked, so that the
+// files an invalid job names are kept apart from the result and the progress file too.
+void named_files(const json &v, const std::string &field, std::vector<NamedFile> &inputs, std::vector<NamedFile> &outputs)
+{
+    if (v.is_string()) {
+        const std::string path = v.get<std::string>();
+        if (is_absolute_path(path))
+            (field == "output.gcode" || field == "output.bambu3mf" ? outputs : inputs).emplace_back(field, path);
+    } else if (v.is_object()) {
+        for (auto it = v.begin(); it != v.end(); ++it)
+            named_files(it.value(), field.empty() ? it.key() : field + "." + it.key(), inputs, outputs);
+    } else if (v.is_array()) {
+        for (size_t i = 0; i < v.size(); ++i)
+            named_files(v[i], field + "[" + std::to_string(i) + "]", inputs, outputs);
     }
-    progress_apart = true;
-    for (const auto &input : inputs) {
-        const std::string clash = shared_file(result.files, {input.second});
-        if (!clash.empty()) {
-            result_on_input = true;
-            fail("invalid-params", "the result file " + clash + " would replace " + input.first + " " + input.second);
-        }
+}
+
+// The files a run reads (the job and what it names) and the outputs the job writes, with the
+// temporary files each output is written through.
+struct RunFiles
+{
+    std::vector<NamedFile> inputs;
+    std::vector<Written>   outputs;
+};
+
+// `text` is the job as read, or null when it cannot be read; a job that is not JSON names no file.
+RunFiles run_files(const std::string &job_path, const std::string *text)
+{
+    RunFiles files;
+    files.inputs.emplace_back("the job", job_path);
+    if (text == nullptr)
+        return files;
+    json root;
+    try {
+        root = json::parse(*text);
+    } catch (const std::exception &) {
+        return files;
     }
-    for (const Written &out : outputs)
-        for (const auto &input : inputs)
+    std::vector<NamedFile> outputs;
+    named_files(root, std::string(), files.inputs, outputs);
+    for (const NamedFile &out : outputs) {
+        const std::string &p = out.second;
+        if (out.first == "output.gcode")
+            files.outputs.push_back({"output.gcode " + p, {p, p + ".tmp", p + ".tmp.postprocess"}});
+        else
+            files.outputs.push_back({"output.bambu3mf " + p, {p, p + ".tmp", p + ".rels.tmp"}});
+    }
+    return files;
+}
+
+// What the result, or a file it is written through, would replace of `inputs`; "" when nothing.
+std::string result_clash(const std::string &out_path, const std::vector<NamedFile> &inputs)
+{
+    const Written result = result_files(out_path);
+    for (const NamedFile &input : inputs)
+        if (const std::string clash = shared_file(result.files, {input.second}); !clash.empty())
+            return "the result file " + clash + " would replace " + input.first + " " + input.second;
+    return std::string();
+}
+
+// What the progress file would replace of the run's files, the result's included; "" when nothing.
+std::string progress_clash(const std::string &progress_path, const std::string &out_path, const RunFiles &files)
+{
+    const std::string what = "the progress file (--progress) " + progress_path;
+    for (const NamedFile &input : files.inputs)
+        if (same_file(progress_path, input.second))
+            return what + " would replace " + input.first + " " + input.second;
+    const Written result = result_files(out_path);
+    if (const std::string clash = shared_file({progress_path}, result.files); !clash.empty())
+        return what + " would replace " + result.what + " (" + clash + ")";
+    for (const Written &out : files.outputs)
+        if (const std::string clash = shared_file({progress_path}, out.files); !clash.empty())
+            return what + " and " + out.what + " are one file (" + clash + ")";
+    return std::string();
+}
+
+// The job's outputs must be files of their own (sketch-orca, 2026-11-01): the G-code export removes
+// its file first and every output replaces its file, so an output on an input destroyed it, and two
+// outputs on one file left one of them in place of the other. Fails job-invalid for the job's
+// outputs, invalid-params for a result (--out) on one of them.
+void check_outputs(const RunFiles &files, const std::string &out_path)
+{
+    for (const Written &out : files.outputs)
+        for (const NamedFile &input : files.inputs)
             if (const std::string clash = shared_file(out.files, {input.second}); !clash.empty())
                 fail("job-invalid", out.what + " would replace " + input.first + " " + input.second + " (" + clash + ")");
-    for (size_t i = 0; i < outputs.size(); ++i)
-        for (size_t j = i + 1; j < outputs.size(); ++j)
-            if (const std::string clash = shared_file(outputs[i].files, outputs[j].files); !clash.empty())
-                fail("job-invalid", outputs[i].what + " and " + outputs[j].what + " are one file (" + clash + ")");
-    for (const Written &out : outputs)
+    for (size_t i = 0; i < files.outputs.size(); ++i)
+        for (size_t j = i + 1; j < files.outputs.size(); ++j)
+            if (const std::string clash = shared_file(files.outputs[i].files, files.outputs[j].files); !clash.empty())
+                fail("job-invalid", files.outputs[i].what + " and " + files.outputs[j].what + " are one file (" + clash + ")");
+    const Written result = result_files(out_path);
+    for (const Written &out : files.outputs)
         if (const std::string clash = shared_file(result.files, out.files); !clash.empty())
             fail("invalid-params", result.what + " and " + out.what + " are one file (" + clash + ")");
 }
 
 } // namespace
 
+bool write_command_line_failure(const std::string &out_path, const std::vector<std::string> &named, const std::vector<std::string> &jobs,
+                                const std::string &message, int exit_code)
+{
+    std::vector<NamedFile> inputs;
+    for (const std::string &value : named)
+        inputs.emplace_back("the file the command line names", value);
+    for (const std::string &job_path : jobs) {
+        std::string text;
+        try {
+            text = read_file(job_path);
+        } catch (const std::exception &) {
+            continue;
+        }
+        const RunFiles files = run_files(job_path, &text);
+        inputs.insert(inputs.end(), files.inputs.begin(), files.inputs.end());
+    }
+    if (const std::string clash = result_clash(out_path, inputs); !clash.empty()) {
+        std::fprintf(stderr, "sketch-orca: %s; nothing is written\n", clash.c_str());
+        return false;
+    }
+    return write_failure_result(out_path, "invalid-params", message, exit_code);
+}
+
 int run_job(const std::string &job_path, const std::string &out_path, const std::string &progress_path)
 {
-    // Before anything is written: a result that would replace the job is not written at all, and a
-    // progress file that would replace the job or the result is refused (sketch-orca, 2026-11-01).
-    const Written result = result_files(out_path);
-    if (const std::string clash = shared_file(result.files, {job_path}); !clash.empty()) {
-        std::fprintf(stderr, "sketch-orca: the result file %s would replace the job %s; nothing is written\n", clash.c_str(), job_path.c_str());
+    // Nothing is written, not even a crash's result, before the run's files are known to be apart
+    // (sketch-orca, 2026-11-01). The job is read first, and the files it names are taken from its
+    // JSON as it is, so an invalid job's are known too. A result that would replace the job or one of
+    // them is not written at all; a progress file that would replace a file of the run, the result's
+    // included, is refused (invalid-params) and never opened.
+    std::string text;
+    bool        readable = true;
+    try {
+        text = read_file(job_path);
+    } catch (const std::exception &) {
+        readable = false;
+    }
+    const RunFiles files = run_files(job_path, readable ? &text : nullptr);
+    if (const std::string clash = result_clash(out_path, files.inputs); !clash.empty()) {
+        std::fprintf(stderr, "sketch-orca: %s; nothing is written\n", clash.c_str());
         return exit_code_for("invalid-params");
     }
-    if (!progress_path.empty()) {
-        std::string clash = same_file(progress_path, job_path) ? "the job " + job_path : std::string();
-        if (clash.empty() && !shared_file({progress_path}, result.files).empty())
-            clash = result.what;
-        if (!clash.empty()) {
-            const std::string message = "the progress file (--progress) " + progress_path + " would replace " + clash;
-            write_failure_result(out_path, "invalid-params", message, exit_code_for("invalid-params"));
-            return exit_code_for("invalid-params");
-        }
-    }
+    const std::string progress_refused = progress_path.empty() ? std::string() : progress_clash(progress_path, out_path, files);
 
     Warnings    warnings;
     Progress    progress;
@@ -1830,30 +1903,21 @@ int run_job(const std::string &job_path, const std::string &out_path, const std:
     bool        ok   = true;
     std::string code = "ok", message;
     int         object_index = -1, exit_code = 0;
-    // The progress file is opened once the job's files are known to be apart from it; a job that
-    // cannot be read still gets it, as only the job and the result were checked then.
-    bool       progress_opened = false, progress_apart = true, result_on_input = false;
-    const auto open_progress   = [&]() {
-        if (progress_opened || progress_path.empty() || !progress_apart)
-            return;
-        progress_opened = true;
+    if (!progress_path.empty() && progress_refused.empty()) {
         if (!progress.open(progress_path))
             warnings.add("progress-unwritable", "cannot write the progress file " + progress_path);
         progress.line("job", 1, "reading the job");
-    };
+    }
     arm_crash(out_path, body);
     try {
-        std::string text;
-        try {
-            text = read_file(job_path);
-        } catch (const std::exception &) {
+        if (!progress_refused.empty())
+            fail("invalid-params", progress_refused);
+        if (!readable)
             fail(is_file(job_path) ? "job-invalid" : "file-not-found", "cannot read the job " + job_path);
-        }
         const Job job   = parse_job(text);
         body["command"] = job.command_name;
         arm_crash(out_path, body);
-        check_job_paths(job, job_path, out_path, progress_path, progress_apart, result_on_input);
-        open_progress();
+        check_outputs(files, out_path);
         run(job, body, warnings, progress);
     } catch (const Failure &f) {
         ok           = false;
@@ -1877,11 +1941,6 @@ int run_job(const std::string &job_path, const std::string &out_path, const std:
         for (const char *key : {"info", "layers", "printZ", "outputs", "stats"})
             body.erase(key);
     disarm_crash_result();
-    if (result_on_input) {
-        std::fprintf(stderr, "sketch-orca: %s; nothing is written\n", message.c_str());
-        return exit_code;
-    }
-    open_progress();
     const json outcome = ordered_result(ok, code, message, object_index, exit_code, body, warnings);
     try {
         write_file_atomic(out_path, outcome.dump(2, ' ', false, json::error_handler_t::replace) + "\n");

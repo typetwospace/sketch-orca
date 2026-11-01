@@ -12,6 +12,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "common.hpp"
 
@@ -31,5 +32,13 @@ int run_job(const std::string &job_path, const std::string &out_path, const std:
 // Writes a failure result for a run that could not start (a bad command line). Returns false when
 // the result cannot be written.
 bool write_failure_result(const std::string &out_path, const std::string &code, const std::string &message, int exit_code);
+
+// The invalid-params result of a `run` whose command line is wrong, written as write_failure_result
+// does unless the result, or a file it is written through, would replace a file the command line
+// names (`named`: its values but --out's own) or one that a job it names (`jobs`, read as run_job
+// reads them, also when they are not valid jobs) names; then nothing is written, stderr says why,
+// and it returns false (sketch-orca, 2026-11-01).
+bool write_command_line_failure(const std::string &out_path, const std::vector<std::string> &named, const std::vector<std::string> &jobs,
+                                const std::string &message, int exit_code);
 
 } // namespace sketch_orca

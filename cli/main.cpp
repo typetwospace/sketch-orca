@@ -89,12 +89,10 @@ std::string usage()
     return text;
 }
 
-int usage_error(const std::string &message, const std::string &out_path = std::string())
+int usage_error(const std::string &message)
 {
     boost::nowide::cerr << "sketch-orca: " << message << "\n\n" << usage();
     boost::nowide::cerr.flush();
-    if (!out_path.empty())
-        write_failure_result(out_path, "invalid-params", message, EXIT_INVALID_PARAMS);
     return EXIT_INVALID_PARAMS;
 }
 
@@ -205,18 +203,58 @@ int command_config_def(const std::vector<std::string> &args)
     return 0;
 }
 
+// The values a command line gives after its command (`--name value`, `--name=value` and stray
+// ones), but the first --out's, which is `out`: the files it may name. `jobs` gets those of --job.
+void command_line_values(const std::vector<std::string> &args, const std::string &out, std::vector<std::string> &values, std::vector<std::string> &jobs)
+{
+    bool out_seen = false;
+    for (size_t i = 2; i < args.size(); ++i) {
+        const std::string &a = args[i];
+        std::string        name, value;
+        if (a.compare(0, 2, "--") == 0) {
+            const size_t eq = a.find('=');
+            if (eq == std::string::npos)
+                continue;
+            name  = a.substr(2, eq - 2);
+            value = a.substr(eq + 1);
+        } else {
+            value = a;
+            if (i > 2 && args[i - 1].compare(0, 2, "--") == 0 && args[i - 1].find('=') == std::string::npos)
+                name = args[i - 1].substr(2);
+        }
+        if (!out_seen && name == "out" && value == out) {
+            out_seen = true;
+            continue;
+        }
+        values.push_back(value);
+        if (name == "job")
+            jobs.push_back(value);
+    }
+}
+
 int command_run(const std::vector<std::string> &args)
 {
     std::map<std::string, std::string> opts;
     std::string                        error;
     const bool                         parsed = parse_options(args, 2, {"job", "out", "progress"}, opts, error);
     const std::string                  out    = opts.count("out") ? opts["out"] : find_option(args, 2, "out");
+    // A wrong command line gets its result at --out, unless that would replace a file the command
+    // line or its job names (sketch-orca, 2026-11-01).
+    const auto refuse = [&](const std::string &message) {
+        const int code = usage_error(message);
+        if (out.empty())
+            return code;
+        std::vector<std::string> values, jobs;
+        command_line_values(args, out, values, jobs);
+        write_command_line_failure(out, values, jobs, message, code);
+        return code;
+    };
     if (!parsed)
-        return usage_error(error, out);
+        return refuse(error);
     if (out.empty())
         return usage_error("run needs --out <file> for the result");
     if (!opts.count("job"))
-        return usage_error("run needs --job <file>", out);
+        return refuse("run needs --job <file>");
     return run_job(opts["job"], out, opts.count("progress") ? opts["progress"] : std::string());
 }
 

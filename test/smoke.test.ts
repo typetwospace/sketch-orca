@@ -19,9 +19,11 @@ import {
   BED_SHIFT,
   FLUSH,
   FLUSH_JOBS,
+  INVALID_COMMAND,
   PRIME_TOWER_JOBS,
   REFUSALS,
   REFUSE,
+  RUN_INPUTS,
   SMOKE_CASES,
   SMOKE_PRESETS,
   SMOKE_VERSION,
@@ -66,6 +68,7 @@ import {
   smokeFingerprint,
   smokePassedFor,
   smokeTimeoutMs,
+  type RunFile,
 } from '../scripts/lib/smoke.ts'
 import type { RuntimeIo } from '../scripts/lib/pe.ts'
 import { writeZip } from './support/zip-writer.ts'
@@ -584,8 +587,10 @@ describe('jobs and the engine environment', () => {
     // version 5 the lowered nozzle past the top-of-print slack, config-def's stillDefined, the old
     // name Orca renames for its value (override-keys) and the refusal of the value it drops;
     // version 6 preset-metadata, flush-volumes, prime-tower, imported-settings, file-collisions and
-    // the drive-rooted work folder refusal.
-    expect(SMOKE_VERSION).toBe(6)
+    // the drive-rooted work folder refusal; version 7 file-collisions' runs with both files on
+    // inputs, invalid jobs, wrong command lines, presets, other names for a file and the result's
+    // temporary file.
+    expect(SMOKE_VERSION).toBe(7)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
     expect(CAPITAL_KEY.key).not.toBe(CAPITAL_KEY.key.toLowerCase())
@@ -659,18 +664,52 @@ describe('jobs and the engine environment', () => {
     expect(handlers).not.toMatch(/\b(s?n?printf|std::string\s*\(|new |malloc)\b/)
   })
 
-  test('the file collisions: each names one file twice, and a result over an input writes nothing', () => {
+  test('the file collisions: each names one file twice or has a wrong command line, and a result over an input writes nothing', () => {
     expect(new Set(COLLISIONS.map((c) => c.id)).size).toBe(COLLISIONS.length)
-    const inputs = ['job', 'model']
     for (const c of COLLISIONS) {
       expect(c.out).not.toBe(c.progress)
-      // One of the two is a file the run reads or the G-code it writes.
-      expect([c.out, c.progress].some((f) => [...inputs, 'gcode'].includes(f))).toBe(true)
+      // The result, or the file it is written through (the job named result.json.tmp), is an input.
+      const resultOnInput = RUN_INPUTS.includes(c.out) || (c.out === 'result' && c.jobName === 'result.json.tmp')
+      if (c.jobName !== undefined) expect({ id: c.id, resultOnInput }).toEqual({ id: c.id, resultOnInput: true })
+      // One of the two is a file the run reads or the G-code it writes, or the command line is wrong.
+      expect(resultOnInput || [c.out, c.progress].some((f) => [...RUN_INPUTS, 'gcode'].includes(f)) || c.args !== undefined).toBe(true)
       // The result lands where --out points, unless it would replace an input: then nothing is written.
-      if (inputs.includes(c.out)) expect(c.code).toBeUndefined()
+      if (resultOnInput) expect(c.code).toBeUndefined()
       else expect({ code: c.code, resultAt: c.resultAt }).toEqual({ code: 'invalid-params', resultAt: c.out })
+      // Every input the case names twice keeps its bytes, and so does the job.
       expect(c.intact).toContain('job')
+      for (const f of [c.out, c.progress]) if (RUN_INPUTS.includes(f)) expect({ id: c.id, f, intact: c.intact.includes(f) }).toEqual({ id: c.id, f, intact: true })
+      // Another name is given for an input only.
+      if (c.alias) expect(RUN_INPUTS).toContain(c[c.alias.of])
     }
+    // Both files on inputs at once, invalid jobs, wrong command lines, presets, other names and the temporary file.
+    expect(COLLISIONS.some((c) => RUN_INPUTS.includes(c.out) && RUN_INPUTS.includes(c.progress))).toBe(true)
+    expect(COLLISIONS.filter((c) => c.invalidJob).map((c) => c.code === undefined).sort()).toEqual([false, true])
+    expect(COLLISIONS.filter((c) => c.args).map((c) => c.code === undefined).sort()).toEqual([false, true])
+    expect(new Set(COLLISIONS.flatMap((c) => [c.out, c.progress]))).toEqual(new Set<RunFile>(['job', 'result', 'progress', 'model', 'gcode', 'machine', 'process']))
+    expect(new Set(COLLISIONS.flatMap((c) => (c.alias ? [c.alias.how] : [])))).toEqual(new Set(['hard-link', 'dot-dot']))
+    // An invalid job is one by its command alone: the job format refuses it.
+    expect(() => validateJob({ ...smokeJob({ command: 'slice', dir: scratch, resources: scratch, presets: { machine: join(scratch, 'm.json'), process: join(scratch, 'p.json'), filaments: [join(scratch, 'f.json')] } }), command: INVALID_COMMAND })).toThrow(/command/)
+  })
+
+  test('the engine checks the files of a run before it writes any: the result, the progress file and a crash\'s result', () => {
+    const run = readFileSync(join(import.meta.dir, '..', 'cli', 'run.cpp'), 'utf8')
+    const main = readFileSync(join(import.meta.dir, '..', 'cli', 'main.cpp'), 'utf8')
+    const body = run.slice(run.indexOf('int run_job('))
+    const at = (s: string) => {
+      const i = body.indexOf(s)
+      expect({ s, found: i >= 0 }).toEqual({ s, found: true })
+      return i
+    }
+    // The job's files (also an invalid job's) and the result's are checked before the progress file
+    // is opened, a crash's result armed or the job parsed.
+    const checked = at('result_clash(out_path, files.inputs)')
+    expect(at('run_files(job_path')).toBeLessThan(checked)
+    for (const later of ['progress_clash(', 'progress.open(', 'arm_crash(', 'parse_job(']) expect({ later, after: at(later) > checked }).toEqual({ later, after: true })
+    expect(at('progress_clash(')).toBeLessThan(at('progress.open('))
+    // The command line's failure results go through the same check; nothing else in main.cpp writes one.
+    expect(main).not.toContain('write_failure_result(')
+    expect(main).toContain('write_command_line_failure(')
   })
 
   test('toolChanges lists the T commands without their comments', () => {
