@@ -32,6 +32,11 @@ export function patchedPaths(patchText: string): string[] {
   return out
 }
 
+/** The patches that change deps/, in order: the dependency build depends only on them. */
+export function depsPatchesOf(patches: PatchInfo[]): PatchInfo[] {
+  return patches.filter((p) => patchedPaths(readFileSync(p.path, 'utf8')).some((f) => f.startsWith('deps/')))
+}
+
 export interface AppliedState {
   commit: string
   applied: { name: string; sha256: string }[]
@@ -58,14 +63,14 @@ function gitBase(src: string): string[] {
 
 /**
  * What the checkout's files are against `commit`: every file that differs from it (an edit, staged
- * or not) or that git does not track and .gitignore does not leave out (the files a patch adds), by
- * the git blob of its content, and every file removed. Files .gitignore leaves out are not part of
- * it. patchedDigest gives the same digest for the commit with the patches applied.
+ * or not) or that git does not track (the files a patch adds, and any other, .gitignore's too: the
+ * build reads what is in the checkout whatever git ignores), by the git blob of its content, and
+ * every file removed. patchedDigest gives the same digest for the commit with the patches applied.
  */
 export function sourceDigest(git: string, src: string, commit: string): string {
   const base = gitBase(src)
   const { present, removed } = nameStatus(captureOk(git, [...base, 'diff', '--name-status', '-z', '--no-renames', '--no-ext-diff', commit, '--']))
-  const untracked = captureOk(git, [...base, 'ls-files', '-z', '--others', '--exclude-standard']).split('\0').filter((rel) => rel !== '')
+  const untracked = captureOk(git, [...base, 'ls-files', '-z', '--others']).split('\0').filter((rel) => rel !== '')
   const paths = [...present, ...untracked]
   const blobs = paths.length === 0 ? [] : captureOk(git, [...base, 'hash-object', '--stdin-paths'], { input: paths.join('\n') + '\n' }).trim().split(/\r?\n/)
   if (blobs.length !== paths.length) throw new StepError(`git hash-object gave ${blobs.length} hashes for ${paths.length} files in ${src}`)
@@ -135,7 +140,7 @@ export async function fetchSource(git: string, lock: OrcaLock, src: string, log:
     log.line(`fetch: ${src} is at ${head}; fetching ${lock.tag}`)
     await runLogged(git, ['-C', src, 'fetch', '--depth', '1', '--no-tags', 'origin', `+refs/tags/${lock.tag}:refs/tags/${lock.tag}`], { log })
     await runLogged(git, ['-C', src, 'reset', '--hard', '--quiet'], { log })
-    await runLogged(git, ['-C', src, 'clean', '-fdq'], { log })
+    await runLogged(git, ['-C', src, 'clean', '-fdxq'], { log })
     await runLogged(git, ['-C', src, 'checkout', '--quiet', '--detach', `refs/tags/${lock.tag}`], { log })
     verifyCommit(git, lock, src)
     return 'moved'
@@ -196,8 +201,9 @@ export async function applyPatches(git: string, lock: OrcaLock, src: string, pat
     const dirty = captureOk(git, ['-C', src, 'status', '--porcelain', '--untracked-files=no']).trim()
     if (dirty !== '') log.line('patches: resetting the checkout to the locked commit before applying')
     await runLogged(git, ['-C', src, 'reset', '--hard', '--quiet', lock.commit], { log })
-    // Files a previous patch created are untracked now; remove them so it applies again.
-    await runLogged(git, ['-C', src, 'clean', '-fdq'], { log })
+    // Files a previous patch created are untracked now; remove them so it applies again, and the
+    // files .gitignore leaves out with them (sourceDigest counts them).
+    await runLogged(git, ['-C', src, 'clean', '-fdxq'], { log })
   }
   const applied: AppliedState = { commit: lock.commit, applied: plan.reset ? [] : (readApplied(stateFile)?.applied ?? []) }
   for (const p of plan.apply) {
@@ -213,7 +219,7 @@ export async function applyPatches(git: string, lock: OrcaLock, src: string, pat
     writeFileSync(stateFile, JSON.stringify(applied, null, 2) + '\n')
   }
   if (sourceDigest(git, src, lock.commit) !== patchedDigest(git, src, lock.commit, wanted)) {
-    throw new StepError(`${src} is not the locked commit with patches/ applied, after applying them (a file .gitignore leaves out that a patch adds, or a patch that does not apply the same way to the index?)`)
+    throw new StepError(`${src} is not the locked commit with patches/ applied, after applying them (a patch that does not apply the same way to the index?)`)
   }
   return wanted
 }

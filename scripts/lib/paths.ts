@@ -109,6 +109,45 @@ export function writeStamp(stateDir: string, step: string, inputs: string, detai
 }
 
 /**
+ * What a finished dependency build records (state/deps.json's detail; orca.ts): what it was built
+ * from, and the digest (files.ts hashTree) of the prefix it installed, which the engine links.
+ * `fresh` says it ran from an empty build folder in one run, so every dependency was unpacked from
+ * its pinned package and built as it is; a run that resumes one that stopped is not fresh, since an
+ * unpacked source may have been edited in between.
+ */
+export interface DepsRecord {
+  commit: string
+  depsPatches: { name: string; sha256: string }[]
+  prefixDigest: string
+  fresh: boolean
+}
+
+/**
+ * How the dependency build on record (state/deps.json) differs from what the engine needs now:
+ * the locked commit and the patches of deps/ (checkout.ts depsPatchesOf), and when given the
+ * inputs build works out (orca.ts depsWant), a fresh build, and the prefix's digest. That is
+ * worked out (reading the whole prefix) only when nothing else is wrong. Empty when it fits.
+ */
+export function depsStampProblems(
+  stamp: { inputs: string; detail?: unknown } | undefined,
+  want: { commit: string; depsPatches: { name: string; sha256: string }[]; inputs?: string; fresh?: boolean; prefixDigest?: () => string },
+): string[] {
+  if (!stamp) return ['no finished dependency build is recorded (state/deps.json)']
+  const d = (stamp.detail ?? {}) as Partial<DepsRecord>
+  if (typeof d.commit !== 'string' || !Array.isArray(d.depsPatches) || typeof d.prefixDigest !== 'string' || typeof d.fresh !== 'boolean') {
+    return ['the dependency build was recorded by an earlier pipeline, without what it was built from or a digest of what it installed']
+  }
+  const out: string[] = []
+  if (d.commit !== want.commit) out.push(`the dependencies were built at ${d.commit}, the lock is at ${want.commit}`)
+  const patches = (x: { name: string; sha256: string }[]) => JSON.stringify(x.map((p) => [p.name, p.sha256]))
+  if (patches(d.depsPatches) !== patches(want.depsPatches)) out.push('the dependencies were built with other patches of deps/ than patches/ has now')
+  if (want.inputs !== undefined && stamp.inputs !== want.inputs) out.push('the dependencies were built from other inputs (their configuration, CMake or the compiler settings changed since)')
+  if (want.fresh && !d.fresh) out.push('the dependency build was resumed after it stopped, so an unpacked source may have been edited in between')
+  if (out.length === 0 && want.prefixDigest && want.prefixDigest() !== d.prefixDigest) out.push('the dependency prefix is not what the dependency build installed (a file changed, added or removed since)')
+  return out
+}
+
+/**
  * The hash (files.ts hashTree) of cli/ that the last finished engine build was compiled
  * from: build records it before Ninja runs and checks it again after (orca.ts). Undefined when the
  * build is older than that.

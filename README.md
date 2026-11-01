@@ -70,7 +70,7 @@ bun run typecheck                      # tsc: type-check the scripts and tests
 | `check` | Asks GitHub for the latest stable OrcaSlicer release and compares it with `orca.lock.json`. Exit 0: nothing to do (the lock is the latest release, or newer); 1: a newer stable release is out; 2: the locked tag now points at another commit; 3: the check failed. |
 | `update [--write]` | Moves the lock to a newer stable release; without `--write` it prints the new lock. It never moves the lock back, or onto a moved tag (exit 2). |
 | `fetch` | Shallow clone of the locked tag into `<work>/src`; the commit must be the lock's. |
-| `build [--step deps\|orca]` | Applies `patches/`, builds Orca's dependencies without the GUI ones, then libslic3r and `sketch-orca` (Release, `SLIC3R_GUI=OFF`; on Windows with MSVC's static runtime, `/MT`). Fetches first when the checkout is missing or at another commit. |
+| `build [--step deps\|orca] [--fresh]` | Applies `patches/`, builds Orca's dependencies without the GUI ones, then libslic3r and `sketch-orca` (Release, `SLIC3R_GUI=OFF`; on Windows with MSVC's static runtime, `/MT`). Fetches first when the checkout is missing or at another commit. The dependency build starts from an empty `deps/`, so each dependency is unpacked from its downloaded package, unless it resumes a stopped build of the same inputs (`state/deps-run.json`), which then does not count as fresh for `stage`; `--fresh` starts it over. It records its commit, the patches of `deps/` and a digest of the prefix it installed (`state/deps.json`). The engine is built only on such a build of the inputs there are now (also with `--step orca`), and the prefix must hash the same before and after Ninja. |
 | `smoke [--case <id,...>]` | Slices the test models with the built engine and checks the results (see Smoke). |
 | `stage [--without-smoke]` | The engine as it ships, in `<work>/dist/engine`, with a manifest. Only an engine that passed smoke is staged; `--without-smoke` stages a dev build and the manifest says so. |
 | `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. `--no-deps` leaves the dependency packages and the prebuilt libraries' sources out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency, or a prebuilt binary the Orca archive keeps, has no pinned source, or a pinned prebuilt binary no recipe to rebuild it (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
@@ -157,13 +157,16 @@ Before staging, `stage` checks that the checkout is at the locked commit; that t
 last applied (`state/patches.json`, names and SHA-256) are `patches/` as it is now (`build`
 resets the checkout and patches it again whenever they differ, or the checkout is not the commit
 with them applied and nothing else: `sourceDigest`, the files that differ from the commit by their
-git blob, against `patchedDigest`, the same worked out from the commit and the patches in a scratch
-index); that a patch header dates our changes ("Modified for Sketch, <date>."); that `cli/`
+git blob, files `.gitignore` leaves out included, against `patchedDigest`, the same worked out from
+the commit and the patches in a scratch index); that a patch header dates our changes ("Modified for Sketch, <date>."); that `cli/`
 hashes as it did when the last build started (`state/orca.json`; the build itself fails when
 `cli/` or the checkout changes while Ninja runs); that the engine is the one the last build
 recorded as finished (`state/orca.json`, which the build removes before Ninja runs, and a
 dependency build that starts over removes too), of this commit, these patches, the checkout as it
-is now, the same dependency build and the same libraries; that a full smoke run passed for this very executable, with
+is now, the same dependency build and the same libraries; that the dependency build on record
+(`state/deps.json`) is of this commit and the patches of `deps/` there are now, ran fresh (from an
+empty folder, not resumed), and that its prefix still hashes as it did when that build finished and
+when the engine was linked against it; that a full smoke run passed for this very executable, with
 the same libraries and resources (the stamp and `smoke/report.json`); that every library the engine imports is found (Windows: the PE
 import closure); that on Windows neither the engine nor any library it loads imports MSVC's
 dynamic C runtime (the Visual C++ runtime DLLs, `ucrtbase.dll` or its `api-ms-win-crt-*` API sets),

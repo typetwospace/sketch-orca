@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parsePinnedSources } from '../scripts/lib/bundle.ts'
-import { applyPatches, listPatches, patchedDigest, patchedPaths, planPatches, repoUrl, sourceDigest, type PatchInfo } from '../scripts/lib/checkout.ts'
+import { applyPatches, depsPatchesOf, listPatches, patchedDigest, patchedPaths, planPatches, repoUrl, sourceDigest, type PatchInfo } from '../scripts/lib/checkout.ts'
 import { firstExisting, gitCandidates } from '../scripts/lib/env.ts'
 import { LOCK_FORMAT } from '../scripts/lib/lock.ts'
 import { sha256Text } from '../scripts/lib/paths.ts'
@@ -48,6 +48,8 @@ describe('checkout', () => {
     expect(patchedPaths(readFileSync(patches[3]!.path, 'utf8'))).toEqual(['src/libslic3r/Print.hpp'])
     expect(patchedPaths(readFileSync(patches[4]!.path, 'utf8'))).toEqual(['deps/CMakeLists.txt', 'deps/OpenCV/OpenCV.cmake'])
     expect(patchedPaths(readFileSync(patches[5]!.path, 'utf8'))).toEqual(['deps/OpenSSL/OpenSSL.cmake'])
+    // The dependency build is of these alone.
+    expect(depsPatchesOf(patches).map((x) => x.name)).toEqual(['0001-deps-without-gui.patch', '0005-deps-msvc-static-runtime.patch', '0006-deps-openssl-3.patch'])
   })
 
   test('patch 0006 pins OpenSSL 3.5.9 (Apache-2.0) by its published SHA-256, in the form source reads', () => {
@@ -185,8 +187,13 @@ describe('the checkout as the patches made it', () => {
     rmSync(join(repo, 'resources', 'profiles', 'p.json'))
     changed()
     inRepo(repo, 'checkout', '-q', '--', '.')
-    // What .gitignore leaves out is not part of it.
-    put(join(repo, 'ignored', 'cache.bin'), 'x')
+    expect(sourceDigest(git!, repo, head)).toBe(clean)
+    // What .gitignore leaves out counts too: the build reads it all the same (a header, a generated file).
+    put(join(repo, 'ignored', 'config.h'), '#define X 1\n')
+    changed()
+    put(join(repo, 'ignored', 'config.h'), '#define X 2\n')
+    changed()
+    rmSync(join(repo, 'ignored'), { recursive: true })
     expect(sourceDigest(git!, repo, head)).toBe(clean)
   }, 60_000)
 
@@ -232,6 +239,14 @@ describe('the checkout as the patches made it', () => {
     expect(readFileSync(join(repo, 'resources', 'profiles', 'p.json'), 'utf8')).toBe('{"layer_height": "0.2"}\n')
     expect(existsSync(join(repo, 'src', 'extra.cpp'))).toBe(false)
     expect(readFileSync(join(repo, 'src', 'a.cpp'), 'utf8')).toContain('a2()')
+    expect(sourceDigest(git!, repo, head)).toBe(patched)
+
+    // A file .gitignore leaves out is removed too: the build would read it.
+    put(join(repo, 'ignored', 'config.h'), '#define X 1\n')
+    writeFileSync(log.path, '')
+    await applyPatches(git!, lock, repo, patches, state, log)
+    expect(logText()).toContain('is not the locked commit with the recorded patches applied')
+    expect(existsSync(join(repo, 'ignored', 'config.h'))).toBe(false)
     expect(sourceDigest(git!, repo, head)).toBe(patched)
 
     // A record that says the patch is applied, on a checkout where it is not (a reset by hand).

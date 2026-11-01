@@ -19,11 +19,11 @@ import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:
 import { homedir, userInfo } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
 import type { Context } from '../orca.ts'
-import { headCommit, listPatches, sourceDigest, type PatchInfo } from './checkout.ts'
+import { depsPatchesOf, headCommit, listPatches, sourceDigest, type PatchInfo } from './checkout.ts'
 import { firstExisting, gitCandidates, type Platform } from './env.ts'
 import { copyFile, hashTree, listFiles, nativePath, sha256Bytes, treeEntries, verifyTree, writeText, type FileEntry } from './files.ts'
 import type { OrcaLock } from './lock.ts'
-import { builtCliSha256, readStamp, sha256File, sha256Text, writeStamp, type WorkPaths } from './paths.ts'
+import { builtCliSha256, depsStampProblems, readStamp, sha256File, sha256Text, writeStamp, type WorkPaths } from './paths.ts'
 import { readPeDebugPaths, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from './pe.ts'
 import { capture, Log, StepError } from './run.ts'
 import { checkVersion, ENGINE_RESOURCES, engineEnv, engineLibraryDirs, engineRuntime, runCases, runEngine, SMOKE_CASES, smokeFingerprint, smokePassedFor, smokePresetSets, smokeTimeoutMs, SMOKE_VERSION } from './smoke.ts'
@@ -864,6 +864,8 @@ export interface BuildRecord {
   runtime: [string, string][]
   /** The inputs of the dependency build it linked (state/deps.json), if one is recorded. */
   depsInputs: string | null
+  /** The digest (files.ts hashTree) of the dependency prefix it linked, before and after Ninja. */
+  depsPrefixDigest: string | null
 }
 
 /** How the engine build recorded in `recorded` (state/orca.json's detail) differs from `now`: empty when it is the build of what is there now. */
@@ -880,6 +882,7 @@ export function buildRecordProblems(recorded: unknown, now: BuildRecord): string
   const runtime = (x: [string, string][]) => JSON.stringify([...x].map(([n, h]) => [n.toLowerCase(), h]).sort())
   if (runtime(r.runtime) !== runtime(now.runtime)) out.push('the libraries the engine loads changed since it was built')
   if ((r.depsInputs ?? null) !== now.depsInputs) out.push('the dependencies were built again, from other inputs, since the engine was')
+  else if ((r.depsPrefixDigest ?? null) !== now.depsPrefixDigest) out.push('the dependency prefix is not the one the engine was built with')
   return out
 }
 
@@ -906,7 +909,18 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
   if (!built) throw new StepError('no finished engine build is recorded (state/orca.json); run build')
   const cliProblem = cliChangedSinceBuild(w, ctx.engine.cli)
   if (cliProblem) throw new StepError(`${cliProblem}; run build`)
-  // The engine is the build of the checkout as it is: the locked commit, patches/ and nothing else.
+  // The engine is the build of the checkout as it is: the locked commit, patches/ and nothing else,
+  // on dependencies built fresh from their pinned packages with the patches of deps/ there are now,
+  // whose prefix is still what that build installed.
+  const deps = readStamp(w.state, 'deps')
+  let depsPrefixDigest: string | null = null
+  const depsProblems = depsStampProblems(deps, {
+    commit: ctx.lock.commit,
+    depsPatches: depsPatchesOf(patchFiles),
+    fresh: true,
+    prefixDigest: () => (depsPrefixDigest = hashTree(w.depsPrefix)),
+  })
+  if (depsProblems.length > 0) throw new StepError(`${depsProblems.join('; ')}; run build --fresh`)
   const source = sourceDigest(git, w.src, ctx.lock.commit)
   const exeSha256 = sha256File(exe)
   const buildProblems = buildRecordProblems(built.detail, {
@@ -915,7 +929,8 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     sourceDigest: source,
     exeSha256,
     runtime: engineRuntime(w, exe, platform),
-    depsInputs: readStamp(w.state, 'deps')?.inputs ?? null,
+    depsInputs: deps?.inputs ?? null,
+    depsPrefixDigest,
   })
   if (buildProblems.length > 0) throw new StepError(`${buildProblems.join('; ')}; run build`)
   const smokePassed = smokePassedFor(w, exe, smokeFingerprint(w, exe, ctx.lock, platform))

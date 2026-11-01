@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { listPatches } from '../scripts/lib/checkout.ts'
 import { hashTree, nativePath, treeEntries, writeText } from '../scripts/lib/files.ts'
 import { LOCK_FORMAT, type OrcaLock } from '../scripts/lib/lock.ts'
-import { enginePaths, workPaths, writeStamp } from '../scripts/lib/paths.ts'
+import { depsStampProblems, enginePaths, workPaths, writeStamp, type DepsRecord } from '../scripts/lib/paths.ts'
 import type { RuntimeIo } from '../scripts/lib/pe.ts'
 import { SMOKE_CASES } from '../scripts/lib/smoke.ts'
 import {
@@ -190,6 +190,7 @@ describe('manifest', () => {
         ['libgmp-10.dll', H('3')],
       ],
       depsInputs: H('d'),
+      depsPrefixDigest: H('p'),
     }
     // As build writes it, beside its other fields.
     const recorded = { exe: 'sketch-orca.exe', cliSha256: H('c'), compilerEnv: {}, ...now, runtime: [...now.runtime].reverse() }
@@ -206,6 +207,40 @@ describe('manifest', () => {
     expect(differs({ runtime: [['TKernel.dll', H('9')], ['libgmp-10.dll', H('3')]] })).toEqual(['the libraries the engine loads changed since it was built'])
     expect(differs({ runtime: [['TKernel.dll', H('2')]] })).toEqual(['the libraries the engine loads changed since it was built'])
     expect(differs({ depsInputs: null })).toEqual(['the dependencies were built again, from other inputs, since the engine was'])
+    // The same dependency build, but its prefix changed after the engine was linked against it (or a record without the digest).
+    expect(differs({ depsPrefixDigest: H('q') })).toEqual(['the dependency prefix is not the one the engine was built with'])
+    expect(buildRecordProblems({ ...recorded, depsPrefixDigest: undefined }, now)).toEqual(['the dependency prefix is not the one the engine was built with'])
+  })
+
+  test('depsStampProblems: the dependencies must be a finished build of the commit and deps/ patches there are now, fresh for stage, with the prefix it installed', () => {
+    const depsPatches = [{ name: '0001-deps.patch', sha256: H('1') }]
+    const record: DepsRecord = { commit: LOCK.commit, depsPatches, prefixDigest: H('p'), fresh: true }
+    const stamp = { inputs: H('i'), finishedAt: '2026-11-01T00:00:00.000Z', detail: record }
+    let hashed = 0
+    const digest = (d: string) => () => (hashed++, d)
+    const want = { commit: LOCK.commit, depsPatches, inputs: H('i'), fresh: true, prefixDigest: digest(H('p')) }
+    expect(depsStampProblems(stamp, want)).toEqual([])
+    expect(hashed).toBe(1)
+    expect(depsStampProblems(undefined, want)).toEqual(['no finished dependency build is recorded (state/deps.json)'])
+    // A stamp of the earlier pipeline: only the hash of the inputs, nothing to check the prefix by.
+    expect(depsStampProblems({ inputs: H('i') }, want)).toEqual(['the dependency build was recorded by an earlier pipeline, without what it was built from or a digest of what it installed'])
+    // The audit's case: a patch of deps/ changed, and build --step orca (or stage) would have taken the old dependencies.
+    hashed = 0
+    expect(depsStampProblems(stamp, { ...want, depsPatches: [{ name: '0001-deps.patch', sha256: H('2') }] })).toEqual(['the dependencies were built with other patches of deps/ than patches/ has now'])
+    expect(depsStampProblems(stamp, { ...want, depsPatches: [] })).toEqual(['the dependencies were built with other patches of deps/ than patches/ has now'])
+    expect(depsStampProblems(stamp, { ...want, commit: 'f'.repeat(40) })).toEqual([`the dependencies were built at ${LOCK.commit}, the lock is at ${'f'.repeat(40)}`])
+    expect(depsStampProblems(stamp, { ...want, inputs: H('j') })).toEqual(['the dependencies were built from other inputs (their configuration, CMake or the compiler settings changed since)'])
+    // The prefix is read only when nothing else is wrong.
+    expect(hashed).toBe(0)
+    // An edit, an added or a removed file in the prefix after the build.
+    expect(depsStampProblems(stamp, { ...want, prefixDigest: digest(H('q')) })).toEqual(['the dependency prefix is not what the dependency build installed (a file changed, added or removed since)'])
+    // A build that resumed one that stopped does for build, not for stage.
+    const resumed = { ...stamp, detail: { ...record, fresh: false } }
+    expect(depsStampProblems(resumed, { ...want, fresh: false })).toEqual([])
+    expect(depsStampProblems(resumed, want)).toEqual(['the dependency build was resumed after it stopped, so an unpacked source may have been edited in between'])
+    // stage has no toolchain to work the inputs out: commit, patches, fresh and prefix are checked.
+    const { inputs: _, ...stageWant } = want
+    expect(depsStampProblems({ ...stamp, inputs: H('j') }, stageWant)).toEqual([])
   })
 
   test('verifyStaged checks the folder against its manifest, the manifest aside', () => {

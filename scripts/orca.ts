@@ -7,9 +7,9 @@
 //   check            latest stable OrcaSlicer release vs the lock (exit 0 nothing to do, 1 newer, 2 tag moved)
 //   update [--write] move the lock to a newer stable release (prints the new lock without --write)
 //   fetch            shallow clone of the locked tag; the commit must match the lock
-//   build [--step deps|orca]
+//   build [--step deps|orca] [--fresh]
 //                    Orca's dependencies without the GUI ones, then libslic3r and sketch-orca
-//                    (SLIC3R_GUI=OFF, Release)
+//                    (SLIC3R_GUI=OFF, Release); --fresh starts the dependency build over
 //   smoke [--case <id,...>]
 //                    slices the test models with the built engine and checks the results
 //   stage [--without-smoke]
@@ -30,16 +30,16 @@
 // commands that write there hold <work>/run.lock.d, so only one of them runs at a time. It runs
 // locally; there is no CI job.
 
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { applyPatches, fetchSource, headCommit, listPatches, patchedPaths, sourceDigest, type PatchInfo } from './lib/checkout.ts'
+import { applyPatches, depsPatchesOf, fetchSource, headCommit, listPatches, patchedDigest, sourceDigest, type PatchInfo } from './lib/checkout.ts'
 import { defaultDepsJobs, defaultJobs, depsBuildArgs, depsConfigureArgs, depsParallelEnv, jobsCap, orcaBuildArgs, orcaConfigureArgs } from './lib/cmake.ts'
 import { firstExisting, gitCandidates, sourcePathTrimEnv } from './lib/env.ts'
 import { hashTree } from './lib/files.ts'
 import { githubGetter, resolveLatestRelease } from './lib/github.ts'
 import { compareLock, lockForRelease, readLock, releaseDecision, serializeLock, writeLock, type OrcaLock, type ReleaseDecision } from './lib/lock.ts'
-import { enginePaths, readStamp, sha256File, sha256Text, workHome, workPaths, writeStamp, type WorkPaths } from './lib/paths.ts'
+import { depsStampProblems, enginePaths, readStamp, sha256File, sha256Text, workHome, workPaths, writeStamp, type DepsRecord, type WorkPaths } from './lib/paths.ts'
 import { runSteps, stepArgs, type ReleaseStep } from './lib/release.ts'
 import { EXIT, Log, runLogged, StepError, UsageError } from './lib/run.ts'
 import { takeRunLock } from './lib/runlock.ts'
@@ -160,19 +160,56 @@ function matchCompilerEnv(w: WorkPaths, name: string, dir: string, env: Record<s
   writeStamp(w.state, `${name}-env`, want, { compilerEnv: env })
 }
 
-async function buildDeps(ctx: Context, t: Toolchain, patchesHash: string, log: Log): Promise<void> {
+function depsConfigure(t: Toolchain, w: WorkPaths): string[] {
+  return depsConfigureArgs({ ninja: t.ninja, sourceDir: join(w.src, 'deps'), buildDir: w.deps, downloadDir: w.downloads, ignorePrefixes: t.ignorePrefixes, platform: t.platform })
+}
+
+/**
+ * What the dependency build is of, as build works it out now: the locked commit, the patches of
+ * deps/, its configuration, CMake and the compiler settings. The engine is built only on a
+ * finished dependency build of these (depsStampProblems).
+ */
+function depsWant(ctx: Context, t: Toolchain, depsPatches: PatchInfo[]): { commit: string; depsPatches: { name: string; sha256: string }[]; inputs: string } {
+  const patchesHash = sha256Text(JSON.stringify(depsPatches.map((p) => [p.name, p.sha256])))
+  const inputs = sha256Text(JSON.stringify({ commit: ctx.lock.commit, patchesHash, configure: depsConfigure(t, ctx.work), cmake: t.cmake, compilerEnv: compilerEnv(t, ctx.work) }))
+  return { commit: ctx.lock.commit, depsPatches: depsPatches.map((p) => ({ name: p.name, sha256: p.sha256 })), inputs }
+}
+
+/**
+ * Orca's dependencies, into <work>/deps. A build starts from an empty folder, so each dependency
+ * is unpacked from its downloaded package and built as it is, unless it resumes a run of the same
+ * inputs that stopped (state/deps-run.json): that keeps what was unpacked and built, and the build
+ * it finishes is not fresh (stage refuses it; --fresh starts over). The finished build records what
+ * it was built from and a digest of the prefix it installed (DepsRecord).
+ */
+async function buildDeps(ctx: Context, t: Toolchain, want: ReturnType<typeof depsWant>, fresh: boolean, log: Log): Promise<void> {
   const w = ctx.work
-  const configure = depsConfigureArgs({ ninja: t.ninja, sourceDir: join(w.src, 'deps'), buildDir: w.deps, downloadDir: w.downloads, ignorePrefixes: t.ignorePrefixes, platform: t.platform })
+  const configure = depsConfigure(t, w)
   const cenv = compilerEnv(t, w)
-  const inputs = sha256Text(JSON.stringify({ commit: ctx.lock.commit, patchesHash, configure, cmake: t.cmake, compilerEnv: cenv }))
+  const { inputs } = want
   const stamp = readStamp(w.state, 'deps')
-  if (stamp?.inputs === inputs && existsSync(join(w.depsPrefix, 'include')) && existsSync(join(w.depsPrefix, 'lib'))) {
-    log.line(`deps: already built for these inputs (${stamp.finishedAt}); skipping`)
-    return
+  if (!fresh) {
+    const problems = depsStampProblems(stamp, { ...want, prefixDigest: () => hashTree(w.depsPrefix) })
+    if (problems.length === 0) {
+      log.line(`deps: already built for these inputs (${stamp!.finishedAt}); skipping`)
+      return
+    }
+    if (stamp) log.line(`deps: building again: ${problems.join('; ')}`)
   }
-  matchCompilerEnv(w, 'deps', w.deps, cenv, log)
-  // The engine built on the dependencies as they were is no longer the engine of these.
+  const run = readStamp(w.state, 'deps-run')
+  const resume = !fresh && run?.inputs === inputs && existsSync(w.deps)
+  // Until this build finishes there is no finished dependency build on record, and the engine
+  // built on the dependencies as they were is no longer the engine of these.
+  rmSync(join(w.state, 'deps.json'), { force: true })
   forgetEngineBuild(w)
+  if (resume) {
+    log.line(`deps: resuming the build of these inputs that stopped (started ${run!.finishedAt}); it will not count as fresh for stage (build --fresh starts over)`)
+  } else if (existsSync(w.deps)) {
+    log.line(`deps: starting ${w.deps} over`)
+    rmSync(w.deps, { recursive: true, force: true })
+  }
+  writeStamp(w.state, 'deps-run', inputs)
+  matchCompilerEnv(w, 'deps', w.deps, cenv, log)
   mkdirSync(w.downloads, { recursive: true })
   mkdirSync(w.deps, { recursive: true })
   // SKETCH_ORCA_JOBS caps the compile jobs here too (depsParallelEnv); configure sees it as well,
@@ -184,8 +221,10 @@ async function buildDeps(ctx: Context, t: Toolchain, patchesHash: string, log: L
   const cap = jobsCap()
   log.line(`deps: building (${jobs} ${jobs === 1 ? 'dependency' : 'dependencies'} at a time${cap === undefined ? '' : `, at most ${cap} compile jobs`}); this takes a while`)
   await runLogged(t.cmake, depsBuildArgs(w.deps, jobs), { env, log, cwd: w.deps })
-  writeStamp(w.state, 'deps', inputs)
-  log.line('deps: done')
+  const record: DepsRecord = { commit: want.commit, depsPatches: want.depsPatches, prefixDigest: hashTree(w.depsPrefix), fresh: !resume }
+  writeStamp(w.state, 'deps', inputs, record)
+  rmSync(join(w.state, 'deps-run.json'), { force: true })
+  log.line(`deps: done${resume ? ' (resumed, so not fresh)' : ''}`)
 }
 
 /** Removes the record of a finished engine build (state/orca.json): stage and source take no engine without one. */
@@ -193,8 +232,14 @@ function forgetEngineBuild(w: WorkPaths): void {
   rmSync(join(w.state, 'orca.json'), { force: true })
 }
 
-async function buildOrca(ctx: Context, t: Toolchain, patches: PatchInfo[], patchesHash: string, log: Log): Promise<void> {
+async function buildOrca(ctx: Context, t: Toolchain, patches: PatchInfo[], patchesHash: string, deps: ReturnType<typeof depsWant>, log: Log): Promise<void> {
   const w = ctx.work
+  // The engine is built only on a finished dependency build of the inputs there are now, whose
+  // prefix is still what it installed (also with --step orca).
+  const depsStamp = readStamp(w.state, 'deps')
+  let depsPrefixDigest = ''
+  const depsProblems = depsStampProblems(depsStamp, { ...deps, prefixDigest: () => (depsPrefixDigest = hashTree(w.depsPrefix)) })
+  if (depsProblems.length > 0) throw new StepError(`${depsProblems.join('; ')}; run build, which builds the dependencies first`)
   const configure = orcaConfigureArgs({
     ninja: t.ninja,
     sourceDir: w.src,
@@ -226,6 +271,9 @@ async function buildOrca(ctx: Context, t: Toolchain, patches: PatchInfo[], patch
   // compare them. Until the build ends there is no finished build on record.
   const cliSha256 = hashTree(E.cli)
   const source = sourceDigest(t.git, w.src, ctx.lock.commit)
+  // Still the commit with patches/ applied and nothing else, as build left it before the
+  // dependency build (which writes nothing into the checkout).
+  if (source !== patchedDigest(t.git, w.src, ctx.lock.commit, patches)) throw new StepError(`${w.src} is not the locked commit with patches/ applied (a file changed, added or removed since build applied them); run build again`)
   forgetEngineBuild(w)
   // Ninja itself skips what is up to date.
   await runLogged(t.cmake, orcaBuildArgs(w.build, jobs), { env, log, cwd: w.build })
@@ -233,6 +281,7 @@ async function buildOrca(ctx: Context, t: Toolchain, patches: PatchInfo[], patch
   if (!existsSync(exe)) throw new StepError(`build finished but ${exe} is missing`)
   if (hashTree(E.cli) !== cliSha256) throw new StepError('cli/ changed while the engine was being built; run build again')
   if (sourceDigest(t.git, w.src, ctx.lock.commit) !== source) throw new StepError(`${w.src} changed while the engine was being built; run build again`)
+  if (hashTree(w.depsPrefix) !== depsPrefixDigest) throw new StepError(`${w.depsPrefix} changed while the engine was being built; run build again`)
   const { engineRuntime } = await import('./lib/smoke.ts')
   const record: BuildRecord = {
     commit: ctx.lock.commit,
@@ -240,7 +289,8 @@ async function buildOrca(ctx: Context, t: Toolchain, patches: PatchInfo[], patch
     sourceDigest: source,
     exeSha256: sha256File(exe),
     runtime: engineRuntime(w, exe, t.platform),
-    depsInputs: readStamp(w.state, 'deps')?.inputs ?? null,
+    depsInputs: depsStamp!.inputs,
+    depsPrefixDigest,
   }
   writeStamp(w.state, 'orca', inputs, { exe, cliSha256, compilerEnv: cenv, ...record })
   log.line(`orca: built ${exe}`)
@@ -254,6 +304,8 @@ async function cmdBuild(ctx: Context): Promise<number> {
   const log = logFor(ctx.work, 'build')
   const step = option(ctx.args, '--step')
   if (step !== undefined && step !== 'deps' && step !== 'orca') throw new UsageError(`--step must be deps or orca, got ${step}`)
+  const fresh = flag(ctx.args, '--fresh')
+  if (fresh && step === 'orca') throw new UsageError('--fresh starts the dependency build over; it does not go with --step orca')
   const t = findToolchain()
   for (const n of checkToolchain(t)) log.line(`toolchain: ${n}`)
   log.line(`toolchain: cmake ${t.cmake}, ninja ${t.ninja}, git ${t.git}${t.ignorePrefixes.length ? `, ignoring prefix ${t.ignorePrefixes.join(', ')}` : ''}`)
@@ -264,10 +316,9 @@ async function cmdBuild(ctx: Context): Promise<number> {
   const patches = await applyPatches(t.git, ctx.lock, ctx.work.src, E.patches, ctx.work.state, log)
   const patchesHash = sha256Text(JSON.stringify(patches.map((p) => [p.name, p.sha256])))
   // The dependency build depends only on the patches that change deps/.
-  const depsPatches = patches.filter((p) => patchedPaths(readFileSync(p.path, 'utf8')).some((f) => f.startsWith('deps/')))
-  const depsPatchesHash = sha256Text(JSON.stringify(depsPatches.map((p) => [p.name, p.sha256])))
-  if (step === undefined || step === 'deps') await buildDeps(ctx, t, depsPatchesHash, log)
-  if (step === undefined || step === 'orca') await buildOrca(ctx, t, patches, patchesHash, log)
+  const deps = depsWant(ctx, t, depsPatchesOf(patches))
+  if (step === undefined || step === 'deps') await buildDeps(ctx, t, deps, fresh, log)
+  if (step === undefined || step === 'orca') await buildOrca(ctx, t, patches, patchesHash, deps, log)
   return 0
 }
 
