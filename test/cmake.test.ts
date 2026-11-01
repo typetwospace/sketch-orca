@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { cmakePath, defaultDepsJobs, defaultJobs, depsBuildArgs, depsConfigureArgs, formatCommand, orcaBuildArgs, orcaConfigureArgs } from '../scripts/lib/cmake.ts'
+import { cmakePath, defaultDepsJobs, defaultJobs, depsBuildArgs, depsConfigureArgs, depsParallelEnv, formatCommand, jobsCap, orcaBuildArgs, orcaConfigureArgs } from '../scripts/lib/cmake.ts'
 
 const GIB = 1024 ** 3
 const COMMIT = '8500fcdccaa10b5099ac20d252af3a7c560046f1'
@@ -9,7 +9,7 @@ describe('CMake command lines', () => {
     expect(cmakePath('C:\\Users\\me\\deps')).toBe('C:/Users/me/deps')
   })
 
-  test('deps on Windows: Ninja, Release, the download folder, no GUI dependencies, no IPP-ICV, MSVC, Strawberry ignored', () => {
+  test("deps on Windows: Ninja, Release, the download folder, no GUI dependencies, no IPP-ICV, MSVC with its static runtime, Strawberry ignored", () => {
     expect(
       depsConfigureArgs({ ninja: 'C:\\Strawberry\\c\\bin\\ninja.exe', sourceDir: 'W:\\src\\deps', buildDir: 'W:\\deps', downloadDir: 'W:\\downloads', ignorePrefixes: ['C:/Strawberry/c'], platform: 'win32' }),
     ).toEqual([
@@ -23,6 +23,7 @@ describe('CMake command lines', () => {
       '-DDEP_OPENCV_IPP=OFF',
       '-DCMAKE_C_COMPILER=cl',
       '-DCMAKE_CXX_COMPILER=cl',
+      '-DDEP_MSVC_STATIC_RUNTIME=ON',
       '-DCMAKE_IGNORE_PREFIX_PATH=C:/Strawberry/c',
     ])
   })
@@ -44,7 +45,7 @@ describe('CMake command lines', () => {
     expect(() => depsConfigureArgs({ ninja: 'n', sourceDir: 's', buildDir: 'b', downloadDir: 'd', ignorePrefixes: ['/a', '/b'], platform: 'linux' })).toThrow(/only one ignored prefix/)
   })
 
-  test('Orca: GUI off, static, our front end, the locked commit and tag', () => {
+  test("Orca: GUI off, static, our front end, the locked commit and tag, MSVC's static runtime", () => {
     expect(
       orcaConfigureArgs({
         ninja: 'C:\\n\\ninja.exe',
@@ -74,8 +75,15 @@ describe('CMake command lines', () => {
       '-DSKETCH_ORCA_TAG=v2.4.2',
       '-DCMAKE_C_COMPILER=cl',
       '-DCMAKE_CXX_COMPILER=cl',
+      '-DCMAKE_POLICY_DEFAULT_CMP0091=NEW',
+      '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded',
       '-DCMAKE_IGNORE_PREFIX_PATH=C:/Strawberry/c;D:/other',
     ])
+  })
+
+  test('Orca on Linux: no MSVC settings', () => {
+    const args = orcaConfigureArgs({ ninja: '/n', sourceDir: '/s', buildDir: '/b', depsPrefix: '/d', cliDir: '/c', commit: COMMIT, tag: 'v2.4.2', ignorePrefixes: [], platform: 'linux' })
+    expect(args.filter((a) => /MSVC|CMP0091|COMPILER=cl/.test(a))).toEqual([])
   })
 
   test('build steps: the deps target and the sketch-orca target, with -j', () => {
@@ -90,6 +98,19 @@ describe('CMake command lines', () => {
     expect(defaultJobs({}, 8, 2 * GIB)).toBe(1)
     expect(defaultDepsJobs({})).toBe(3)
     expect(defaultDepsJobs({ SKETCH_ORCA_DEPS_JOBS: '1' })).toBe(1)
+  })
+
+  test('SKETCH_ORCA_JOBS caps the dependency build too: one dependency at a time, and <jobs> compilers in it', () => {
+    expect(jobsCap({})).toBeUndefined()
+    expect(jobsCap({ SKETCH_ORCA_JOBS: 'x' })).toBeUndefined()
+    expect(jobsCap({ SKETCH_ORCA_JOBS: '0' })).toBeUndefined()
+    expect(jobsCap({ SKETCH_ORCA_JOBS: '8' })).toBe(8)
+    expect(defaultDepsJobs({ SKETCH_ORCA_JOBS: '8' })).toBe(1)
+    expect(defaultDepsJobs({ SKETCH_ORCA_JOBS: '8', SKETCH_ORCA_DEPS_JOBS: '2' })).toBe(2)
+    expect(depsParallelEnv('win32', {})).toEqual({})
+    expect(depsParallelEnv('linux', {})).toEqual({})
+    expect(depsParallelEnv('win32', { SKETCH_ORCA_JOBS: '8' })).toEqual({ CMAKE_BUILD_PARALLEL_LEVEL: '1', CL_MPCount: '8', _CL_: '/MP8' })
+    expect(depsParallelEnv('linux', { SKETCH_ORCA_JOBS: '8' })).toEqual({ CMAKE_BUILD_PARALLEL_LEVEL: '8' })
   })
 
   test('formatCommand quotes arguments with spaces or quotes', () => {

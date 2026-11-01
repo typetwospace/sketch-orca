@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { isApiSet, isMsvcRuntime, readPeImports, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from '../scripts/lib/pe.ts'
+import { isApiSet, isDynamicCrt, isMsvcRuntime, readPeImports, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from '../scripts/lib/pe.ts'
 
 /**
  * A minimal PE image: one section (.rdata, RVA 0x1000, file offset 0x400) holding the import
@@ -113,6 +113,11 @@ describe('runtime closure', () => {
     for (const n of ['msvcrt.dll', 'ucrtbase.dll', 'TKernel.dll', 'kernel32.dll']) expect(isMsvcRuntime(n)).toBe(false)
   })
 
+  test("the dynamic C runtime: the Visual C++ runtime and the UCRT, not Windows' own msvcrt.dll", () => {
+    for (const n of ['VCRUNTIME140.dll', 'vcruntime140_1.dll', 'MSVCP140.dll', 'ucrtbase.dll', 'UCRTBASE.DLL', 'api-ms-win-crt-runtime-l1-1-0.dll', 'API-MS-WIN-CRT-HEAP-L1-1-0.DLL']) expect({ n, crt: isDynamicCrt(n) }).toEqual({ n, crt: true })
+    for (const n of ['msvcrt.dll', 'KERNEL32.dll', 'api-ms-win-core-synch-l1-2-0.dll', 'libgmp-10.dll', 'TKernel.dll']) expect({ n, crt: isDynamicCrt(n) }).toEqual({ n, crt: false })
+  })
+
   test('walks imports through the search folders; the C++ runtime is never taken from Windows', () => {
     const files: Record<string, string[]> = {
       'build/engine.exe': ['TKernel.dll', 'KERNEL32.dll', 'api-ms-win-crt-heap-l1-1-0.dll', 'VCRUNTIME140.dll'],
@@ -137,6 +142,12 @@ describe('runtime closure', () => {
     expect(c.missing).toEqual([
       { name: 'VCRUNTIME140.dll', neededBy: 'build/engine.exe' },
       { name: 'missing.dll', neededBy: 'tbb12.dll' },
+    ])
+    // Every file that imports the dynamic C runtime, each time: TKernel's vcruntime140.dll too.
+    expect(c.crt).toEqual([
+      { name: 'api-ms-win-crt-heap-l1-1-0.dll', neededBy: 'build/engine.exe' },
+      { name: 'VCRUNTIME140.dll', neededBy: 'build/engine.exe' },
+      { name: 'vcruntime140.dll', neededBy: 'TKernel.dll' },
     ])
   })
 

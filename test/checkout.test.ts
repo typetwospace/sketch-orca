@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { parsePinnedSources } from '../scripts/lib/bundle.ts'
 import { listPatches, patchedPaths, planPatches, repoUrl, type PatchInfo } from '../scripts/lib/checkout.ts'
 import { LOCK_FORMAT } from '../scripts/lib/lock.ts'
 import { sha256Text } from '../scripts/lib/paths.ts'
@@ -26,13 +27,31 @@ describe('checkout', () => {
     }
   })
 
-  test('the checked-in patches change deps/ (0001), the CMake files (0002, 0003) and Print.hpp (0004)', () => {
+  test('the checked-in patches change deps/ (0001, 0005, 0006), the CMake files (0002, 0003) and Print.hpp (0004)', () => {
     const patches = listPatches(join(import.meta.dir, '..', 'patches'))
-    expect(patches.map((x) => x.name)).toEqual(['0001-deps-without-gui.patch', '0002-root-cmake-without-gui-packages.patch', '0003-src-cmake-sketch-orca-front-end.patch', '0004-libslic3r-unmade-wipe-tower.patch'])
+    expect(patches.map((x) => x.name)).toEqual([
+      '0001-deps-without-gui.patch',
+      '0002-root-cmake-without-gui-packages.patch',
+      '0003-src-cmake-sketch-orca-front-end.patch',
+      '0004-libslic3r-unmade-wipe-tower.patch',
+      '0005-deps-msvc-static-runtime.patch',
+      '0006-deps-openssl-3.patch',
+    ])
     expect(patchedPaths(readFileSync(patches[0]!.path, 'utf8'))).toEqual(['deps/CMakeLists.txt', 'deps/OpenCV/OpenCV.cmake'])
     expect(patchedPaths(readFileSync(patches[1]!.path, 'utf8'))).toEqual(['CMakeLists.txt'])
     expect(patchedPaths(readFileSync(patches[2]!.path, 'utf8'))).toEqual(['src/CMakeLists.txt'])
     expect(patchedPaths(readFileSync(patches[3]!.path, 'utf8'))).toEqual(['src/libslic3r/Print.hpp'])
+    expect(patchedPaths(readFileSync(patches[4]!.path, 'utf8'))).toEqual(['deps/CMakeLists.txt', 'deps/OpenCV/OpenCV.cmake'])
+    expect(patchedPaths(readFileSync(patches[5]!.path, 'utf8'))).toEqual(['deps/OpenSSL/OpenSSL.cmake'])
+  })
+
+  test('patch 0006 pins OpenSSL 3.5.9 (Apache-2.0) by its published SHA-256, in the form source reads', () => {
+    const text = readFileSync(join(import.meta.dir, '..', 'patches', '0006-deps-openssl-3.patch'), 'utf8')
+    const added = text.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1)).join('\n')
+    expect(parsePinnedSources(added)).toEqual([
+      { urls: ['https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz'], sha256: '603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a' },
+    ])
+    expect(text).toContain('-    URL "https://github.com/openssl/openssl/archive/OpenSSL_1_1_1w.tar.gz"')
   })
 
   test('each patch says it was modified for Sketch, with a date, in its header and in every comment it adds (AGPL-3.0 section 5a)', () => {

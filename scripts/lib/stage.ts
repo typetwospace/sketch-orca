@@ -477,6 +477,12 @@ export interface RuntimePlan {
   system: string[]
   /** Libraries found nowhere, with what needs them. */
   missing: string[]
+  /**
+   * Windows: the imports of MSVC's dynamic C runtime (pe.ts isDynamicCrt), with what needs them.
+   * The engine and the DLLs it loads are built with the static runtime (/MT), so no Visual C++
+   * runtime DLL ships with it; stage refuses an engine with any.
+   */
+  crt: string[]
 }
 
 /** `ldd` output: each library and where it resolved (undefined: not found); the vDSO and the loader have no `=>`. */
@@ -509,16 +515,18 @@ export function isUnixSystemLibrary(path: string, workHome: string): boolean {
 /** Windows: the PE import closure of the engine (see pe.ts). */
 export function windowsRuntime(exe: string, searchDirs: string[], io: RuntimeIo): RuntimePlan {
   const c = resolveRuntime(exe, searchDirs, io)
+  const by = (label: string) => (label === exe ? basename(exe) : label)
   return {
     copy: c.copy.map((x) => ({ name: x.name, path: x.path })),
     system: c.system,
-    missing: c.missing.map((m) => `${m.name} (needed by ${m.neededBy})`),
+    missing: c.missing.map((m) => `${m.name} (needed by ${by(m.neededBy)})`),
+    crt: c.crt.map((m) => `${m.name} (needed by ${by(m.neededBy)})`),
   }
 }
 
 /** Linux and macOS (not yet tried): the libraries the dynamic linker resolves from the work folder are shipped. */
 export function unixRuntime(exe: string, work: WorkPaths, platform: Platform, libDirs: string[]): RuntimePlan {
-  const plan: RuntimePlan = { copy: [], system: [], missing: [] }
+  const plan: RuntimePlan = { copy: [], system: [], missing: [], crt: [] }
   if (platform === 'linux') {
     const r = capture('ldd', [exe], { env: engineEnv(process.env, libDirs, platform) })
     if (r.code !== 0) throw new StepError(`ldd ${exe} failed: ${r.stderr.trim()}`)
@@ -702,6 +710,11 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
 
   const libDirs = engineLibraryDirs(w, exe, platform)
   const runtime = platform === 'win32' ? windowsRuntime(exe, libDirs, windowsRuntimeIo()) : unixRuntime(exe, w, platform, libDirs)
+  if (runtime.crt.length > 0) {
+    throw new StepError(
+      `the engine loads MSVC's dynamic C runtime, which would have to ship with it: ${runtime.crt.join(', ')}. Build the dependencies and the engine with the static runtime (/MT: patch 0005, and the configure lines in scripts/lib/cmake.ts), then stage again`,
+    )
+  }
   if (runtime.missing.length > 0) throw new StepError(`the engine's libraries are not all found: ${runtime.missing.join(', ')}`)
   const licenses = [...licenseCopies(w, platform, ctx.engine.licenses), ...ownNoticeCopies(ctx.engine)]
   const unlicensed = unlicensedDependencies(w, licenses)

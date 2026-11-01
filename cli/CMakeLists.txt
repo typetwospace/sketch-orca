@@ -8,14 +8,16 @@
 # src/libslic3r/PrintConfig.cpp (PrintConfigDef::handle_legacy) at configure time, and the runtime
 # library list follows orcaslicer_copy_dlls in OrcaSlicer's root CMakeLists.txt (v2.4.2, commit
 # 8500fcd). Added 2026-10-30. Those portions are copyright the OrcaSlicer contributors (NOTICE).
+# Changed 2026-11-01: MSVC's static runtime (/MT) instead of copying its runtime DLLs.
 #
 # sketch-orca: a command-line front end on OrcaSlicer's slicing library (libslic3r), with
 # no GUI code. Orca's src/CMakeLists.txt adds this folder (patches/0003) when SLIC3R_GUI is
 # OFF and SKETCH_ORCA_CLI_DIR points here; the binary folder is <build>/sketch-orca.
 #
 # The executable lands in <build>/sketch-orca next to every runtime library it loads (OpenCASCADE,
-# FreeType, GMP, MPFR and the MSVC runtime on Windows), so that folder plus Orca's resources is
-# the whole engine. Its commands and files are specified in protocol/README.md.
+# FreeType and GMP on Windows), so that folder plus Orca's resources is the whole engine. On
+# Windows it is built with MSVC's static runtime library (/MT), as the dependencies are (patches/0005),
+# so it loads no Visual C++ runtime DLL. Its commands and files are specified in protocol/README.md.
 
 cmake_minimum_required(VERSION 3.13)
 
@@ -117,6 +119,12 @@ if (WIN32)
     if (MSVC)
         # A console program; the manifest (UTF-8 code page, long paths) is merged by the linker.
         target_link_options(sketch-orca PRIVATE /SUBSYSTEM:CONSOLE)
+        # MSVC's static runtime, so that no Visual C++ runtime DLL ships with the engine. The pipeline
+        # configures Orca with it (scripts/lib/cmake.ts) and builds the dependencies with it (patches/0005).
+        get_target_property(_sketch_runtime sketch-orca MSVC_RUNTIME_LIBRARY)
+        if (NOT "${_sketch_runtime}" STREQUAL "MultiThreaded")
+            message(FATAL_ERROR "sketch-orca: build with MSVC's static runtime library: configure with -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded, and the dependencies with -DDEP_MSVC_STATIC_RUNTIME=ON (got MSVC_RUNTIME_LIBRARY ${_sketch_runtime})")
+        endif ()
     endif ()
 
     if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "ARM64")
@@ -128,7 +136,8 @@ if (WIN32)
     endif ()
 
     # The same runtime libraries Orca copies next to its own executable (orcaslicer_copy_dlls in
-    # Orca's root CMakeLists.txt), without WebView2, which only the GUI uses.
+    # Orca's root CMakeLists.txt), without WebView2, which only the GUI uses. stage ships those the
+    # engine imports (the PE import closure). No Visual C++ runtime DLL: the static runtime above.
     set(_sketch_occt TKBO TKBRep TKCAF TKCDF TKernel TKG2d TKG3d TKGeomAlgo TKGeomBase TKHLR TKLCAF
         TKMath TKMesh TKPrim TKService TKShHealing TKSTEP TKSTEP209 TKSTEPAttr TKSTEPBase TKTopAlgo
         TKV3d TKVCAF TKXCAF TKXDESTEP TKXSBase)
@@ -140,13 +149,6 @@ if (WIN32)
     foreach (_lib ${_sketch_occt})
         list(APPEND _sketch_dlls "${CMAKE_PREFIX_PATH}/bin/occt/${_lib}.dll")
     endforeach ()
-
-    # The MSVC runtime, app-local, so the engine runs where the Visual C++ redistributable is not
-    # installed.
-    set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
-    set(CMAKE_INSTALL_UCRT_LIBRARIES FALSE)
-    include(InstallRequiredSystemLibraries)
-    list(APPEND _sketch_dlls ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS})
 
     foreach (_dll ${_sketch_dlls})
         if (NOT EXISTS "${_dll}")

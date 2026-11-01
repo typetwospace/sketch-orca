@@ -33,7 +33,8 @@ export function depsConfigureArgs(a: DepsArgs): string[] {
     // Also patch 0001: OpenCV without Intel's IPP-ICV, which OpenCV's build would download.
     '-DDEP_OPENCV_IPP=OFF',
   ]
-  if (a.platform === 'win32') args.push('-DCMAKE_C_COMPILER=cl', '-DCMAKE_CXX_COMPILER=cl')
+  // Patch 0005: every dependency with MSVC's static runtime (/MT), as the engine (orcaConfigureArgs).
+  if (a.platform === 'win32') args.push('-DCMAKE_C_COMPILER=cl', '-DCMAKE_CXX_COMPILER=cl', '-DDEP_MSVC_STATIC_RUNTIME=ON')
   // Orca's deps pass CMAKE_IGNORE_PREFIX_PATH on to every dependency; one prefix only, since
   // a list would be split by ExternalProject.
   if (a.ignorePrefixes.length > 1) throw new Error(`only one ignored prefix can be passed to Orca's deps, got ${a.ignorePrefixes.join(', ')}`)
@@ -76,7 +77,13 @@ export function orcaConfigureArgs(a: OrcaArgs): string[] {
     `-DSKETCH_ORCA_COMMIT=${a.commit}`,
     `-DSKETCH_ORCA_TAG=${a.tag}`,
   ]
-  if (a.platform === 'win32') args.push('-DCMAKE_C_COMPILER=cl', '-DCMAKE_CXX_COMPILER=cl')
+  if (a.platform === 'win32') {
+    args.push('-DCMAKE_C_COMPILER=cl', '-DCMAKE_CXX_COMPILER=cl')
+    // MSVC's static runtime (/MT), like the dependencies (patch 0005): the engine and the DLLs it
+    // loads import no Visual C++ runtime DLL, so none ships (stage refuses one that does). CMP0091
+    // NEW, since Orca's cmake_minimum_required (3.13) predates the setting.
+    args.push('-DCMAKE_POLICY_DEFAULT_CMP0091=NEW', '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded')
+  }
   if (a.ignorePrefixes.length > 0) args.push(`-DCMAKE_IGNORE_PREFIX_PATH=${a.ignorePrefixes.map(cmakePath).join(';')}`)
   return args
 }
@@ -96,14 +103,39 @@ export function defaultJobs(env: NodeJS.ProcessEnv = process.env, cores = cpus()
   return Math.max(1, Math.min(cores, byMem))
 }
 
+/** SKETCH_ORCA_JOBS as a cap on compile jobs, or undefined when it is not set to a whole number above 0. */
+export function jobsCap(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const forced = Number(env.SKETCH_ORCA_JOBS)
+  return Number.isInteger(forced) && forced > 0 ? forced : undefined
+}
+
 /**
  * Dependencies built at the same time. Each one already builds in parallel (MSBuild /m or
- * make -jN), so the top level runs only a few. SKETCH_ORCA_DEPS_JOBS overrides.
+ * make -jN), so the top level runs only a few: 3, or 1 when SKETCH_ORCA_JOBS caps the compile
+ * jobs (depsParallelEnv). SKETCH_ORCA_DEPS_JOBS overrides.
  */
 export function defaultDepsJobs(env: NodeJS.ProcessEnv = process.env): number {
   const forced = Number(env.SKETCH_ORCA_DEPS_JOBS)
   if (Number.isInteger(forced) && forced > 0) return forced
-  return 3
+  return jobsCap(env) === undefined ? 3 : 1
+}
+
+/**
+ * The environment that holds the dependency build to SKETCH_ORCA_JOBS compile jobs; empty when it
+ * is not set, and each dependency then builds with every core (Orca's MSBuild /m, make -j<cores>).
+ * Orca's deps/CMakeLists.txt leaves the parallel level of each dependency's build to
+ * CMAKE_BUILD_PARALLEL_LEVEL when that is set. On Windows MSBuild then builds one project at a
+ * time, and cl compiles up to <jobs> files of it at once: /MP<jobs> through _CL_, which cl adds to
+ * every command line, and CL_MPCount, which MSBuild gives the projects that ask for /MP
+ * themselves. Elsewhere make runs <jobs> jobs. With one dependency at a time (defaultDepsJobs),
+ * no more than <jobs> compilers run. None of it changes what is compiled, so it is not part of
+ * the build's inputs.
+ */
+export function depsParallelEnv(platform: Platform, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const jobs = jobsCap(env)
+  if (jobs === undefined) return {}
+  if (platform === 'win32') return { CMAKE_BUILD_PARALLEL_LEVEL: '1', CL_MPCount: String(jobs), _CL_: `/MP${jobs}` }
+  return { CMAKE_BUILD_PARALLEL_LEVEL: String(jobs) }
 }
 
 /** For logs: a command line with quoted arguments where needed. */

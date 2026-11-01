@@ -87,9 +87,19 @@ export function isApiSet(name: string): boolean {
   return /^(api|ext)-ms-/i.test(name)
 }
 
-/** The Visual C++ runtime: always shipped with the engine (from Visual Studio's redist folder), never taken from the system. */
+/** The Visual C++ runtime DLLs (the redistributable's), which are never taken from the system. */
 export function isMsvcRuntime(name: string): boolean {
   return /^(vcruntime\d+(_\d+)?|msvcp\d+(_\w+)?|concrt\d+|vcomp\d+|vccorlib\d+|vcamp\d+|mfc\d+\w*)\.dll$/i.test(name)
+}
+
+/**
+ * The dynamic C runtime of MSVC builds: the Visual C++ runtime DLLs and the Universal CRT
+ * (ucrtbase.dll and its api-ms-win-crt-* API sets). A program built with the static runtime (/MT)
+ * imports none of them. Windows' own msvcrt.dll, which MinGW builds such as Orca's prebuilt GMP
+ * load, is not one.
+ */
+export function isDynamicCrt(name: string): boolean {
+  return isMsvcRuntime(name) || /^ucrtbase\.dll$/i.test(name) || /^api-ms-win-crt-/i.test(name)
 }
 
 export interface RuntimeIo {
@@ -108,21 +118,25 @@ export interface RuntimeClosure {
   system: string[]
   /** Libraries found nowhere. */
   missing: { name: string; neededBy: string }[]
+  /** Every import of the dynamic C runtime (isDynamicCrt), with the file that imports it. */
+  crt: { name: string; neededBy: string }[]
 }
 
 /**
  * Walks the imports from `exe`: each library is looked up in `searchDirs` in order (the first
  * holds the engine), and its own imports are walked in turn. A library that is not found there
  * is the system's when it is an API set or Windows has it, except the Visual C++ runtime, which
- * must be found in `searchDirs`.
+ * must be found in `searchDirs`. Every import of the dynamic C runtime is also listed in `crt`, by
+ * each file that imports it.
  */
 export function resolveRuntime(exe: string, searchDirs: string[], io: RuntimeIo): RuntimeClosure {
-  const out: RuntimeClosure = { copy: [], system: [], missing: [] }
+  const out: RuntimeClosure = { copy: [], system: [], missing: [], crt: [] }
   const done = new Set<string>()
   const queue: { path: string; label: string }[] = [{ path: exe, label: exe }]
   while (queue.length > 0) {
     const { path, label } = queue.shift()!
     for (const name of io.importsOf(path)) {
+      if (isDynamicCrt(name)) out.crt.push({ name, neededBy: label })
       const key = name.toLowerCase()
       if (done.has(key)) continue
       done.add(key)

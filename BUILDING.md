@@ -53,7 +53,24 @@ and `~/.local/share/SketchDev/orca-engine` elsewhere; `SKETCH_ORCA_HOME` puts it
 The staged engine is `<work>/dist/engine`, the source bundle `<work>/dist/source/<name>`.
 
 The first `build` downloads and builds OrcaSlicer's dependencies (Boost, OpenCV, OCCT, CGAL and
-others); later builds reuse them.
+others); later builds reuse them. `SKETCH_ORCA_JOBS=<n>` holds both builds to n compile jobs at a
+time: the dependencies are then built one at a time, each with MSBuild building one project at a
+time and `cl /MP<n>`.
+
+On Windows everything is compiled with MSVC's static runtime library (`/MT`): `build` configures
+the dependencies with `-DDEP_MSVC_STATIC_RUNTIME=ON` (patch 0005) and Orca with
+`-DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`, so neither the
+engine nor the DLLs it loads import a Visual C++ runtime DLL, and none is shipped. `stage` refuses
+an engine that does.
+
+## OpenSSL
+
+libslic3r computes MD5 sums with OpenSSL's libcrypto, which the engine links statically. OrcaSlicer
+2.4.2's recipe pins OpenSSL 1.1.1w, whose licences the FSF holds incompatible with the GNU AGPL;
+patch 0006 builds OpenSSL 3.5.9 (Apache License 2.0) instead, from the OpenSSL project's release
+archive `openssl-3.5.9.tar.gz` (SHA-256
+603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a), which the source bundle carries
+in `dependencies/OpenSSL/`.
 
 ## Prebuilt libraries
 

@@ -42,7 +42,7 @@ export const SOURCE_FORMAT = 'sketch-orca-source/1'
 export const SOURCE_VERSION = 3
 
 /**
- * The toolchain the engine has been built with, on Windows x64 (2026-10-30), as BUILDING.md (the
+ * The toolchain the engine has been built with, on Windows x64 (2026-10-30, 2026-11-01), as BUILDING.md (the
  * bundle's and this repository's) gives it. Other versions may work; these are known to.
  */
 export const BUILT_WITH = {
@@ -521,6 +521,13 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
     '   CL=/d1trimfile:"<folder>\\\\" for the folder that holds <src>, <deps> and <build> and for',
     '   <bundle>/engine, before configuring, so the source paths compiled into the engine do not',
     '   name those folders; that is optional.',
+    ...(platform === 'win32'
+      ? [
+          '   -DDEP_MSVC_STATIC_RUNTIME=ON (patch 0005) builds every dependency with MSVC\'s static',
+          '   runtime library (/MT), as the engine is built in step 5, so that no Visual C++ runtime DLL',
+          '   ships with it.',
+        ]
+      : []),
     '',
     '5. Build the engine:',
     '',
@@ -529,6 +536,13 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
     formatCommand('cmake', orcaBuildArgs('<build>', 8)),
     '```',
     '',
+    ...(platform === 'win32'
+      ? [
+          'CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded, with policy CMP0091 NEW, is the static runtime for',
+          'Orca and the front end; engine/cli/CMakeLists.txt refuses to configure with any other.',
+          '',
+        ]
+      : []),
     `The engine is <build>/sketch-orca/${exe}. \`${exe} version\` prints the Orca commit it was built from.`,
     '',
     '## Dependencies',

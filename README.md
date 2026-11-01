@@ -70,7 +70,7 @@ bun run typecheck                      # tsc: type-check the scripts and tests
 | `check` | Asks GitHub for the latest stable OrcaSlicer release and compares it with `orca.lock.json`. Exit 0: nothing to do (the lock is the latest release, or newer); 1: a newer stable release is out; 2: the locked tag now points at another commit; 3: the check failed. |
 | `update [--write]` | Moves the lock to a newer stable release; without `--write` it prints the new lock. It never moves the lock back, or onto a moved tag (exit 2). |
 | `fetch` | Shallow clone of the locked tag into `<work>/src`; the commit must be the lock's. |
-| `build [--step deps\|orca]` | Applies `patches/`, builds Orca's dependencies without the GUI ones, then libslic3r and `sketch-orca` (Release, `SLIC3R_GUI=OFF`). Fetches first when the checkout is missing or at another commit. |
+| `build [--step deps\|orca]` | Applies `patches/`, builds Orca's dependencies without the GUI ones, then libslic3r and `sketch-orca` (Release, `SLIC3R_GUI=OFF`; on Windows with MSVC's static runtime, `/MT`). Fetches first when the checkout is missing or at another commit. |
 | `smoke [--case <id,...>]` | Slices the test models with the built engine and checks the results (see Smoke). |
 | `stage [--without-smoke]` | The engine as it ships, in `<work>/dist/engine`, with a manifest. Only an engine that passed smoke is staged; `--without-smoke` stages a dev build and the manifest says so. |
 | `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. `--no-deps` leaves the dependency packages and the prebuilt libraries' sources out (they stay listed with URL and SHA-256); `--allow-missing` makes the bundle even when a built dependency or a prebuilt library has no pinned source. |
@@ -156,9 +156,11 @@ differ); that a patch header dates our changes ("Modified for Sketch, <date>.");
 hashes as it did when the last build started (`state/orca.json`; the build itself fails when
 `cli/` changes while Ninja runs); that a full smoke run passed for this very executable (the
 stamp and `smoke/report.json`); that every library the engine imports is found (Windows: the PE
-import closure; the Visual C++ runtime ships next to the engine and is never taken from System32);
-that every built dependency, and every `deps_src` library on the engine's link line (read from
-`build/build.ninja`), has a licence text; that the link line holds no Intel IPP; that the GMP and
+import closure); that on Windows neither the engine nor any library it loads imports MSVC's
+dynamic C runtime (the Visual C++ runtime DLLs, `ucrtbase.dll` or its `api-ms-win-crt-*` API sets),
+since everything is built with the static runtime and no runtime DLL ships (Orca's prebuilt GMP
+loads Windows' own `msvcrt.dll`, which is not one); that every built dependency, and every
+`deps_src` library on the engine's link line (read from `build/build.ninja`), has a licence text; that the link line holds no Intel IPP; that the GMP and
 SoftFloat texts a Windows engine needs are there; that `NOTICE` and `AUTHORS` are there; and that
 `sketch-orca version` names the locked commit. It builds the folder next to the old one and
 refuses it when a staged file names the builder's home folder or user name (`__FILE__` paths; see
@@ -200,7 +202,11 @@ The bundle is a folder; pack it to publish it next to the engine.
 Windows is the platform the pipeline has been run on (`BUILDING.md` has the versions):
 
 - Visual Studio 2022 with the MSVC x64 tools, found with vswhere; the build runs in the
-  environment of its `vcvars64.bat`.
+  environment of its `vcvars64.bat`. Everything is compiled with MSVC's static runtime library
+  (`/MT`): the dependencies with `DEP_MSVC_STATIC_RUNTIME=ON` (patch 0005), Orca and the front end
+  with `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` (`cli/CMakeLists.txt` refuses anything else). The
+  engine and the DLLs it loads (OpenCASCADE, FreeType, GMP) then import no Visual C++ runtime DLL,
+  and none is shipped.
 - CMake and Ninja, run by absolute path: Visual Studio's own first, then `C:\Program Files\CMake`,
   then the copies Strawberry Perl ships in `C:\Strawberry\c\bin`. When CMake sits in a toolchain
   folder such as `C:\Strawberry\c`, that prefix goes to `CMAKE_IGNORE_PREFIX_PATH` so CMake does
@@ -238,8 +244,8 @@ passes no deployment target yet.
 | `SKETCH_ORCA_HOME` | The work folder. |
 | `SKETCH_ORCA_VS` | The Visual Studio install folder, instead of asking vswhere. |
 | `SKETCH_ORCA_CMAKE`, `SKETCH_ORCA_NINJA`, `SKETCH_ORCA_PERL`, `SKETCH_ORCA_GIT` | The programs to use, by path. |
-| `SKETCH_ORCA_JOBS` | Compile jobs for the Orca build (default: one per core, at most one per 2.5 GB of memory). |
-| `SKETCH_ORCA_DEPS_JOBS` | Dependencies built at the same time (default 3; each builds in parallel itself). |
+| `SKETCH_ORCA_JOBS` | Compile jobs for the Orca build (default: one per core, at most one per 2.5 GB of memory). When set, it caps the dependency build too: one dependency at a time, and in it MSBuild one project at a time with `cl /MP<jobs>` (`make -j<jobs>` elsewhere), so no more than that many compilers run (`depsParallelEnv` in `scripts/lib/cmake.ts`). |
+| `SKETCH_ORCA_DEPS_JOBS` | Dependencies built at the same time (default 3, or 1 when `SKETCH_ORCA_JOBS` is set; each builds in parallel itself). |
 | `SKETCH_ORCA_SMOKE_TIMEOUT_MS` | Time limit of one smoke case (default 15 minutes). |
 | `GITHUB_TOKEN` | Sent to the GitHub API by `check`, `update` and `release` when set, for a higher rate limit. |
 
@@ -348,13 +354,19 @@ starts, and any failing run removes it too.
 
 ## Open items
 
-These are for the maintainers to decide, and some for a lawyer, before the first public release
-of an engine binary.
+These are for the maintainers to decide, and some for a lawyer. The first two were open until
+2026-11-01 and are settled in the build; they stay here with what was decided and why.
 
-- **The Visual C++ runtime (Windows).** The engine is built with MSVC against the dynamic CRT
-  (`/MD`), and `stage` ships the runtime DLLs it imports (`msvcp140.dll`, `vcruntime140.dll`,
-  `vcruntime140_1.dll` and the like, from Visual Studio's redistributable folder through CMake's
-  `InstallRequiredSystemLibraries`, without the UCRT) next to it in `bin/`. The FSF's FAQ
+- **The Visual C++ runtime (Windows): settled 2026-11-01, built with the static runtime.** Until
+  then the engine was built with MSVC against the dynamic CRT (`/MD`), and `stage` shipped the
+  runtime DLLs it imports (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll` and the like,
+  through CMake's `InstallRequiredSystemLibraries`) next to it in `bin/`. Now the engine and every
+  dependency built from source are compiled with the static runtime (`/MT`: patch 0005, the
+  configure lines in `scripts/lib/cmake.ts`, and a check in `cli/CMakeLists.txt`), no Visual C++
+  runtime DLL is shipped, and `stage` refuses an engine in which any file imports a Visual C++
+  runtime DLL (`vcruntime*`, `msvcp*`, `concrt*`, `vcomp*` and the like), `ucrtbase.dll` or an
+  `api-ms-win-crt-*` set. The prebuilt GMP
+  DLL imports only `KERNEL32.dll` and `msvcrt.dll`, which are part of Windows. Why: the FSF's FAQ
   ("I'm writing a Windows application with Microsoft Visual C++ (or Visual Basic) and I will be
   releasing it under the GPL. Is dynamically linking my program with the Visual C++ (or Visual
   Basic) runtime library permitted under the GPL?",
@@ -372,16 +384,22 @@ of an engine binary.
   > be eligible for this exception anymore; then the only way to comply with the GPL would be to
   > provide their source code, which you are unable to do.
 
-  The build is unchanged for now; the options are:
-  1. Stop shipping the DLLs, and require Microsoft's Visual C++ Redistributable (x64) on the
-     user's machine: the program that installs the engine checks for it, or asks the user to
-     install it from Microsoft. The DLLs then stay System Libraries, as the FAQ describes.
-  2. Build with the static CRT (`/MT`, `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`), for the engine
-     and every dependency, so no runtime DLL ships. Whether statically linked runtime code still
-     counts as part of a System Library is itself a question for counsel, and every dependency's
-     build has to take the setting.
-  3. Keep shipping them app-locally, as now, only with counsel's view that this is compatible
-     with the AGPL despite the FAQ.
+  Of the three options (require Microsoft's Visual C++ Redistributable on the user's machine,
+  build with the static runtime, or keep shipping the DLLs with counsel's view), the static runtime
+  was taken, so that nothing of Microsoft's ships as a file and the engine needs nothing
+  installed. Still open, for counsel: whether runtime code linked statically into the executable
+  still counts as part of a System Library (it comes with the compiler, a Major Component; the FAQ
+  speaks only of dynamic linking).
+- **OpenSSL: settled 2026-11-01, OpenSSL 3.5.9.** libslic3r computes MD5 sums with OpenSSL's
+  libcrypto (`openssl/md5.h` in `Utils.hpp` and `bbs_3mf.cpp`), which the engine links statically
+  (`libcrypto.lib` on the engine's link line; no OpenSSL DLL is shipped). Orca's dependency build
+  pins OpenSSL 1.1.1w (`deps/OpenSSL`), which is under the OpenSSL and SSLeay licences, whose
+  advertising clauses the FSF holds incompatible with the GNU GPL family, the AGPL included,
+  unless the copyright holders of the GPL'd code grant an exception; stock OrcaSlicer's releases
+  are built that way. Patch 0006 builds OpenSSL 3.5.9 instead, which is under the Apache License
+  2.0, compatible with version 3 of the GPL and the AGPL. Its licence is staged as
+  `LICENSES/deps/OpenSSL/LICENSE.txt`, and the source bundle carries `openssl-3.5.9.tar.gz`
+  (`BUILDING.md`, OpenSSL).
 - **GMP (Windows).** Its source is pinned and bundled (`BUILDING.md`, Prebuilt libraries). Not
   known: the exact configure command line and build scripts CGAL used for the DLL (gmp.h gives
   the compiler and flags only); a source for any other GMP binary (arm64, x86, or a changed DLL
@@ -390,16 +408,6 @@ of an engine binary.
   MinGW-w64 runtime's permissive terms; counsel may confirm that no further source is needed).
 - **MPFR (Windows).** Orca ships MPFR 3.0.0 prebuilt too; the engine does not link it, so it is
   neither shipped nor bundled. If a build ever links it, its source must be pinned like GMP's.
-- **OpenSSL.** Orca's dependency build pins OpenSSL 1.1.1w (`deps/OpenSSL`, the recipe excerpt in
-  `test/bundle.test.ts`), and libslic3r includes `openssl/md5.h` (`Utils.hpp`, `bbs_3mf.cpp`), so
-  the engine very likely links OpenSSL's libcrypto. Not checked yet: whether it does, and how
-  (statically into the executable or as a library in `bin/`), and that its licence text is staged
-  in `LICENSES/deps`. OpenSSL 1.1.1 is under the OpenSSL and SSLeay licences, whose advertising
-  clauses the FSF holds incompatible with the GNU GPL family, the AGPL included, unless the
-  copyright holders of the GPL'd code grant an exception; OpenSSL 3.0 and later are under the
-  Apache License 2.0, which is compatible with version 3. Stock OrcaSlicer's releases are built the
-  same way. The options: confirm the link and stage its licence; build the dependencies against
-  OpenSSL 3 (a change to Orca's recipe, as a patch here); or counsel's view on shipping 1.1.1w.
 - **libnoise.** The package Orca pins dropped libnoise's `COPYING.txt`. Staging ships the grant
   from its sources (`src/noise.h`, LGPL 2.1 or later) and the LGPL 2.1 text from `licenses/`.
 - **The toolchain record.** `BUILT_WITH` (`scripts/lib/bundle.ts`, and so each bundle's
@@ -408,10 +416,10 @@ of an engine binary.
 - **The copyright holder.** The file headers name "The sketch-orca authors", and `AUTHORS` lists
   the git identity `kevin-t2`. Put the legal name of the person or company that holds the
   copyright there, as wanted.
-- **Questions for a lawyer**, before the first public engine release:
+- **Questions for a lawyer:**
   - whether running the engine as a separate program through this command line and its JSON
     files keeps a program that runs it a separate work (an "aggregate"), as `protocol/` intends;
-  - the Visual C++ runtime DLLs (above);
+  - the Visual C++ runtime linked statically (above);
   - who holds the copyright in the changes, and the name to give for it (above);
   - "version 3" only, as OrcaSlicer's README grants it, against the "or later" of some of the code
     Orca carries (ArcWelderLib; libvgcode, which the engine does not build);

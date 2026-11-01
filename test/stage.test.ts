@@ -80,7 +80,7 @@ function parts(over: Partial<ManifestParts> = {}): ManifestParts {
     arch: 'x64',
     patches: [{ name: '0001-deps-without-gui.patch', sha256: H('1') }],
     cli: H('c'),
-    runtime: { copy: [{ name: 'vcruntime140.dll', path: 'X' }, { name: 'TKernel.dll', path: 'Y' }], system: ['KERNEL32.dll', 'api-ms-win-crt-runtime-l1-1-0.dll'], missing: [] },
+    runtime: { copy: [{ name: 'vcruntime140.dll', path: 'X' }, { name: 'TKernel.dll', path: 'Y' }], system: ['KERNEL32.dll', 'api-ms-win-crt-runtime-l1-1-0.dll'], missing: [], crt: [] },
     smokePassed: true,
     inputs: H('d'),
     files: [
@@ -415,7 +415,7 @@ describe('what goes in', () => {
 })
 
 describe('runtime libraries', () => {
-  test('Windows: the import closure; the MSVC runtime must be found, never taken from System32', () => {
+  test('Windows: the import closure; the MSVC runtime must be found, never taken from System32, and every import of the dynamic C runtime is named', () => {
     const files = new Map<string, string[]>([
       ['/bin/sketch-orca.exe', ['KERNEL32.dll', 'TKernel.dll', 'VCRUNTIME140.dll', 'api-ms-win-crt-runtime-l1-1-0.dll']],
       ['/bin/TKernel.dll', ['KERNEL32.dll', 'vcruntime140.dll', 'MSVCP140.dll', 'nowhere.dll']],
@@ -433,6 +433,36 @@ describe('runtime libraries', () => {
       ],
       system: ['api-ms-win-crt-runtime-l1-1-0.dll', 'KERNEL32.dll'],
       missing: ['MSVCP140.dll (needed by TKernel.dll)', 'nowhere.dll (needed by TKernel.dll)'],
+      crt: [
+        'VCRUNTIME140.dll (needed by sketch-orca.exe)',
+        'api-ms-win-crt-runtime-l1-1-0.dll (needed by sketch-orca.exe)',
+        'vcruntime140.dll (needed by TKernel.dll)',
+        'MSVCP140.dll (needed by TKernel.dll)',
+      ],
+    })
+  })
+
+  test("Windows: an engine built with the static runtime imports none of it; GMP's msvcrt.dll is the system's", () => {
+    const files = new Map<string, string[]>([
+      ['/bin/sketch-orca.exe', ['KERNEL32.dll', 'TKernel.dll', 'libgmp-10.dll', 'freetype.dll']],
+      ['/bin/TKernel.dll', ['KERNEL32.dll', 'ADVAPI32.dll', 'freetype.dll']],
+      ['/bin/freetype.dll', ['KERNEL32.dll']],
+      ['/bin/libgmp-10.dll', ['KERNEL32.dll', 'msvcrt.dll']],
+    ])
+    const io: RuntimeIo = {
+      importsOf: (p) => files.get(p) ?? [],
+      find: (d, n) => [...files.keys()].find((p) => p.toLowerCase() === `${d}/${n}`.toLowerCase()),
+      isSystem: (n) => ['kernel32.dll', 'advapi32.dll', 'msvcrt.dll'].includes(n.toLowerCase()),
+    }
+    expect(windowsRuntime('/bin/sketch-orca.exe', ['/bin'], io)).toEqual({
+      copy: [
+        { name: 'TKernel.dll', path: '/bin/TKernel.dll' },
+        { name: 'libgmp-10.dll', path: '/bin/libgmp-10.dll' },
+        { name: 'freetype.dll', path: '/bin/freetype.dll' },
+      ],
+      system: ['ADVAPI32.dll', 'KERNEL32.dll', 'msvcrt.dll'],
+      missing: [],
+      crt: [],
     })
   })
 

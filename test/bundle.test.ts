@@ -124,7 +124,7 @@ function manifest(over: Partial<{ version: string; arch: string; platform: 'win3
     arch: over.arch ?? 'x64',
     patches: [],
     cli: H('c'),
-    runtime: { copy: [], system: [], missing: [] },
+    runtime: { copy: [], system: [], missing: [], crt: [] },
     smokePassed: true,
     inputs: H('d'),
     files: [{ path: over.platform === 'linux' ? 'bin/sketch-orca' : 'bin/sketch-orca.exe', size: 1, sha256: H('a') }],
@@ -315,7 +315,13 @@ describe('the bundle', () => {
     expect(depsConfigure).toContain('-DCMAKE_MAKE_PROGRAM=<ninja.exe>')
     expect(depsConfigure).toContain('-DDEP_DOWNLOAD_DIR=<downloads>')
     expect(depsConfigure).toContain('-DDEP_OPENCV_IPP=OFF')
+    // Windows: the static runtime for the dependencies (patch 0005) and the engine, said in words too.
+    expect(depsConfigure).toContain('-DDEP_MSVC_STATIC_RUNTIME=ON')
+    expect(text).toContain("-DDEP_MSVC_STATIC_RUNTIME=ON (patch 0005) builds every dependency with MSVC's static")
+    expect(text).toContain('engine/cli/CMakeLists.txt refuses to configure with any other.')
     const orcaConfigure = lines.find((l) => l.startsWith('cmake -S <src> '))!
+    expect(orcaConfigure).toContain('-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded')
+    expect(orcaConfigure).toContain('-DCMAKE_POLICY_DEFAULT_CMP0091=NEW')
     expect(orcaConfigure).toContain('-DSKETCH_ORCA_CLI_DIR=<bundle>/engine/cli')
     expect(orcaConfigure).toContain(`-DSKETCH_ORCA_COMMIT=${LOCK.commit}`)
     expect(orcaConfigure).toContain('-DSKETCH_ORCA_TAG=v2.4.2')
@@ -334,6 +340,8 @@ describe('the bundle', () => {
     expect(linux).toContain('The dependency packages were left out of this bundle')
     expect(linux).toContain('-DCMAKE_MAKE_PROGRAM=<ninja>')
     expect(linux).not.toContain('-DCMAKE_CXX_COMPILER=cl')
+    expect(linux).not.toContain('DEP_MSVC_STATIC_RUNTIME')
+    expect(linux).not.toContain('CMAKE_MSVC_RUNTIME_LIBRARY')
     expect(linux).toContain('The engine is <build>/sketch-orca/sketch-orca.')
     expect(linux).not.toContain('NOT in this bundle')
   })

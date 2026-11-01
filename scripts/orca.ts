@@ -34,7 +34,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { applyPatches, fetchSource, headCommit, listPatches, patchedPaths } from './lib/checkout.ts'
-import { defaultDepsJobs, defaultJobs, depsBuildArgs, depsConfigureArgs, orcaBuildArgs, orcaConfigureArgs } from './lib/cmake.ts'
+import { defaultDepsJobs, defaultJobs, depsBuildArgs, depsConfigureArgs, depsParallelEnv, jobsCap, orcaBuildArgs, orcaConfigureArgs } from './lib/cmake.ts'
 import { firstExisting, gitCandidates, sourcePathTrimEnv } from './lib/env.ts'
 import { hashTree } from './lib/files.ts'
 import { githubGetter, resolveLatestRelease } from './lib/github.ts'
@@ -172,11 +172,14 @@ async function buildDeps(ctx: Context, t: Toolchain, patchesHash: string, log: L
   matchCompilerEnv(w, 'deps', w.deps, cenv, log)
   mkdirSync(w.downloads, { recursive: true })
   mkdirSync(w.deps, { recursive: true })
-  const env = stepEnv(t, w)
+  // SKETCH_ORCA_JOBS caps the compile jobs here too (depsParallelEnv); configure sees it as well,
+  // since Orca's deps/CMakeLists.txt reads CMAKE_BUILD_PARALLEL_LEVEL there.
+  const env = { ...stepEnv(t, w), ...depsParallelEnv(t.platform) }
   log.line(`deps: configuring ${w.deps}`)
   await runLogged(t.cmake, configure, { env, log, cwd: w.deps })
   const jobs = defaultDepsJobs()
-  log.line(`deps: building (${jobs} dependencies at a time); this takes a while`)
+  const cap = jobsCap()
+  log.line(`deps: building (${jobs} ${jobs === 1 ? 'dependency' : 'dependencies'} at a time${cap === undefined ? '' : `, at most ${cap} compile jobs`}); this takes a while`)
   await runLogged(t.cmake, depsBuildArgs(w.deps, jobs), { env, log, cwd: w.deps })
   writeStamp(w.state, 'deps', inputs)
   log.line('deps: done')
