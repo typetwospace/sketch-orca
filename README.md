@@ -86,9 +86,10 @@ Exit codes (`EXIT` in `scripts/lib/run.ts`): 0 when the command did its work; `c
 (a newer stable release is out) and 2 (the locked tag moved), and `update` and `release` stop with
 2 when the locked tag moved; 3 when the command failed; 64 for a command line the pipeline does not
 take (an unknown command, or `--step` with another value). The commands that write (all but
-`check` and `env`) hold `<work>/run.lock`, which names their process, while they run: a second
+`check` and `env`) hold `<work>/run.lock.d`, which names their process, while they run: a second
 run on the same work folder stops with exit 3 and names the first, and a lock whose process is
-gone is taken over.
+gone is taken over, by one run only (each run's record is created once, numbered, and the highest
+holds). A run of an earlier pipeline that holds `<work>/run.lock` holds the folder too.
 
 ## Where things go
 
@@ -126,7 +127,7 @@ dist/engine/    the staged engine
 dist/source/    the source bundle
 logs/           one log per command
 state/          what each step last did, and from which inputs
-run.lock        while a command that writes runs: its process id, command and start time
+run.lock.d/     the lock; its newest record: the command that writes, its process id and start time
 ```
 
 ### The staged engine

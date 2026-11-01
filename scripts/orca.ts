@@ -27,7 +27,7 @@
 //
 // Work folder: %LOCALAPPDATA%\SketchDev\orca-engine (SKETCH_ORCA_HOME overrides). Every command
 // but env logs to <work>/logs/<command>.log, and each skips what is already done and verified. The
-// commands that write there hold <work>/run.lock, so only one of them runs at a time. It runs
+// commands that write there hold <work>/run.lock.d, so only one of them runs at a time. It runs
 // locally; there is no CI job.
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
@@ -328,7 +328,7 @@ const COMMANDS: Record<string, (ctx: Context) => Promise<number>> = {
   env: cmdEnv,
 }
 
-/** The commands that write in the work folder: they hold <work>/run.lock while they run. */
+/** The commands that write in the work folder: they hold <work>/run.lock.d while they run. */
 export const LOCKED_COMMANDS = ['update', 'fetch', 'build', 'smoke', 'stage', 'source', 'release']
 
 function usage(): string {
