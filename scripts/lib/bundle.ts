@@ -610,21 +610,25 @@ export interface BundleInfo {
 /**
  * What a bundle lacks of complete corresponding source. `missing`: sources and recipes it cannot
  * have (a built dependency or a prebuilt binary with no pinned source, an archived binary no pin
- * lists, a pinned prebuilt binary with no recipe, a binary the Orca archive keeps that is not a
- * prebuilt library's); `source` stops for them unless --allow-missing. `omitted`: the packages
- * --no-deps leaves out by choice; the bundle is then not complete either.
+ * lists, a pinned prebuilt binary with no recipe, or with one that is not a file of `engineFiles`,
+ * the files the bundle carries as engine/, a binary the Orca archive keeps that is not a prebuilt
+ * library's); `source` stops for them unless --allow-missing. `omitted`: the packages --no-deps
+ * leaves out by choice; the bundle is then not complete either.
  */
-export function sourceGaps(o: { plan: DependencyPlan; prebuilt: PrebuiltLibrary[]; withDeps: boolean; unknownBinaries?: string[] }): { missing: string[]; omitted: string[] } {
+export function sourceGaps(o: { plan: DependencyPlan; prebuilt: PrebuiltLibrary[]; withDeps: boolean; unknownBinaries?: string[]; engineFiles?: readonly string[] }): { missing: string[]; omitted: string[] } {
   const { plan, prebuilt } = o
   const unsourced = prebuilt.filter((p) => !p.source)
   const unsourcedFiles = prebuilt.filter((p) => p.source).flatMap((p) => (p.archived ?? []).filter((a) => !a.sourced))
   const unrecipied = prebuilt.filter((p) => p.source && !p.source.recipe)
+  const engineFiles = o.engineFiles === undefined ? undefined : new Set(o.engineFiles)
+  const unbundledRecipes = engineFiles === undefined ? [] : prebuilt.filter((p) => p.source?.recipe && !engineFiles.has(p.source.recipe))
   const unknown = o.unknownBinaries ?? []
   const missing = [
     ...(plan.missing.length > 0 ? [`no pinned source package for the built dependencies ${plan.missing.join(', ')}; fetch them with build`] : []),
     ...(unsourced.length > 0 ? [`no pinned source for the prebuilt ${unsourced.map(prebuiltLabel).join(', ')}, whose binaries the Orca archive keeps (${unsourced.map((p) => (p.archived ?? []).map((a) => a.path).join(', ') || p.dir).join(', ')}); PREBUILT_SOURCES (scripts/lib/bundle.ts) pins the binaries whose source is known`] : []),
     ...(unsourcedFiles.length > 0 ? [`the Orca archive keeps ${unsourcedFiles.map((f) => `${f.path} (SHA-256 ${f.sha256})`).join(', ')}, which no pin of the source the bundle carries lists by path and SHA-256 (PREBUILT_SOURCES archived)`] : []),
     ...(unrecipied.length > 0 ? [`no recipe that rebuilds the prebuilt ${unrecipied.map(prebuiltLabel).join(', ')} from its pinned source (how it was configured and built is not known)`] : []),
+    ...(unbundledRecipes.length > 0 ? [`the recipes ${unbundledRecipes.map((p) => `engine/${p.source!.recipe} (${prebuiltLabel(p)})`).join(', ')} are not files of the bundle's engine/; commit them to this repository`] : []),
     ...(unknown.length > 0 ? [`the Orca archive keeps binaries whose source the bundle does not have: ${unknown.join(', ')}; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or pin their source`] : []),
   ]
   const leftOut = o.withDeps ? [] : [...new Set([...plan.archives.map((a) => a.name), ...prebuilt.filter((p) => p.source).map((p) => p.name)])].sort()
@@ -866,7 +870,10 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   const archivedPersonal = archivedPrivacyProblems(orcaArchiveName(ctx.lock), archivedBytes, needles)
   if (archivedPersonal.length > 0) throw new StepError(`binaries the Orca archive keeps record a person's or a machine's folder: ${archivedPersonal.join('; ')}. They ship as OrcaSlicer publishes them: leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or allow the folder in ALLOWED_BUILD_PATHS (scripts/lib/stage.ts), saying why`)
   const prebuilt = withArchivedSources(withPrebuiltSources(prebuiltLibraries(w.src, archivedFiles.map((f) => f.path.split('/').pop()!)), m), archivedFiles)
-  const gaps = sourceGaps({ plan, prebuilt, withDeps, unknownBinaries: archived.unknown })
+  const repository = repositoryFiles(git, ctx.engine.engine)
+  const engineFiles = repository.files
+  if (repository.commit === null) log.line(`source: ${ctx.engine.engine} is not a git checkout: every file in it but the local work folders goes in`)
+  const gaps = sourceGaps({ plan, prebuilt, withDeps, unknownBinaries: archived.unknown, engineFiles })
   const { missing } = gaps
   const unsourced = prebuilt.filter((p) => !p.source)
   // What the bundle lacks of complete corresponding source, also what --no-deps leaves out by choice.
@@ -877,9 +884,6 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   if (withDeps) {
     for (const p of prebuilt) if (p.source) prebuiltArchives.push({ name: p.name, file: p.source.file, path: await ensurePrebuiltSource(p, w.prebuilt, fetcher, (msg) => log.line(msg)) })
   }
-  const repository = repositoryFiles(git, ctx.engine.engine)
-  const engineFiles = repository.files
-  if (repository.commit === null) log.line(`source: ${ctx.engine.engine} is not a git checkout: every file in it but the local work folders goes in`)
   const licensesDir = join(w.dist, 'engine', 'LICENSES')
   const licenseFiles = listFiles(licensesDir)
   const copies = bundleCopies({ engineDir: ctx.engine.engine, engineFiles, archives: plan.archives, prebuiltArchives, withDeps, licensesDir, licenseFiles })

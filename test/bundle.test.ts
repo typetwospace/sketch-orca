@@ -379,6 +379,15 @@ describe('the bundle', () => {
     const source = { file: 'gmp-5.0.1.tar.bz2', urls: ['https://example.invalid/gmp-5.0.1.tar.bz2'], size: 1, sha256: H('3'), provenance: 'a test' }
     const gmp: PrebuiltLibrary = { name: 'GMP', version: '5.0.1', dir: 'deps/GMP/gmp', source: { ...source, recipe: 'prebuilt/gmp.sh' }, archived: [{ path: 'deps/GMP/gmp/lib/win-x64/libgmp-10.dll', sha256: H('4'), sourced: true }] }
     expect(sourceGaps({ plan, prebuilt: [gmp], withDeps: true })).toEqual({ missing: [], omitted: [] })
+    // A recipe counts only when the bundle carries it as a file of engine/.
+    expect(sourceGaps({ plan, prebuilt: [gmp], withDeps: true, engineFiles: ['README.md', 'prebuilt/gmp.sh'] })).toEqual({ missing: [], omitted: [] })
+    expect(sourceGaps({ plan, prebuilt: [gmp], withDeps: true, engineFiles: ['README.md', 'prebuilt/gmp.sh.in'] })).toEqual({
+      missing: ["the recipes engine/prebuilt/gmp.sh (GMP 5.0.1) are not files of the bundle's engine/; commit them to this repository"],
+      omitted: [],
+    })
+    // source checks the recipes against the files it copies as engine/.
+    const run = readFileSync(join(import.meta.dir, '..', 'scripts', 'lib', 'bundle.ts'), 'utf8').split('export async function runSource(')[1]!
+    expect(run).toMatch(/const engineFiles = repository\.files[\s\S]*sourceGaps\(\{[^}]*\bengineFiles\b[^}]*\}\)[\s\S]*bundleCopies\(\{[^}]*\bengineFiles\b/)
     // The audit's case: --no-deps with nothing else missing still leaves out what complete source needs.
     expect(sourceGaps({ plan, prebuilt: [gmp], withDeps: false })).toEqual({ missing: [], omitted: ['the source packages of GMP, OpenSSL are left out (--no-deps); bundle.json lists each one with its URL and SHA-256'] })
     expect(sourceGaps({ plan: { ...plan, archives: [] }, prebuilt: [], withDeps: false })).toEqual({ missing: [], omitted: [] })
