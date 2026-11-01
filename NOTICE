@@ -78,7 +78,9 @@ newest date of the patch headers.
     OpenSSL 1.1.1w. Modified 2026-11-01.
   - cli/ is the command-line front end, added 2026-10-30; its file headers and its usage text
     were changed on 2026-10-31, and cli/CMakeLists.txt on 2026-11-01 (MSVC's static runtime
-    instead of copying its DLLs). Some of its files carry OrcaSlicer code, adapted, whose portions
+    instead of copying its DLLs), as were cli/presets.cpp, cli/run.cpp and cli/common.cpp (the
+    preset merge, flush volumes, prime tower, imported 3MF settings, the files of a run and the
+    crash handler). Some of its files carry OrcaSlicer code, adapted, whose portions
     are copyright the OrcaSlicer contributors; each says which code from which OrcaSlicer file,
     under "Carries OrcaSlicer code":
       cli/run.cpp           (src/OrcaSlicer.cpp, src/slic3r/GUI/PartPlate.cpp, src/slic3r/GUI/Plater.cpp)
@@ -87,7 +89,9 @@ newest date of the patch headers.
       cli/CMakeLists.txt    (src/libslic3r/PrintConfig.cpp, read at configure time; the root CMakeLists.txt)
   - scripts/ is the pipeline that fetches, builds, tests, stages and packages the engine, added
     2026-10-30 and changed 2026-10-31 (the source bundle takes the files git tracks) and
-    2026-11-01 (the static runtime, which stage checks, and a cap on the dependency build's jobs).
+    2026-11-01 (the static runtime, which stage checks, a cap on the dependency build's jobs, the
+    build's provenance, the run lock, the privacy and smoke gates, and the source bundle's
+    binaries).
     scripts/lib/smoke.ts carries a TypeScript port of layer-height code from
     src/libslic3r/Slicing.cpp, to predict the layers the engine must make; those portions are
     copyright the OrcaSlicer contributors.
