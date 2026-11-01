@@ -142,8 +142,8 @@ export function isMsvcRuntime(name: string): boolean {
 /**
  * The dynamic C runtime of MSVC builds: the Visual C++ runtime DLLs and the Universal CRT
  * (ucrtbase.dll, its debug build ucrtbased.dll, and its api-ms-win-crt-* API sets). A program built
- * with the static runtime (/MT) imports none of them. Windows' own msvcrt.dll, which MinGW builds
- * such as Orca's prebuilt GMP load, is not one.
+ * with the static runtime (/MT) imports none of them. Windows' own msvcrt.dll, which MinGW-w64
+ * builds such as the GMP and MPFR DLLs load (patch 0007), is not one.
  */
 export function isDynamicCrt(name: string): boolean {
   return isMsvcRuntime(name) || /^ucrtbased?\.dll$/i.test(name) || /^api-ms-win-crt-/i.test(name)

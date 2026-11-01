@@ -8,7 +8,8 @@
 # src/libslic3r/PrintConfig.cpp (PrintConfigDef::handle_legacy) at configure time, and the runtime
 # library list follows orcaslicer_copy_dlls in OrcaSlicer's root CMakeLists.txt (v2.4.2, commit
 # 8500fcd). Added 2026-10-30. Those portions are copyright the OrcaSlicer contributors (NOTICE).
-# Changed 2026-11-01: MSVC's static runtime (/MT) instead of copying its runtime DLLs.
+# Changed 2026-11-01: MSVC's static runtime (/MT) instead of copying its runtime DLLs; GMP and MPFR
+# from the dependency prefix (built from source, patches/0007) instead of Orca's prebuilt copies.
 #
 # sketch-orca: a command-line front end on OrcaSlicer's slicing library (libslic3r), with
 # no GUI code. Orca's src/CMakeLists.txt adds this folder (patches/0003) when SLIC3R_GUI is
@@ -127,25 +128,23 @@ if (WIN32)
         endif ()
     endif ()
 
-    if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "ARM64")
-        set(_sketch_arch "arm64")
-    elseif ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "X86")
-        set(_sketch_arch "x86")
-    else ()
-        set(_sketch_arch "x64")
-    endif ()
-
     # The same runtime libraries Orca copies next to its own executable (orcaslicer_copy_dlls in
     # Orca's root CMakeLists.txt), without WebView2, which only the GUI uses. stage ships those the
     # engine imports (the PE import closure). No Visual C++ runtime DLL: the static runtime above.
+    # GMP and MPFR come from the dependency prefix, where the dependency build installs them (built
+    # from source with -DDEP_MINGW_ROOT, patches/0007), never from Orca's tree: one DLL of each.
     set(_sketch_occt TKBO TKBRep TKCAF TKCDF TKernel TKG2d TKG3d TKGeomAlgo TKGeomBase TKHLR TKLCAF
         TKMath TKMesh TKPrim TKService TKShHealing TKSTEP TKSTEP209 TKSTEPAttr TKSTEPBase TKTopAlgo
         TKV3d TKVCAF TKXCAF TKXDESTEP TKXSBase)
-    set(_sketch_dlls
-        "${TOP_LEVEL_PROJECT_DIR}/deps/GMP/gmp/lib/win-${_sketch_arch}/libgmp-10.dll"
-        "${TOP_LEVEL_PROJECT_DIR}/deps/MPFR/mpfr/lib/win-${_sketch_arch}/libmpfr-4.dll"
-        "${CMAKE_PREFIX_PATH}/bin/freetype.dll"
-    )
+    set(_sketch_dlls "${CMAKE_PREFIX_PATH}/bin/freetype.dll")
+    foreach (_lib gmp mpfr)
+        file(GLOB _found "${CMAKE_PREFIX_PATH}/bin/lib${_lib}-*.dll")
+        list(LENGTH _found _count)
+        if (NOT _count EQUAL 1)
+            message(FATAL_ERROR "sketch-orca: expected one lib${_lib}-*.dll in ${CMAKE_PREFIX_PATH}/bin, found ${_count}: ${_found}")
+        endif ()
+        list(APPEND _sketch_dlls ${_found})
+    endforeach ()
     foreach (_lib ${_sketch_occt})
         list(APPEND _sketch_dlls "${CMAKE_PREFIX_PATH}/bin/occt/${_lib}.dll")
     endforeach ()

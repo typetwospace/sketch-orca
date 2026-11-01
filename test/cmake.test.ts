@@ -10,9 +10,9 @@ describe('CMake command lines', () => {
     expect(cmakePath('C:\\Users\\me\\deps')).toBe('C:/Users/me/deps')
   })
 
-  test("deps on Windows: Ninja, Release, the download folder, no GUI dependencies, no IPP-ICV, MSVC with its static runtime, Strawberry ignored", () => {
+  test("deps on Windows: Ninja, Release, the download folder, no GUI dependencies, no IPP-ICV, MSVC with its static runtime, GMP and MPFR from source with MinGW-w64, Strawberry ignored", () => {
     expect(
-      depsConfigureArgs({ ninja: 'C:\\Strawberry\\c\\bin\\ninja.exe', sourceDir: 'W:\\src\\deps', buildDir: 'W:\\deps', downloadDir: 'W:\\downloads', ignorePrefixes: ['C:/Strawberry/c'], platform: 'win32' }),
+      depsConfigureArgs({ ninja: 'C:\\Strawberry\\c\\bin\\ninja.exe', sourceDir: 'W:\\src\\deps', buildDir: 'W:\\deps', downloadDir: 'W:\\downloads', ignorePrefixes: ['C:/Strawberry/c'], platform: 'win32', mingwRoot: 'W:\\mingw\\msys64' }),
     ).toEqual([
       '-S', 'W:\\src\\deps',
       '-B', 'W:\\deps',
@@ -25,8 +25,13 @@ describe('CMake command lines', () => {
       '-DCMAKE_C_COMPILER=cl',
       '-DCMAKE_CXX_COMPILER=cl',
       '-DDEP_MSVC_STATIC_RUNTIME=ON',
+      '-DDEP_MINGW_ROOT=W:/mingw/msys64',
       '-DCMAKE_IGNORE_PREFIX_PATH=C:/Strawberry/c',
     ])
+  })
+
+  test("deps on Windows need the MinGW-w64 toolchain: never the prebuilt GMP and MPFR of Orca's tree", () => {
+    expect(() => depsConfigureArgs({ ninja: 'n', sourceDir: 's', buildDir: 'b', downloadDir: 'd', ignorePrefixes: [], platform: 'win32' })).toThrow(/MinGW-w64/)
   })
 
   test('deps on Linux: the system compilers, nothing ignored', () => {
@@ -110,7 +115,7 @@ describe('CMake command lines', () => {
     expect(defaultDepsJobs({ SKETCH_ORCA_JOBS: '8', SKETCH_ORCA_DEPS_JOBS: '2' })).toBe(2)
     expect(depsParallelEnv('win32', {})).toEqual({})
     expect(depsParallelEnv('linux', {})).toEqual({})
-    expect(depsParallelEnv('win32', { SKETCH_ORCA_JOBS: '8' })).toEqual({ CMAKE_BUILD_PARALLEL_LEVEL: '1', CL_MPCount: '8', _CL_: '/MP8' })
+    expect(depsParallelEnv('win32', { SKETCH_ORCA_JOBS: '8' })).toEqual({ CMAKE_BUILD_PARALLEL_LEVEL: '1', CL_MPCount: '8', _CL_: '/MP8', DEP_MINGW_JOBS: '8' })
     expect(depsParallelEnv('linux', { SKETCH_ORCA_JOBS: '8' })).toEqual({ CMAKE_BUILD_PARALLEL_LEVEL: '8' })
   })
 

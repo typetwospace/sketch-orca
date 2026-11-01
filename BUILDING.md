@@ -16,6 +16,9 @@ The engine has been built on Windows x64 with these; other versions may work, th
   Visual Studio's own, or those in `C:\Program Files\CMake`, run by absolute path. The CMake files
   ask for CMake 3.13 or later.
 - Strawberry Perl 5.42.3.1 (64-bit), for OpenSSL's build.
+- MSYS2 (base system of 2026-09-27) with the GCC 16.2.0 of its mingw64 environment (mingw-w64 14.0.0, binutils 2.47),
+  which builds GMP and MPFR on Windows (patch 0007). You do not install it: `build` fetches its
+  pinned packages and unpacks them into the work folder (see "GMP and MPFR on Windows").
 - Linux and macOS: a C and C++ compiler (gcc or clang), make, autoconf, automake, libtool, m4 and
   perl. The scripts have code paths for them, but they have not been tried yet.
 
@@ -72,47 +75,51 @@ archive `openssl-3.5.9.tar.gz` (SHA-256
 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a), which the source bundle carries
 in `dependencies/OpenSSL/`.
 
-## Prebuilt libraries
+## GMP and MPFR on Windows
 
-On Windows, OrcaSlicer's tree ships GMP 5.0.1 and MPFR 3.0.0 as prebuilt DLLs (`deps/GMP/gmp`,
-`deps/MPFR/mpfr`) instead of building them. The engine links GMP (as `bin/libgmp-10.dll`) and not
-MPFR.
+CGAL needs GMP and MPFR. On Linux and macOS, OrcaSlicer 2.4.2 builds them from their release
+archives: GMP 6.2.1 (with Orca's `0001-GMP_GCC15.patch`) and MPFR 4.2.2. On Windows it copies
+prebuilt DLLs from its tree instead (`deps/GMP/gmp`, `deps/MPFR/mpfr`: CGAL's MinGW-w64 builds of
+GMP 5.0.1 and MPFR 3.0.0, whose build recipe is not published). Patch 0007 builds the same two
+archives on Windows too, pinned by the same SHA-256s (GMP
+eae9326beb4158c386e39a356818031bd28f3124cf915f8c5b1dc4c7a36b4d7c, MPFR
+9ad62c7dc910303cd384ff8f1f4767a655124980bb6d8650fe62c815a231bb7b), when the dependency build is
+configured with `-DDEP_MINGW_ROOT=<msys64>`:
 
-GMP's exact source is known: OrcaSlicer's `deps/GMP/gmp` at v2.4.2 is byte for byte the GMP of
-CGAL's win64 auxiliary libraries, a MinGW-w64 build of the GMP 5.0.1 release archive.
-`source` downloads that archive, `gmp-5.0.1.tar.bz2` (2,006,109 bytes, SHA-256
-a2a610f01fd3298dc08c87bf30498c2402590e1bcb227fc40b15ee6d280939fb), from
-https://gmplib.org/download/gmp/gmp-5.0.1.tar.bz2 or https://ftp.gnu.org/gnu/gmp/gmp-5.0.1.tar.bz2,
-keeps it in `<work>/prebuilt/GMP/`, and puts it in the bundle as `prebuilt/GMP/gmp-5.0.1.tar.bz2`,
-but only when the engine's `bin/libgmp-10.dll` is the DLL that source was pinned for (SHA-256
-fec43cb18ce0ec8a5dd6ad1db745747167310ccb92b5acff0d445a8b3013f009). For any other GMP binary the
-bundle's `BUILDING.md` says that its source is not in the bundle, and `source` stops unless given
-`--allow-missing`. `PREBUILT_SOURCES` in `scripts/lib/bundle.ts` records the pin and how it was
-checked; `README.md` (Open items) says what is still not known about how that DLL was built.
-Until the bundle has a recipe that rebuilds that DLL from the archive (the pin's `recipe`),
-`source` stops for GMP too unless given `--allow-missing`, and the bundle says it is not complete.
+- GMP and MPFR build with GCC, not MSVC. `deps/MinGW/build.sh` runs their own configure scripts
+  and makefiles with the bash, make and m4 of an MSYS2 tree and the GCC of its mingw64 environment,
+  as DLLs (`libgmp-10.dll`, `libmpfr-6.dll`), and runs their test suites (`DEP_MINGW_CHECK`, on by
+  default). `deps/MinGW/MinGW.cmake` then makes MSVC import libraries (`gmp.lib`, `mpfr.lib`) from
+  the `.def` files the builds write, with `lib.exe`.
+- The DLLs load only Windows' own DLLs (`msvcrt.dll`, the C runtime CGAL's DLLs load too, and
+  MPFR also GMP's): libgcc is linked in statically. They carry no time stamp and no symbols.
+- GMP 6 keeps GMP 5's ABI and DLL name. The engine loads `libgmp-10.dll` and not MPFR.
 
-MPFR's exact source is known too: OrcaSlicer's `deps/MPFR/mpfr` at v2.4.2 is byte for byte the MPFR
-of the same CGAL package, a MinGW-w64 build of the MPFR 3.0.0 release archive by the same compiler,
-linked against that GMP. `source` downloads `mpfr-3.0.0.tar.bz2` (1,138,685 bytes, SHA-256
-8f4e5f9c53536cb798a30455ac429b1f9fc75a0f8af32d6e0ac31ebf1024821f) from
-https://www.mpfr.org/mpfr-3.0.0/mpfr-3.0.0.tar.bz2 or https://ftp.gnu.org/gnu/mpfr/mpfr-3.0.0.tar.bz2
-into `<work>/prebuilt/MPFR/` and puts it in the bundle as `prebuilt/MPFR/mpfr-3.0.0.tar.bz2`. The
-engine does not load MPFR, but Orca's Windows dependency build copies its header, import library
-and DLL, so the Orca archive keeps them for the engine's architecture.
+`build` passes `-DDEP_MINGW_ROOT` itself. The toolchain is pinned in `scripts/lib/mingw.ts`: the
+MSYS2 base system archive of 2026-09-27 and 22 MSYS2 packages (make, m4 and diffutils from the msys
+repository; `mingw-w64-x86_64-gcc` 16.2.0 and the packages it depends on from mingw64), each with
+its size and SHA-256. `build` downloads them once into `<work>/mingw/downloads`, checks them, and
+unpacks them with Windows' own `tar.exe` into `<work>/mingw/msys64`. Nothing is installed and
+nothing is written outside the work folder. A later `build` keeps the unpacked tree while its files
+are the ones it unpacked (`state/mingw.json`).
 
-The bundle's Orca archive leaves out the binaries of OrcaSlicer's tree that the engine's build does
-not use (the WebView2 loader, the programs in `tools/`, and GMP and MPFR for other architectures;
-`orcaArchiveExcludes`). Every binary it keeps must be listed, by its path and SHA-256 at the locked
-commit, by the pin whose source package the bundle carries (`archived` in `PREBUILT_SOURCES`: the
-DLL and the import library made from it); any other stops `source` unless given
-`--allow-missing`. Neither pin has a recipe yet, so `source` stops for both unless given
-`--allow-missing`, and the bundle says it is not complete.
+The source bundle carries the GMP and MPFR release archives in `dependencies/GMP` and
+`dependencies/MPFR`, like every other dependency package. Its `BUILDING.md` lists the toolchain's
+packages with their URLs and SHA-256s. `stage` ships the licences of the toolchain code GCC links
+into the DLLs (the mingw-w64 runtime, and libgcc's GPL 3 with the GCC Runtime Library Exception) in
+`LICENSES/MinGW-w64/`.
+
+The bundle's Orca archive leaves out the binaries of OrcaSlicer's tree, none of which the engine's
+build uses (`orcaArchiveExcludes`): the WebView2 loader, the programs in `tools/`, and the prebuilt
+GMP and MPFR DLLs and import libraries. Their headers and READMEs stay. `source` stops unless given
+`--allow-missing` when the archive would keep any other binary, or when a file of the staged
+engine is byte for byte a binary of the tree (such as the prebuilt GMP, if the dependencies were
+built without `-DDEP_MINGW_ROOT`). The bundle then says it is not complete.
 
 ## From a source bundle
 
 A source bundle holds OrcaSlicer at the locked commit, this repository as `engine/`, the
-dependency source packages, the GMP and MPFR sources and the licences. Its own `BUILDING.md`, written by
+dependency source packages (GMP's and MPFR's among them) and the licences. Its own `BUILDING.md`, written by
 `source` for that engine, gives every command to build it from the bundle alone, without network
-access: unpack Orca, apply the patches, build the dependencies from `dependencies/`, then the
-engine.
+access, apart from the MinGW-w64 toolchain's packages on Windows: unpack Orca, apply the patches,
+unpack the toolchain, build the dependencies from `dependencies/`, then the engine.

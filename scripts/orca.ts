@@ -8,8 +8,9 @@
 //   update [--write] move the lock to a newer stable release (prints the new lock without --write)
 //   fetch            shallow clone of the locked tag; the commit must match the lock
 //   build [--step deps|orca] [--fresh]
-//                    Orca's dependencies without the GUI ones, then libslic3r and sketch-orca
-//                    (SLIC3R_GUI=OFF, Release); --fresh starts the dependency build over
+//                    Orca's dependencies without the GUI ones (on Windows, GMP and MPFR with the
+//                    pinned MinGW-w64 toolchain, unpacked into <work>/mingw), then libslic3r and
+//                    sketch-orca (SLIC3R_GUI=OFF, Release); --fresh starts the dependency build over
 //   smoke [--case <id,...>]
 //                    slices the test models with the built engine and checks the results
 //   stage [--without-smoke]
@@ -39,6 +40,7 @@ import { firstExisting, gitCandidates, sourcePathTrimEnv } from './lib/env.ts'
 import { hashTree } from './lib/files.ts'
 import { githubGetter, resolveLatestRelease } from './lib/github.ts'
 import { compareLock, lockForRelease, readLock, releaseDecision, serializeLock, writeLock, type OrcaLock, type ReleaseDecision } from './lib/lock.ts'
+import { ensureMingw, mingwPinsDigest, mingwRoot } from './lib/mingw.ts'
 import { depsStampProblems, enginePaths, readStamp, sha256File, sha256Text, workHome, workPaths, writeStamp, type DepsRecord, type WorkPaths } from './lib/paths.ts'
 import { runSteps, stepArgs, type ReleaseStep } from './lib/release.ts'
 import { EXIT, Log, runLogged, StepError, UsageError } from './lib/run.ts'
@@ -161,17 +163,27 @@ function matchCompilerEnv(w: WorkPaths, name: string, dir: string, env: Record<s
 }
 
 function depsConfigure(t: Toolchain, w: WorkPaths): string[] {
-  return depsConfigureArgs({ ninja: t.ninja, sourceDir: join(w.src, 'deps'), buildDir: w.deps, downloadDir: w.downloads, ignorePrefixes: t.ignorePrefixes, platform: t.platform })
+  return depsConfigureArgs({
+    ninja: t.ninja,
+    sourceDir: join(w.src, 'deps'),
+    buildDir: w.deps,
+    downloadDir: w.downloads,
+    ignorePrefixes: t.ignorePrefixes,
+    platform: t.platform,
+    ...(t.platform === 'win32' ? { mingwRoot: mingwRoot(w) } : {}),
+  })
 }
 
 /**
  * What the dependency build is of, as build works it out now: the locked commit, the patches of
- * deps/, its configuration, CMake and the compiler settings. The engine is built only on a
- * finished dependency build of these (depsStampProblems).
+ * deps/, its configuration, CMake and the compiler settings, and on Windows the pinned MinGW-w64
+ * toolchain that builds GMP and MPFR (mingw.ts). The engine is built only on a finished dependency
+ * build of these (depsStampProblems).
  */
 function depsWant(ctx: Context, t: Toolchain, depsPatches: PatchInfo[]): { commit: string; depsPatches: { name: string; sha256: string }[]; inputs: string } {
   const patchesHash = sha256Text(JSON.stringify(depsPatches.map((p) => [p.name, p.sha256])))
-  const inputs = sha256Text(JSON.stringify({ commit: ctx.lock.commit, patchesHash, configure: depsConfigure(t, ctx.work), cmake: t.cmake, compilerEnv: compilerEnv(t, ctx.work) }))
+  const mingw = t.platform === 'win32' ? { mingw: mingwPinsDigest() } : {}
+  const inputs = sha256Text(JSON.stringify({ commit: ctx.lock.commit, patchesHash, configure: depsConfigure(t, ctx.work), cmake: t.cmake, compilerEnv: compilerEnv(t, ctx.work), ...mingw }))
   return { commit: ctx.lock.commit, depsPatches: depsPatches.map((p) => ({ name: p.name, sha256: p.sha256 })), inputs }
 }
 
@@ -209,6 +221,9 @@ async function buildDeps(ctx: Context, t: Toolchain, want: ReturnType<typeof dep
     rmSync(w.deps, { recursive: true, force: true })
   }
   writeStamp(w.state, 'deps-run', inputs)
+  // Windows: the pinned MinGW-w64 toolchain that builds GMP and MPFR (patch 0007), unpacked into
+  // the work folder or checked there.
+  if (t.platform === 'win32') await ensureMingw(w, log)
   matchCompilerEnv(w, 'deps', w.deps, cenv, log)
   mkdirSync(w.downloads, { recursive: true })
   mkdirSync(w.deps, { recursive: true })

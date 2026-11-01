@@ -33,10 +33,10 @@ export interface WorkPaths {
   /** Staged engine and source bundle. */
   dist: string
   /**
-   * The source packages of the libraries Orca ships prebuilt (GMP on Windows), one folder per
-   * library, kept across runs; `source` downloads them (bundle.ts PREBUILT_SOURCES).
+   * The MinGW-w64 toolchain that builds GMP and MPFR on Windows (mingw.ts): its pinned packages in
+   * downloads/, kept across runs, and the tree they unpack to, msys64/.
    */
-  prebuilt: string
+  mingw: string
   logs: string
   state: string
   smoke: string
@@ -52,7 +52,7 @@ export function workPaths(home: string): WorkPaths {
     downloads: join(home, 'downloads'),
     build: join(home, 'build'),
     dist: join(home, 'dist'),
-    prebuilt: join(home, 'prebuilt'),
+    mingw: join(home, 'mingw'),
     logs: join(home, 'logs'),
     state: join(home, 'state'),
     smoke: join(home, 'smoke'),

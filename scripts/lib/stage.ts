@@ -23,6 +23,7 @@ import { depsPatchesOf, headCommit, listPatches, sourceDigest, type PatchInfo } 
 import { firstExisting, gitCandidates, type Platform } from './env.ts'
 import { copyFile, hashTree, listFiles, nativePath, sha256Bytes, treeEntries, verifyTree, writeText, type FileEntry } from './files.ts'
 import type { OrcaLock } from './lock.ts'
+import { MINGW_RUNTIME_LICENSES, mingwRoot } from './mingw.ts'
 import { builtCliSha256, depsStampProblems, readStamp, sha256File, sha256Text, writeStamp, type WorkPaths } from './paths.ts'
 import { readPeDebugPaths, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from './pe.ts'
 import { capture, Log, StepError } from './run.ts'
@@ -179,6 +180,8 @@ export function isLicenseFile(name: string): boolean {
 /** Licence texts a package keeps below its top level (FreeType's LICENSE.TXT points to docs/). */
 export const EXTRA_LICENSE_FILES: Record<string, string[]> = {
   FREETYPE: ['docs/FTL.TXT', 'docs/GPLv2.TXT'],
+  // GMP's README states its licence: the LGPL 3 or later, or the GPL 2 or later, or both.
+  GMP: ['README'],
   // The libnoise package Orca pins dropped libnoise's doc/ folder, and COPYING.txt with it. Its
   // sources carry the grant (LGPL 2.1 or later); the licence text comes from OWN_LICENSE_TEXTS.
   libnoise: ['src/noise.h'],
@@ -336,15 +339,15 @@ export function licenseCopies(work: WorkPaths, platform: Platform, ownDir: strin
       if (n.also && dir && existsSync(join(dir, n.also.file))) out.push({ from: join(dir, n.also.file), to: `LICENSES/deps_src/${name}/${n.also.to}` })
     }
   }
-  // Windows ships Orca's prebuilt GMP and MPFR. GMP 5.0.1 is under the LGPL 3 or later: its folder
-  // has the GPL 3 text (which the LGPL 3 adds to) and the README that says so; the LGPL 3 text is
-  // MPFR's copy.
-  if (platform === 'win32') {
-    const gmp = join(work.src, 'deps', 'GMP', 'gmp')
-    const mpfr = join(work.src, 'deps', 'MPFR', 'mpfr')
-    add(gmp, [...topLevelLicenses(gmp), 'gmp.README'], 'deps/GMP')
-    if (existsSync(join(mpfr, 'mpfr.COPYING.LESSER'))) out.push({ from: join(mpfr, 'mpfr.COPYING.LESSER'), to: 'LICENSES/deps/GMP/LGPL-3.0.txt' })
-    add(mpfr, topLevelLicenses(mpfr), 'deps/MPFR')
+  // Windows: the MinGW-w64 toolchain that builds GMP and MPFR (patch 0007, mingw.ts) links its
+  // runtime's start-up code and libgcc into their DLLs, so the engine carries those licence texts,
+  // from the toolchain itself.
+  if (platform === 'win32' && (built.includes('GMP') || built.includes('MPFR'))) {
+    const root = mingwRoot(work)
+    for (const l of MINGW_RUNTIME_LICENSES) {
+      const from = join(root, ...l.from.split('/'))
+      if (existsSync(from)) out.push({ from, to: `LICENSES/MinGW-w64/${l.to}` })
+    }
   }
   return dedupe(out)
 }
@@ -364,11 +367,18 @@ export function ownNoticeCopies(engine: { notice: string; authors: string }): St
 }
 
 /**
- * Licence texts a release must carry whatever the folders hold: on Windows, GMP's LGPL 3 text and
- * README, and the notice of the SoftFloat code in OpenCV's core.
+ * Licence texts a release must carry whatever the folders hold: on Windows, GMP's (the engine loads
+ * its DLL: the LGPL 3 and the GPL 3 it adds to, the GPL 2, and the README that states the choice),
+ * those of the MinGW-w64 runtime and libgcc that its DLL holds (MINGW_RUNTIME_LICENSES), and the
+ * notice of the SoftFloat code in OpenCV's core.
  */
 export function requiredLicenses(platform: Platform): string[] {
-  return platform === 'win32' ? ['LICENSES/deps/GMP/LGPL-3.0.txt', 'LICENSES/deps/GMP/gmp.README', 'LICENSES/deps/OpenCV/third-party/SoftFloat-COPYING.txt'] : []
+  if (platform !== 'win32') return []
+  return [
+    ...['COPYING.LESSERv3', 'COPYINGv3', 'COPYINGv2', 'README'].map((f) => `LICENSES/deps/GMP/${f}`),
+    ...MINGW_RUNTIME_LICENSES.map((l) => `LICENSES/MinGW-w64/${l.to}`),
+    'LICENSES/deps/OpenCV/third-party/SoftFloat-COPYING.txt',
+  ]
 }
 
 /**
@@ -496,9 +506,9 @@ export function isBinaryProgram(bytes: Uint8Array): boolean {
 
 /**
  * Folders that binaries may record, each with why (a build identity of the code of others that is
- * published as it is). None is needed today: the staged engine and the binaries the Orca archive
- * keeps record none (checked 2026-11-01; the prebuilt GMP and MPFR name only their compiler's own
- * /W64_4.4_160271-src/ tree, which recordedBuildPaths does not take for a machine's folder).
+ * published as it is). None is needed today: the staged engine records none, GMP and MPFR included
+ * (built from source without debug information, patch 0007), and the Orca archive keeps no binary
+ * (checked 2026-11-01).
  */
 export const ALLOWED_BUILD_PATHS: readonly { path: string; why: string }[] = []
 

@@ -1,0 +1,255 @@
+sketch-orca patch 0007: build GMP and MPFR from their source packages for MSVC too, with MinGW-w64.
+Modified for Sketch, 2026-11-01.
+
+On Windows, Orca's dependency build copies prebuilt GMP and MPFR DLLs from its tree
+(deps/GMP/gmp, deps/MPFR/mpfr): CGAL's MinGW-w64 builds of GMP 5.0.1 and MPFR 3.0.0, whose build
+recipe is not published, so the source of an engine that ships that GMP DLL cannot say how to
+make it. On the other platforms the same recipes build GMP 6.2.1 (with Orca's
+0001-GMP_GCC15.patch) and MPFR 4.2.2 from their release archives. This patch adds the option
+DEP_MINGW_ROOT, an MSYS2 tree with bash, make, m4 and the GCC toolchain of its mingw64
+environment: with it, an MSVC build builds those same two archives, pinned by the same SHA-256s,
+as DLLs with that GCC (deps/MinGW/MinGW.cmake and deps/MinGW/build.sh, which runs their own
+configure scripts and makefiles), runs their test suites (DEP_MINGW_CHECK, on by default), and
+makes MSVC import libraries for them with lib.exe from the .def files their builds write. GMP and
+MPFR build with GCC, not MSVC. The DLLs load only Windows' own DLLs (msvcrt.dll, the C runtime
+CGAL's DLLs load too, and MPFR also GMP's), link libgcc statically, and carry no time stamp and no
+symbols. GMP 6 keeps GMP 5's ABI and DLL name, libgmp-10.dll; MPFR 4 is libmpfr-6.dll, which
+libslic3r does not load. CGAL's FindGMP and FindMPFR take the import libraries, gmp.lib and
+mpfr.lib, first. Without DEP_MINGW_ROOT nothing changes.
+
+---
+diff --git a/deps/CMakeLists.txt b/deps/CMakeLists.txt
+--- a/deps/CMakeLists.txt
++++ b/deps/CMakeLists.txt
+@@ -313,7 +313,8 @@ endif()
+ # Sketch (sketch-orca), 2026-11-01: with DEP_MSVC_STATIC_RUNTIME, every CMake dependency takes the static
+ # runtime. CMP0091 NEW keeps /MD out of the default flags of the projects whose cmake_minimum_required
+ # predates CMake 3.15. OpenCV, which picks its runtime itself, follows the option in OpenCV.cmake; OpenSSL's
+-# static libraries name no runtime (/Zl); the prebuilt GMP and MPFR load only the system's msvcrt.dll.
++# static libraries name no runtime (/Zl); GMP and MPFR, prebuilt or built by MinGW/MinGW.cmake, load only the
++# system's msvcrt.dll.
+ if (MSVC AND DEP_MSVC_STATIC_RUNTIME)
+     list(APPEND DEP_CMAKE_OPTS -DCMAKE_POLICY_DEFAULT_CMP0091:STRING=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY:STRING=MultiThreaded)
+ endif ()
+@@ -365,6 +366,8 @@ include(Blosc/Blosc.cmake)
+ include(OpenEXR/OpenEXR.cmake)
+ include(OpenVDB/OpenVDB.cmake)
+ 
++# Sketch (sketch-orca), 2026-11-01: DEP_MINGW_ROOT builds GMP and MPFR from source for MSVC too.
++include(MinGW/MinGW.cmake)
+ include(GMP/GMP.cmake)
+ include(MPFR/MPFR.cmake)
+ include(Eigen/Eigen.cmake)
+diff --git a/deps/GMP/GMP.cmake b/deps/GMP/GMP.cmake
+--- a/deps/GMP/GMP.cmake
++++ b/deps/GMP/GMP.cmake
+@@ -5,7 +5,20 @@ if (IN_GIT_REPO)
+     set(GMP_DIRECTORY_FLAG --directory ${BINARY_DIR_REL}/dep_GMP-prefix/src/dep_GMP)
+ endif ()
+ 
+-if (MSVC)
++if (MSVC AND DEP_MINGW_ROOT)
++    # Sketch (sketch-orca), 2026-11-01: with DEP_MINGW_ROOT, GMP 6.2.1 from the source package and with
++    # the patch the other platforms build, as a DLL (MinGW/MinGW.cmake), instead of the prebuilt GMP.
++    sketch_mingw_dll(GMP
++        URL https://github.com/SoftFever/OrcaSlicer_deps/releases/download/gmp-6.2.1/gmp-6.2.1.tar.bz2
++            https://ftp.gnu.org/gnu/gmp/gmp-6.2.1.tar.bz2
++        URL_HASH SHA256=eae9326beb4158c386e39a356818031bd28f3124cf915f8c5b1dc4c7a36b4d7c
++        PATCH_COMMAND git apply ${GMP_DIRECTORY_FLAG} --verbose ${CMAKE_CURRENT_LIST_DIR}/0001-GMP_GCC15.patch
++        DLL libgmp-10
++        IMPLIB gmp
++        HEADERS gmp.h
++    )
++
++elseif (MSVC)
+     set(_output  ${DESTDIR}/include/gmp.h
+                  ${DESTDIR}/lib/libgmp-10.lib
+                  ${DESTDIR}/bin/libgmp-10.dll)
+diff --git a/deps/MPFR/MPFR.cmake b/deps/MPFR/MPFR.cmake
+--- a/deps/MPFR/MPFR.cmake
++++ b/deps/MPFR/MPFR.cmake
+@@ -1,6 +1,20 @@
+ set(_srcdir ${CMAKE_CURRENT_LIST_DIR}/mpfr)
+ 
+-if (MSVC)
++if (MSVC AND DEP_MINGW_ROOT)
++    # Sketch (sketch-orca), 2026-11-01: with DEP_MINGW_ROOT, MPFR 4.2.2 from the source package the other
++    # platforms build, as a DLL on the GMP DLL (MinGW/MinGW.cmake), instead of the prebuilt MPFR. Its own
++    # configure script, without autoreconf: the package's generated files, not the toolchain's autotools.
++    sketch_mingw_dll(MPFR
++        URL https://ftp.gnu.org/gnu/mpfr/mpfr-4.2.2.tar.bz2
++            https://www.mpfr.org/mpfr-4.2.2/mpfr-4.2.2.tar.bz2
++        URL_HASH SHA256=9ad62c7dc910303cd384ff8f1f4767a655124980bb6d8650fe62c815a231bb7b
++        DLL libmpfr-6
++        IMPLIB mpfr
++        HEADERS mpfr.h mpf2mpfr.h
++        DEPENDS dep_GMP
++    )
++
++elseif (MSVC)
+     set(_output  ${DESTDIR}/include/mpfr.h
+                  ${DESTDIR}/include/mpf2mpfr.h
+                  ${DESTDIR}/lib/libmpfr-4.lib 
+diff --git a/deps/MinGW/MinGW.cmake b/deps/MinGW/MinGW.cmake
+new file mode 100644
+--- /dev/null
++++ b/deps/MinGW/MinGW.cmake
+@@ -0,0 +1,77 @@
++# Sketch (sketch-orca), 2026-11-01: added for Sketch.
++#
++# GMP and MPFR for an MSVC build, built from their source packages. Upstream copies prebuilt DLLs on
++# Windows (deps/GMP/gmp and deps/MPFR/mpfr, from CGAL's Windows packages: GMP 5.0.1 and MPFR 3.0.0,
++# whose build recipe is not published). With DEP_MINGW_ROOT they are built here instead, from the
++# source packages the other platforms build (GMP.cmake, MPFR.cmake), as DLLs: GMP and MPFR build with
++# GCC, not MSVC, so the MinGW-w64 GCC of an MSYS2 tree compiles them (its mingw64 environment, whose C
++# runtime is Windows' own msvcrt.dll, as for CGAL's DLLs), and the tree's bash, make and m4 run their
++# configure scripts and makefiles (build.sh). Their test suites run too (DEP_MINGW_CHECK). MSVC links
++# them through import libraries that lib.exe makes from the .def files their builds write, with the
++# DLL names (GMP's manual, "Notes for Particular Systems", Microsoft Windows).
++#
++# What lands in DESTDIR: bin/libgmp-10.dll, include/gmp.h, lib/gmp.lib; bin/libmpfr-6.dll,
++# include/mpfr.h, include/mpf2mpfr.h, lib/mpfr.lib. CGAL's FindGMP and FindMPFR take gmp.lib and
++# mpfr.lib first.
++
++set(DEP_MINGW_ROOT "" CACHE PATH "An MSYS2 tree with bash, make, m4 and the mingw64 GCC toolchain: GMP and MPFR are then built from their source packages for MSVC too, instead of copied prebuilt")
++option(DEP_MINGW_CHECK "Run the test suites of GMP and MPFR when they are built with DEP_MINGW_ROOT" ON)
++
++set(_sketch_mingw_dir ${CMAKE_CURRENT_LIST_DIR})
++
++if (MSVC AND DEP_MINGW_ROOT)
++    if (NOT "${DEPS_ARCH}" STREQUAL "x64")
++        message(FATAL_ERROR "DEP_MINGW_ROOT builds GMP and MPFR for x64 only, not ${DEPS_ARCH}")
++    endif ()
++    foreach (_tool usr/bin/bash.exe usr/bin/make.exe usr/bin/m4.exe usr/bin/cygpath.exe mingw64/bin/gcc.exe mingw64/bin/strip.exe)
++        if (NOT EXISTS "${DEP_MINGW_ROOT}/${_tool}")
++            message(FATAL_ERROR "DEP_MINGW_ROOT (${DEP_MINGW_ROOT}) has no ${_tool}")
++        endif ()
++    endforeach ()
++    message(STATUS "GMP and MPFR: built from their source packages with the MinGW-w64 toolchain in ${DEP_MINGW_ROOT}")
++endif ()
++
++# sketch_mingw_dll(<Name> URL <url>... URL_HASH SHA256=<hash> [PATCH_COMMAND <command>...] DLL <name>
++#                  IMPLIB <name> HEADERS <file>... [DEPENDS <target>...])
++# The dependency dep_<Name>, from the package of URL and URL_HASH (ExternalProject's), downloaded into
++# DEP_DOWNLOAD_DIR/<Name> like every other: build.sh builds it (as <name> in lower case) in its unpacked source folder
++# and installs it into MinGW-install/<name> of this build folder; then lib.exe makes <IMPLIB>.lib for
++# <DLL>.dll from its .def file, and the DLL, the import library and HEADERS go to DESTDIR.
++function(sketch_mingw_dll name)
++    cmake_parse_arguments(P "" "URL_HASH;DLL;IMPLIB" "URL;PATCH_COMMAND;HEADERS;DEPENDS" ${ARGN})
++    string(TOLOWER ${name} _lower)
++    set(_root ${CMAKE_BINARY_DIR}/MinGW-install)
++    set(_prefix ${_root}/${_lower})
++    if (DEP_MINGW_CHECK)
++        set(_check check)
++    else ()
++        set(_check nocheck)
++    endif ()
++    set(_patch "")
++    if (P_PATCH_COMMAND)
++        set(_patch PATCH_COMMAND ${P_PATCH_COMMAND})
++    endif ()
++    set(_depends "")
++    if (P_DEPENDS)
++        set(_depends DEPENDS ${P_DEPENDS})
++    endif ()
++    set(_headers "")
++    foreach (_h ${P_HEADERS})
++        list(APPEND _headers COMMAND ${CMAKE_COMMAND} -E copy ${_prefix}/include/${_h} ${DESTDIR}/include/)
++    endforeach ()
++    ExternalProject_Add(dep_${name}
++        URL ${P_URL}
++        URL_HASH ${P_URL_HASH}
++        DOWNLOAD_DIR ${DEP_DOWNLOAD_DIR}/${name}
++        ${_patch}
++        BUILD_IN_SOURCE ON
++        CONFIGURE_COMMAND ""
++        BUILD_COMMAND ${DEP_MINGW_ROOT}/usr/bin/bash.exe --noprofile --norc ${_sketch_mingw_dir}/build.sh ${_lower} <SOURCE_DIR> ${_root} ${NPROC} ${_check}
++        INSTALL_COMMAND ${CMAKE_AR} /NOLOGO /MACHINE:X64 /DEF:${_prefix}/lib/${P_DLL}.def /NAME:${P_DLL}.dll /OUT:<SOURCE_DIR>/${P_IMPLIB}.lib
++            COMMAND ${CMAKE_COMMAND} -E make_directory ${DESTDIR}/bin ${DESTDIR}/include ${DESTDIR}/lib
++            COMMAND ${CMAKE_COMMAND} -E copy ${_prefix}/bin/${P_DLL}.dll ${DESTDIR}/bin/
++            COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/${P_IMPLIB}.lib ${DESTDIR}/lib/
++            ${_headers}
++        ${_depends}
++    )
++endfunction()
+diff --git a/deps/MinGW/build.sh b/deps/MinGW/build.sh
+new file mode 100644
+--- /dev/null
++++ b/deps/MinGW/build.sh
+@@ -0,0 +1,76 @@
++#!/bin/bash
++# Sketch (sketch-orca), 2026-11-01: added for Sketch.
++#
++# Builds GMP or MPFR as a DLL with the MinGW-w64 GCC of the MSYS2 tree whose bash runs this, for
++# MinGW.cmake (sketch_mingw_dll):
++#
++#   <tree>/usr/bin/bash.exe --noprofile --norc build.sh <gmp|mpfr> <source> <install root> <jobs> <check|nocheck>
++#
++# <source> is the unpacked source package. GMP installs into <install root>/gmp; MPFR into
++# <install root>/mpfr, built on the GMP there. Each is configured by its own configure script, with the
++# compiler settings it chooses for x86_64-w64-mingw32, as a DLL and no static library: no C++ interface
++# (MSVC cannot link GCC's C++), libgcc linked in (the DLLs load only Windows' own DLLs, and MPFR also
++# GMP's), no time stamp in the DLL (-Wl,--no-insert-timestamp, and SOURCE_DATE_EPOCH for strip),
++# symbols stripped. With check, their test suites run before they install. The .def file a build
++# writes for its DLL lands in lib/ as <DLL name>.def, for lib.exe to make the import library MSVC
++# links. DEP_MINGW_JOBS, when set, is the number of jobs instead of <jobs>.
++set -euo pipefail
++
++if [ $# -ne 5 ]; then
++    echo "usage: build.sh <gmp|mpfr> <source> <install root> <jobs> <check|nocheck>" >&2
++    exit 2
++fi
++# Only this tree's programs: none of the MSVC build's PATH that runs this.
++export PATH=/usr/bin
++lib=$1
++src=$(cygpath -u "$2")
++root=$(cygpath -u "$3")
++jobs=${DEP_MINGW_JOBS:-$4}
++check=$5
++
++# Nor its compiler settings.
++unset CC CXX CPP CFLAGS CXXFLAGS CPPFLAGS LDFLAGS LIBS CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH \
++    LIBRARY_PATH GCC_EXEC_PREFIX COMPILER_PATH PKG_CONFIG_PATH CONFIG_SITE CONFIG_SHELL \
++    MAKEFLAGS MFLAGS MAKELEVEL GNUMAKEFLAGS INCLUDE LIB LIBPATH CL _CL_ LINK _LINK_
++# SOURCE_DATE_EPOCH=0: strip writes no time stamp into the DLLs either (nor GCC's __DATE__ and __TIME__).
++export LC_ALL=C TZ=UTC SOURCE_DATE_EPOCH=0
++mkdir -p "$src/.tmp"
++export TMP="$src/.tmp" TEMP="$src/.tmp" TMPDIR="$src/.tmp"
++
++host=x86_64-w64-mingw32
++prefix=$root/$lib
++common=(--build=$host --host=$host "--prefix=$prefix" --enable-shared --disable-static)
++ldflags="-Wl,--no-insert-timestamp -static-libgcc"
++
++cd "$src"
++case $lib in
++    gmp)
++        export PATH="/mingw64/bin:/usr/bin"
++        dll=libgmp-10
++        def=.libs/libgmp-3.dll.def
++        rm -rf "$prefix"
++        ./configure "${common[@]}" --disable-cxx LDFLAGS="$ldflags"
++        ;;
++    mpfr)
++        # GMP's DLL first: the toolchain's bin holds a libgmp-10.dll of its own, which MPFR's tests
++        # would load otherwise.
++        export PATH="$root/gmp/bin:/mingw64/bin:/usr/bin"
++        dll=libmpfr-6
++        def=src/.libs/libmpfr-6.dll.def
++        rm -rf "$prefix"
++        ./configure "${common[@]}" "--with-gmp=$root/gmp" LDFLAGS="$ldflags"
++        ;;
++    *)
++        echo "build.sh: no recipe for $lib (gmp or mpfr)" >&2
++        exit 2
++        ;;
++esac
++make -j"$jobs"
++case $check in
++    check) make -j"$jobs" check ;;
++    nocheck) ;;
++    *) echo "build.sh: check or nocheck, not $check" >&2; exit 2 ;;
++esac
++make install
++strip --strip-unneeded "$prefix/bin/$dll.dll"
++cp "$def" "$prefix/lib/$dll.def"

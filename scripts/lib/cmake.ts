@@ -18,6 +18,11 @@ export interface DepsArgs {
   downloadDir: string
   ignorePrefixes: string[]
   platform: Platform
+  /**
+   * Windows: the MSYS2 tree with the MinGW-w64 toolchain (mingw.ts mingwRoot), with which patch 0007
+   * builds GMP and MPFR from their source packages instead of copying Orca's prebuilt DLLs.
+   */
+  mingwRoot?: string
 }
 
 export function depsConfigureArgs(a: DepsArgs): string[] {
@@ -35,6 +40,12 @@ export function depsConfigureArgs(a: DepsArgs): string[] {
   ]
   // Patch 0005: every dependency with MSVC's static runtime (/MT), as the engine (orcaConfigureArgs).
   if (a.platform === 'win32') args.push('-DCMAKE_C_COMPILER=cl', '-DCMAKE_CXX_COMPILER=cl', '-DDEP_MSVC_STATIC_RUNTIME=ON')
+  // Patch 0007: GMP and MPFR built from their source packages with MinGW-w64, never the prebuilt
+  // DLLs of Orca's tree, whose build recipe is not published.
+  if (a.platform === 'win32') {
+    if (!a.mingwRoot) throw new Error('a Windows dependency build needs the MinGW-w64 toolchain for GMP and MPFR (mingwRoot)')
+    args.push(`-DDEP_MINGW_ROOT=${cmakePath(a.mingwRoot)}`)
+  }
   // Orca's deps pass CMAKE_IGNORE_PREFIX_PATH on to every dependency; one prefix only, since
   // a list would be split by ExternalProject.
   if (a.ignorePrefixes.length > 1) throw new Error(`only one ignored prefix can be passed to Orca's deps, got ${a.ignorePrefixes.join(', ')}`)
@@ -127,14 +138,15 @@ export function defaultDepsJobs(env: NodeJS.ProcessEnv = process.env): number {
  * CMAKE_BUILD_PARALLEL_LEVEL when that is set. On Windows MSBuild then builds one project at a
  * time, and cl compiles up to <jobs> files of it at once: /MP<jobs> through _CL_, which cl adds to
  * every command line, and CL_MPCount, which MSBuild gives the projects that ask for /MP
- * themselves. Elsewhere make runs <jobs> jobs. With one dependency at a time (defaultDepsJobs),
- * no more than <jobs> compilers run. None of it changes what is compiled, so it is not part of
- * the build's inputs.
+ * themselves; GMP and MPFR's make runs <jobs> jobs (DEP_MINGW_JOBS, patch 0007's build.sh).
+ * Elsewhere make runs <jobs> jobs. With one dependency at a time (defaultDepsJobs), no more than
+ * <jobs> compilers run. None of it changes what is compiled, so it is not part of the build's
+ * inputs.
  */
 export function depsParallelEnv(platform: Platform, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const jobs = jobsCap(env)
   if (jobs === undefined) return {}
-  if (platform === 'win32') return { CMAKE_BUILD_PARALLEL_LEVEL: '1', CL_MPCount: String(jobs), _CL_: `/MP${jobs}` }
+  if (platform === 'win32') return { CMAKE_BUILD_PARALLEL_LEVEL: '1', CL_MPCount: String(jobs), _CL_: `/MP${jobs}`, DEP_MINGW_JOBS: String(jobs) }
   return { CMAKE_BUILD_PARALLEL_LEVEL: String(jobs) }
 }
 

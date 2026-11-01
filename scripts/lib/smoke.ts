@@ -806,17 +806,14 @@ export function runEngine(exe: string, args: string[], o: { cwd: string; env: Re
   })
 }
 
-/** Folders the engine's libraries live in before staging (the build folder, the dependency prefix, Orca's GMP and MPFR). */
-export function engineLibraryDirs(work: WorkPaths, exe: string, platform: Platform, arch = process.arch): string[] {
+/**
+ * Folders the engine's libraries live in before staging: the build folder and the dependency prefix
+ * (GMP and MPFR too: on Windows the dependency build makes them from source into the prefix, patch
+ * 0007; never Orca's prebuilt copies).
+ */
+export function engineLibraryDirs(work: WorkPaths, exe: string, platform: Platform): string[] {
   if (platform !== 'win32') return [dirname(exe), join(work.depsPrefix, 'lib')]
-  const win = arch === 'arm64' ? 'win-arm64' : 'win-x64'
-  return [
-    dirname(exe),
-    join(work.depsPrefix, 'bin'),
-    join(work.depsPrefix, 'bin', 'occt'),
-    join(work.src, 'deps', 'GMP', 'gmp', 'lib', win),
-    join(work.src, 'deps', 'MPFR', 'mpfr', 'lib', win),
-  ]
+  return [dirname(exe), join(work.depsPrefix, 'bin'), join(work.depsPrefix, 'bin', 'occt')]
 }
 
 /** The environment the engine runs in: ours, with its library folders first on PATH (LD_LIBRARY_PATH / DYLD_LIBRARY_PATH elsewhere). */

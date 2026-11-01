@@ -285,7 +285,7 @@ describe('what goes in', () => {
     expect(dependencySourceDir(w, 'Nope')).toBeUndefined()
   })
 
-  test('licenseCopies: Orca\'s licence, the built dependencies\' (with the texts FreeType points to, and ours for libnoise), deps_src (files and notices), OpenCV\'s third-party notices from the prefix, and the prebuilt GMP (with its README and the LGPL 3) and MPFR on Windows', () => {
+  test("licenseCopies: Orca's licence, the built dependencies' (with the texts FreeType points to, ours for libnoise, GMP's README), deps_src (files and notices), OpenCV's third-party notices from the prefix, and on Windows the MinGW-w64 runtime's and libgcc's from the toolchain", () => {
     const w = workPaths(dir)
     const own = join(dir, 'engine-licenses')
     put('engine-licenses/LGPL-2.1.txt')
@@ -309,9 +309,18 @@ describe('what goes in', () => {
     put('deps/dep_CURL-prefix/src/dep_CURL/COPYING')
     put('src/deps_src/qhull/COPYING.txt')
     put('src/deps_src/clipper/clipper.cpp')
+    // Orca's prebuilt GMP and MPFR, which nothing ships any more.
     put('src/deps/GMP/gmp/gmp.COPYING')
     put('src/deps/GMP/gmp/gmp.README')
     put('src/deps/MPFR/mpfr/mpfr.COPYING.LESSER')
+    // GMP and MPFR built from their packages (patch 0007), and the toolchain that built them on Windows.
+    for (const n of ['GMP', 'MPFR']) put(`deps/dep_${n}-prefix/src/dep_${n}-stamp/dep_${n}-done`, '')
+    for (const f of ['COPYING', 'COPYING.LESSERv3', 'COPYINGv2', 'COPYINGv3', 'README', 'INSTALL']) put(`deps/dep_GMP-prefix/src/dep_GMP/${f}`)
+    for (const f of ['COPYING', 'COPYING.LESSER', 'README']) put(`deps/dep_MPFR-prefix/src/dep_MPFR/${f}`)
+    put('mingw/msys64/mingw64/share/licenses/crt/COPYING.MinGW-w64-runtime.txt')
+    put('mingw/msys64/mingw64/share/licenses/crt/COPYING.MinGW-w64.txt')
+    put('mingw/msys64/mingw64/share/licenses/libgcc/COPYING.RUNTIME')
+    put('mingw/msys64/mingw64/share/licenses/libgcc/COPYING3')
     // OpenCV puts the notices of its third-party code into the install prefix (etc/licenses on Windows).
     put('deps/dep_OpenCV-prefix/src/dep_OpenCV-stamp/dep_OpenCV-done', '')
     put('deps/dep_OpenCV-prefix/src/dep_OpenCV/LICENSE')
@@ -328,10 +337,16 @@ describe('what goes in', () => {
       'LICENSES/deps/FREETYPE/LICENSE.TXT',
       'LICENSES/deps/FREETYPE/docs/FTL.TXT',
       'LICENSES/deps/FREETYPE/docs/GPLv2.TXT',
-      'LICENSES/deps/GMP/LGPL-3.0.txt',
-      'LICENSES/deps/GMP/gmp.COPYING',
-      'LICENSES/deps/GMP/gmp.README',
-      'LICENSES/deps/MPFR/mpfr.COPYING.LESSER',
+      'LICENSES/deps/GMP/COPYING',
+      'LICENSES/deps/GMP/COPYING.LESSERv3',
+      'LICENSES/deps/GMP/COPYINGv2',
+      'LICENSES/deps/GMP/COPYINGv3',
+      'LICENSES/deps/GMP/README',
+      'LICENSES/deps/MPFR/COPYING',
+      'LICENSES/deps/MPFR/COPYING.LESSER',
+      'LICENSES/MinGW-w64/COPYING.MinGW-w64-runtime.txt',
+      'LICENSES/MinGW-w64/libgcc/COPYING.RUNTIME',
+      'LICENSES/MinGW-w64/libgcc/COPYING3',
       'LICENSES/deps/OpenCV/LICENSE',
       'LICENSES/deps/OpenCV/third-party/SoftFloat-COPYING.txt',
       'LICENSES/deps/OpenCV/third-party/libpng-LICENSE',
@@ -343,19 +358,38 @@ describe('what goes in', () => {
       'LICENSES/deps_src/libigl/igl_inline.h.notice.txt',
       'LICENSES/deps_src/qhull/COPYING.txt',
     ].sort())
-    expect(win[0]!.from).toBe(join(dir, 'src', 'LICENSE.txt'))
+    expect(win.find((c) => c.to === 'LICENSES/OrcaSlicer/LICENSE.txt')!.from).toBe(join(dir, 'src', 'LICENSE.txt'))
     expect(win.find((c) => c.to === 'LICENSES/deps/libnoise/LGPL-2.1.txt')!.from).toBe(join(own, 'LGPL-2.1.txt'))
-    // GMP's LGPL 3 text is MPFR's copy; libigl's MPL 2.0 text is Eigen's.
-    expect(win.find((c) => c.to === 'LICENSES/deps/GMP/LGPL-3.0.txt')!.from).toBe(join(dir, 'src', 'deps', 'MPFR', 'mpfr', 'mpfr.COPYING.LESSER'))
+    // GMP's from its package; the toolchain's from the tree in the work folder; libigl's MPL 2.0 text is Eigen's.
+    expect(win.find((c) => c.to === 'LICENSES/deps/GMP/COPYING.LESSERv3')!.from).toBe(join(dir, 'deps', 'dep_GMP-prefix', 'src', 'dep_GMP', 'COPYING.LESSERv3'))
+    expect(win.find((c) => c.to === 'LICENSES/MinGW-w64/COPYING.MinGW-w64-runtime.txt')!.from).toBe(join(dir, 'mingw', 'msys64', 'mingw64', 'share', 'licenses', 'crt', 'COPYING.MinGW-w64-runtime.txt'))
+    expect(win.some((c) => c.from.includes(join('src', 'deps', 'GMP', 'gmp')) || c.from.includes(join('src', 'deps', 'MPFR', 'mpfr')))).toBe(false)
     expect(win.find((c) => c.to === 'LICENSES/deps_src/libigl/MPL-2.0.txt')!.from).toBe(join(dir, 'deps', 'dep_Eigen-prefix', 'src', 'dep_Eigen', 'COPYING.MPL2'))
     expect(win.find((c) => c.to === 'LICENSES/deps/OpenCV/third-party/SoftFloat-COPYING.txt')!.from).toBe(join(dir, 'deps', 'OrcaSlicer_dep', 'usr', 'local', 'etc', 'licenses', 'SoftFloat-COPYING.txt'))
     const notice = win.find((c) => c.to === 'LICENSES/deps_src/clipper/clipper.hpp.notice.txt')!
     expect(notice.notice).toBe('SPDX-License-Identifier: BSL-1.0\nThe licence notice at the top of deps_src/clipper/clipper.hpp in the OrcaSlicer source tree:')
     expect(noticeText(notice.notice!, notice.from)).toBe(`${notice.notice}\n\n/* License: Boost Software License */\n`)
+    expect(requiredLicenses('win32')).toEqual([
+      'LICENSES/deps/GMP/COPYING.LESSERv3',
+      'LICENSES/deps/GMP/COPYINGv3',
+      'LICENSES/deps/GMP/COPYINGv2',
+      'LICENSES/deps/GMP/README',
+      'LICENSES/MinGW-w64/COPYING.MinGW-w64-runtime.txt',
+      'LICENSES/MinGW-w64/libgcc/COPYING.RUNTIME',
+      'LICENSES/MinGW-w64/libgcc/COPYING3',
+      'LICENSES/deps/OpenCV/third-party/SoftFloat-COPYING.txt',
+    ])
     expect(requiredLicenses('win32').every((to) => win.some((c) => c.to === to))).toBe(true)
     expect(requiredLicenses('linux')).toEqual([])
-    expect(licenseCopies(w, 'linux', own).map((c) => c.to)).not.toContain('LICENSES/deps/GMP/gmp.COPYING')
+    // Off Windows GMP's own texts, and no MinGW-w64 runtime.
+    const linux = licenseCopies(w, 'linux', own).map((c) => c.to)
+    expect(linux).toContain('LICENSES/deps/GMP/COPYING.LESSERv3')
+    expect(linux.some((to) => to.startsWith('LICENSES/MinGW-w64/'))).toBe(false)
     expect(unlicensedDependencies(w, win)).toEqual([])
+    // Without the toolchain's texts a Windows engine is not staged (requiredLicenses).
+    rmSync(join(dir, 'mingw'), { recursive: true, force: true })
+    const without = licenseCopies(w, 'win32', own)
+    expect(requiredLicenses('win32').filter((to) => !without.some((c) => c.to === to))).toEqual(['LICENSES/MinGW-w64/COPYING.MinGW-w64-runtime.txt', 'LICENSES/MinGW-w64/libgcc/COPYING.RUNTIME', 'LICENSES/MinGW-w64/libgcc/COPYING3'])
   })
 
   test('DEPS_SRC_NOTICES: the parts of deps_src the engine has code of and that have no licence file', () => {

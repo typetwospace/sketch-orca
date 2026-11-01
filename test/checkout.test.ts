@@ -32,7 +32,7 @@ describe('checkout', () => {
     }
   })
 
-  test('the checked-in patches change deps/ (0001, 0005, 0006), the CMake files (0002, 0003) and Print.hpp (0004)', () => {
+  test('the checked-in patches change deps/ (0001, 0005, 0006, 0007), the CMake files (0002, 0003) and Print.hpp (0004)', () => {
     const patches = listPatches(join(import.meta.dir, '..', 'patches'))
     expect(patches.map((x) => x.name)).toEqual([
       '0001-deps-without-gui.patch',
@@ -41,6 +41,7 @@ describe('checkout', () => {
       '0004-libslic3r-unmade-wipe-tower.patch',
       '0005-deps-msvc-static-runtime.patch',
       '0006-deps-openssl-3.patch',
+      '0007-deps-gmp-mpfr-from-source.patch',
     ])
     expect(patchedPaths(readFileSync(patches[0]!.path, 'utf8'))).toEqual(['deps/CMakeLists.txt', 'deps/OpenCV/OpenCV.cmake'])
     expect(patchedPaths(readFileSync(patches[1]!.path, 'utf8'))).toEqual(['CMakeLists.txt'])
@@ -48,8 +49,9 @@ describe('checkout', () => {
     expect(patchedPaths(readFileSync(patches[3]!.path, 'utf8'))).toEqual(['src/libslic3r/Print.hpp'])
     expect(patchedPaths(readFileSync(patches[4]!.path, 'utf8'))).toEqual(['deps/CMakeLists.txt', 'deps/OpenCV/OpenCV.cmake'])
     expect(patchedPaths(readFileSync(patches[5]!.path, 'utf8'))).toEqual(['deps/OpenSSL/OpenSSL.cmake'])
+    expect(patchedPaths(readFileSync(patches[6]!.path, 'utf8'))).toEqual(['deps/CMakeLists.txt', 'deps/GMP/GMP.cmake', 'deps/MPFR/MPFR.cmake', 'deps/MinGW/MinGW.cmake', 'deps/MinGW/build.sh'])
     // The dependency build is of these alone.
-    expect(depsPatchesOf(patches).map((x) => x.name)).toEqual(['0001-deps-without-gui.patch', '0005-deps-msvc-static-runtime.patch', '0006-deps-openssl-3.patch'])
+    expect(depsPatchesOf(patches).map((x) => x.name)).toEqual(['0001-deps-without-gui.patch', '0005-deps-msvc-static-runtime.patch', '0006-deps-openssl-3.patch', '0007-deps-gmp-mpfr-from-source.patch'])
   })
 
   test('patch 0006 pins OpenSSL 3.5.9 (Apache-2.0) by its published SHA-256, in the form source reads', () => {
@@ -59,6 +61,39 @@ describe('checkout', () => {
       { urls: ['https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz'], sha256: '603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a' },
     ])
     expect(text).toContain('-    URL "https://github.com/openssl/openssl/archive/OpenSSL_1_1_1w.tar.gz"')
+  })
+
+  test("patch 0007 builds, on Windows too, the GMP 6.2.1 and MPFR 4.2.2 that Orca's other platforms build, pinned by the same SHA-256s", () => {
+    const text = readFileSync(join(import.meta.dir, '..', 'patches', '0007-deps-gmp-mpfr-from-source.patch'), 'utf8')
+    expect(text).not.toContain('\r')
+    const added = text.split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++')).map((l) => l.slice(1)).join('\n')
+    const context = text.split('\n').filter((l) => l.startsWith(' ') || l.startsWith('-')).map((l) => l.slice(1)).join('\n')
+    // Orca v2.4.2's own pins (the non-MSVC recipes, in the context lines), plus a second URL for each.
+    const gmp = 'eae9326beb4158c386e39a356818031bd28f3124cf915f8c5b1dc4c7a36b4d7c'
+    const mpfr = '9ad62c7dc910303cd384ff8f1f4767a655124980bb6d8650fe62c815a231bb7b'
+    expect(parsePinnedSources(added)).toEqual([
+      { urls: ['https://github.com/SoftFever/OrcaSlicer_deps/releases/download/gmp-6.2.1/gmp-6.2.1.tar.bz2', 'https://ftp.gnu.org/gnu/gmp/gmp-6.2.1.tar.bz2'], sha256: gmp },
+      { urls: ['https://ftp.gnu.org/gnu/mpfr/mpfr-4.2.2.tar.bz2', 'https://www.mpfr.org/mpfr-4.2.2/mpfr-4.2.2.tar.bz2'], sha256: mpfr },
+    ])
+    expect(text).toContain('-if (MSVC)\n+if (MSVC AND DEP_MINGW_ROOT)')
+    expect(added).toContain('PATCH_COMMAND git apply ${GMP_DIRECTORY_FLAG} --verbose ${CMAKE_CURRENT_LIST_DIR}/0001-GMP_GCC15.patch')
+    expect(context).not.toContain('sketch_mingw_dll')
+    // The DLLs and import libraries: GMP 6 keeps GMP 5's DLL name; the engine's cli/CMakeLists.txt takes one lib<name>-*.dll of each.
+    expect(added).toMatch(/DLL libgmp-10\s+IMPLIB gmp\s+HEADERS gmp\.h/)
+    expect(added).toMatch(/DLL libmpfr-6\s+IMPLIB mpfr\s+HEADERS mpfr\.h mpf2mpfr\.h\s+DEPENDS dep_GMP/)
+    // MinGW.cmake checks for the tools the pipeline's toolchain provides.
+    expect(added).toContain('foreach (_tool usr/bin/bash.exe usr/bin/make.exe usr/bin/m4.exe usr/bin/cygpath.exe mingw64/bin/gcc.exe mingw64/bin/strip.exe)')
+    expect(added).toContain('option(DEP_MINGW_CHECK ')
+    // build.sh: only the tree's programs, no time stamps, libgcc linked in, and the .def files lib.exe reads.
+    const buildSh = text.slice(text.indexOf('diff --git a/deps/MinGW/build.sh'))
+    expect(buildSh).toContain('+export PATH=/usr/bin\n')
+    expect(buildSh.indexOf('+export PATH=/usr/bin\n')).toBeLessThan(buildSh.indexOf('cygpath'))
+    expect(buildSh).toContain('SOURCE_DATE_EPOCH=0')
+    expect(buildSh).toContain('ldflags="-Wl,--no-insert-timestamp -static-libgcc"')
+    expect(buildSh).toContain('--disable-cxx')
+    expect(buildSh).toContain('def=.libs/libgmp-3.dll.def')
+    expect(buildSh).toContain('def=src/.libs/libmpfr-6.dll.def')
+    expect(buildSh).toContain('strip --strip-unneeded "$prefix/bin/$dll.dll"')
   })
 
   test('each patch says it was modified for Sketch, with a date, in its header and in every comment it adds (AGPL-3.0 section 5a)', () => {

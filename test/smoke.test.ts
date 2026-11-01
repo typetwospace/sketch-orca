@@ -540,17 +540,11 @@ describe('jobs and the engine environment', () => {
     expect(engineEnv({}, ['C:\\e'], 'win32')).toEqual({ Path: 'C:\\e' })
   })
 
-  test('library folders before staging: the build, the dependency prefix, GMP and MPFR', () => {
+  test("library folders before staging: the build and the dependency prefix, which holds GMP and MPFR; never Orca's prebuilt copies", () => {
     const w = workPaths(resolve(scratch, 'home'))
     const exe = join(w.build, 'sketch-orca', 'sketch-orca.exe')
-    expect(engineLibraryDirs(w, exe, 'win32', 'x64')).toEqual([
-      dirname(exe),
-      join(w.depsPrefix, 'bin'),
-      join(w.depsPrefix, 'bin', 'occt'),
-      join(w.src, 'deps', 'GMP', 'gmp', 'lib', 'win-x64'),
-      join(w.src, 'deps', 'MPFR', 'mpfr', 'lib', 'win-x64'),
-    ])
-    expect(engineLibraryDirs(w, exe, 'win32', 'arm64')[3]).toBe(join(w.src, 'deps', 'GMP', 'gmp', 'lib', 'win-arm64'))
+    expect(engineLibraryDirs(w, exe, 'win32')).toEqual([dirname(exe), join(w.depsPrefix, 'bin'), join(w.depsPrefix, 'bin', 'occt')])
+    expect(engineLibraryDirs(w, exe, 'win32').some((d) => d.startsWith(w.src))).toBe(false)
     expect(engineLibraryDirs(w, exe, 'linux')).toEqual([dirname(exe), join(w.depsPrefix, 'lib')])
   })
 
@@ -868,7 +862,7 @@ describe('jobs and the engine environment', () => {
       writeFileSync(path, text)
     }
     put(exe, 'engine')
-    const gmp = join(w.src, 'deps', 'GMP', 'gmp', 'lib', process.arch === 'arm64' ? 'win-arm64' : 'win-x64', 'libgmp-10.dll')
+    const gmp = join(w.depsPrefix, 'bin', 'libgmp-10.dll')
     put(gmp, 'gmp 1')
     put(join(w.depsPrefix, 'bin', 'unused.dll'), 'not loaded')
     put(join(w.src, 'resources', 'profiles', 'BBL.json'), '{}')

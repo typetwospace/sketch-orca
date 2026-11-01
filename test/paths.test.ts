@@ -23,7 +23,7 @@ describe('paths', () => {
       downloads: join('W', 'downloads'),
       build: join('W', 'build'),
       dist: join('W', 'dist'),
-      prebuilt: join('W', 'prebuilt'),
+      mingw: join('W', 'mingw'),
       logs: join('W', 'logs'),
       state: join('W', 'state'),
       smoke: join('W', 'smoke'),

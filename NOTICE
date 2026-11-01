@@ -50,17 +50,25 @@ or the source of:
     LICENSES/deps_src/nanosvg/nanosvg.h.notice.txt.
   - libnoise, by Jason Bevins, under the GNU Lesser General Public License, version 2.1 or later:
     the package OrcaSlicer pins lacks the licence text, so licenses/LGPL-2.1.txt supplies it.
-  - GMP 5.0.1 (the GNU Multiple Precision Arithmetic Library), by the Free Software Foundation,
-    under the GNU Lesser General Public License, version 3 or later: OrcaSlicer ships it prebuilt
-    for Windows, and the source bundle carries its source (BUILDING.md, "Prebuilt libraries").
+  - GMP 6.2.1 (the GNU Multiple Precision Arithmetic Library) and MPFR 4.2.2, by the Free
+    Software Foundation and their contributors, under the GNU Lesser General Public License,
+    version 3 or later: on Windows, where OrcaSlicer copies prebuilt DLLs of older releases from
+    its tree, patches/0007 builds them from the release archives OrcaSlicer builds on its other
+    platforms, as DLLs, with the MinGW-w64 GCC of MSYS2 (BUILDING.md, "GMP and MPFR on Windows").
+    The source bundle carries both archives; GMP's licence is staged in LICENSES/deps/GMP.
+  - The mingw-w64 runtime, by the mingw-w64 project, under its own permissive terms, and libgcc,
+    by the Free Software Foundation, under the GNU General Public License, version 3, with the GCC
+    Runtime Library Exception: GCC links parts of them into the GMP and MPFR DLLs. Their licence
+    texts are staged in LICENSES/MinGW-w64.
   - OpenSSL 3.5.9, by the OpenSSL Project Authors, under the Apache License, version 2.0: libslic3r
     computes MD5 sums with its libcrypto, which the engine links statically. patches/0006 pins
     this release instead of the OpenSSL 1.1.1w of OrcaSlicer's recipe. Its licence is staged as
     LICENSES/deps/OpenSSL/LICENSE.txt, and the source bundle carries its source package.
 
-On Windows the engine and the libraries it loads that are built from source (OpenCASCADE, FreeType)
-are linked with Microsoft's static C and C++ runtime libraries, which come with the Visual C++
-compiler (/MT; patches/0005). No Visual C++ runtime DLL is shipped with the engine.
+On Windows the engine and the libraries it loads that are built from source with MSVC
+(OpenCASCADE, FreeType) are linked with Microsoft's static C and C++ runtime libraries, which come
+with the Visual C++ compiler (/MT; patches/0005). GMP's DLL, built with MinGW-w64, loads Windows'
+own msvcrt.dll. No Visual C++ runtime DLL is shipped with the engine.
 
 
 What was changed, and when
@@ -73,12 +81,13 @@ newest date of the patch headers.
     slicing library builds without the GUI. Each patch's header, the lines before its diff, has a
     title line and then a dated "Modified for Sketch, <date>." line, and the lines it adds to
     OrcaSlicer's files carry a dated comment. Modified 2026-10-30.
-  - patches/0005 and 0006 change OrcaSlicer's dependency build, in the same form: 0005 builds the
-    dependencies with MSVC's static runtime library, and 0006 builds OpenSSL 3.5.9 instead of
-    OpenSSL 1.1.1w. Modified 2026-11-01.
+  - patches/0005 to 0007 change OrcaSlicer's dependency build, in the same form: 0005 builds the
+    dependencies with MSVC's static runtime library, 0006 builds OpenSSL 3.5.9 instead of
+    OpenSSL 1.1.1w, and 0007 builds GMP and MPFR from source on Windows too, adding
+    deps/MinGW/MinGW.cmake and deps/MinGW/build.sh. Modified 2026-11-01.
   - cli/ is the command-line front end, added 2026-10-30; its file headers and its usage text
     were changed on 2026-10-31, and cli/CMakeLists.txt on 2026-11-01 (MSVC's static runtime
-    instead of copying its DLLs), as were cli/presets.cpp, cli/run.cpp and cli/common.cpp (the
+    instead of copying its DLLs; GMP and MPFR from the dependency prefix), as were cli/presets.cpp, cli/run.cpp and cli/common.cpp (the
     preset merge, flush volumes, prime tower, imported 3MF settings, the files of a run and the
     crash handler). Some of its files carry OrcaSlicer code, adapted, whose portions
     are copyright the OrcaSlicer contributors; each says which code from which OrcaSlicer file,
@@ -90,8 +99,8 @@ newest date of the patch headers.
   - scripts/ is the pipeline that fetches, builds, tests, stages and packages the engine, added
     2026-10-30 and changed 2026-10-31 (the source bundle takes the files git tracks) and
     2026-11-01 (the static runtime, which stage checks, a cap on the dependency build's jobs, the
-    build's provenance, the run lock, the privacy and smoke gates, and the source bundle's
-    binaries).
+    build's provenance, the run lock, the privacy and smoke gates, the source bundle's
+    binaries, and the MinGW-w64 toolchain that builds GMP and MPFR).
     scripts/lib/smoke.ts carries a TypeScript port of layer-height code from
     src/libslic3r/Slicing.cpp, to predict the layers the engine must make; those portions are
     copyright the OrcaSlicer contributors.

@@ -2,8 +2,8 @@
 // <work>/dist/source/<name>/:
 //
 //   orca/OrcaSlicer-<tag>.tar.gz    OrcaSlicer at the locked commit, as upstream has it (git archive),
-//                                   less the binaries the engine's build does not use
-//                                   (orcaArchiveExcludes)
+//                                   less the binaries of its tree, none of which the engine's build
+//                                   uses (orcaArchiveExcludes)
 //   engine/                         this repository (sketch-orca): the lock, the patches, the
 //                                   command-line front end (cli/), the protocol, the pipeline scripts
 //                                   and their tests, the README and the licence files; from a git
@@ -11,32 +11,32 @@
 //                                   names (a checkout with uncommitted changes or untracked files is
 //                                   refused, so no local file is published)
 //   dependencies/<Name>/<file>      the source packages Orca's dependency build downloaded, each one
-//                                   checked against the SHA-256 that Orca's recipe pins
-//   prebuilt/<Name>/<file>          the source packages of the libraries Orca ships prebuilt (GMP and
-//                                   MPFR on Windows), each pinned to the very binaries the engine
-//                                   ships and the Orca archive keeps (PREBUILT_SOURCES)
+//                                   checked against the SHA-256 that Orca's recipe pins (GMP and MPFR
+//                                   too: on Windows patch 0007 builds them from these with MinGW-w64)
 //   LICENSES/                       the licence texts shipped with the engine
-//   BUILDING.md                     how to build the engine from this folder
+//   BUILDING.md                     how to build the engine from this folder, with the pinned
+//                                   MinGW-w64 toolchain on Windows
 //   bundle.json                     sketch-orca-source/1: what this is the source of, and what it holds
 //   SHA256SUMS                      every other file
 //
 // The bundle is made only for a staged engine that matches the current lock, patches and front end.
 // Run again, it skips when its inputs are unchanged and every file matches SHA256SUMS.
-// --no-deps leaves the dependency packages and the prebuilt libraries' sources out (they stay listed
-// in bundle.json, with their URLs), and the bundle then says it is not complete. A built dependency, or a prebuilt binary the Orca archive keeps,
-// whose source is not pinned, and a pinned prebuilt binary with no recipe that rebuilds it from that
-// source, stop the step, unless --allow-missing; bundle.json and BUILDING.md then say the bundle is
-// not complete.
+// --no-deps leaves the dependency packages out (they stay listed in bundle.json, with their URLs),
+// and the bundle then says it is not complete. A built dependency whose source is not pinned, a file
+// of the engine that is a binary of Orca's tree (its prebuilt GMP, say), and a binary the Orca
+// archive keeps stop the step, unless --allow-missing; bundle.json and BUILDING.md then say the
+// bundle is not complete.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Context } from '../orca.ts'
 import { headCommit, listPatches } from './checkout.ts'
 import { depsBuildArgs, depsConfigureArgs, formatCommand, orcaBuildArgs, orcaConfigureArgs } from './cmake.ts'
 import { firstExisting, gitCandidates, type Platform } from './env.ts'
 import { copyFile, hashTree, listFiles, nativePath, parseSha256Sums, sha256Bytes, sha256Sums, treeEntries, writeText } from './files.ts'
 import type { OrcaLock } from './lock.ts'
+import { MINGW_PACKAGES, MSYS2_BASE, type MingwPackage } from './mingw.ts'
 import { sha256File, sha256Text, writeStamp } from './paths.ts'
 import { capture, Log, runLogged, StepError } from './run.ts'
 import { builderNeedles, builtDependencies, dependencySourceDir, privacyProblems, privacyProblemsIn, privacyRefusal, readManifest, USER_FOLDER_NEEDLES, verifyStaged, type EngineManifest, type StageCopy } from './stage.ts'
@@ -44,11 +44,12 @@ import { currentPlatform } from './toolchain.ts'
 
 export const SOURCE_FORMAT = 'sketch-orca-source/1'
 /** Bump when the bundle's layout changes: a bundle of an older version is made again. */
-export const SOURCE_VERSION = 5
+export const SOURCE_VERSION = 6
 
 /**
  * The toolchain the engine has been built with, on Windows x64 (2026-10-30, 2026-11-01), as BUILDING.md (the
- * bundle's and this repository's) gives it. Other versions may work; these are known to.
+ * bundle's and this repository's) gives it. Other versions may work; these are known to. The
+ * MinGW-w64 toolchain is the one mingw.ts pins.
  */
 export const BUILT_WITH = {
   bun: '1.2.15',
@@ -59,6 +60,7 @@ export const BUILT_WITH = {
   cmake: '3.29.2',
   ninja: '1.12.0',
   strawberryPerl: '5.42.3.1',
+  mingw: 'MSYS2 (base system of 2026-09-27) with the GCC 16.2.0 of its mingw64 environment (mingw-w64 14.0.0, binutils 2.47)',
 } as const
 
 // ---------------------------------------------------------------- dependency packages
@@ -176,65 +178,27 @@ export function planDependencies(built: string[], pinned: Map<string, PinnedSour
   return plan
 }
 
-/** Libraries Orca ships prebuilt in its tree (Windows: GMP and MPFR), with the versions their headers give. */
-export interface PrebuiltLibrary {
-  name: string
-  version: string
-  /** In Orca's tree. */
-  dir: string
-  /** The file the staged engine ships it as (bin/<file>) and its SHA-256, when its manifest lists one (withPrebuiltSources). */
-  binary?: string
-  binarySha256?: string
-  /** Its source package, when PREBUILT_SOURCES pins that very binary; in the bundle as prebuilt/<name>/<file>. */
-  source?: { file: string; urls: string[]; size: number; sha256: string; provenance: string; recipe?: string }
-  /**
-   * Its binaries the bundle's Orca archive keeps (withArchivedSources), each `sourced` when a pin
-   * lists that very file and its source package is `source`.
-   */
-  archived?: { path: string; sha256: string; sourced: boolean }[]
-}
-
-export function gmpHeaderVersion(text: string): string | undefined {
-  const n = (k: string) => new RegExp(`#define\\s+${k}\\s+(\\d+)`).exec(text)?.[1]
-  const major = n('__GNU_MP_VERSION')
-  const minor = n('__GNU_MP_VERSION_MINOR')
-  const patch = n('__GNU_MP_VERSION_PATCHLEVEL')
-  return major && minor && patch ? `${major}.${minor}.${patch}` : undefined
-}
-
-export function mpfrHeaderVersion(text: string): string | undefined {
-  return /#define\s+MPFR_VERSION_STRING\s+"([^"]+)"/.exec(text)?.[1]
-}
-
-/** The prebuilt libraries among `files` (file names: the staged engine's runtime, or the binaries the Orca archive keeps). */
-export function prebuiltLibraries(srcDir: string, runtime: string[]): PrebuiltLibrary[] {
-  const out: PrebuiltLibrary[] = []
-  const read = (p: string) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
-  if (runtime.some((r) => /^libgmp/i.test(r))) out.push({ name: 'GMP', version: gmpHeaderVersion(read(join(srcDir, 'deps', 'GMP', 'gmp', 'include', 'gmp.h'))) ?? 'unknown', dir: 'deps/GMP/gmp' })
-  if (runtime.some((r) => /^libmpfr/i.test(r))) out.push({ name: 'MPFR', version: mpfrHeaderVersion(read(join(srcDir, 'deps', 'MPFR', 'mpfr', 'include', 'mpfr.h'))) ?? 'unknown', dir: 'deps/MPFR/mpfr' })
-  return out
-}
+// ---------------------------------------------------------------- the binaries of Orca's tree
 
 /** Programs and libraries, by their file name. */
 const BINARY_FILE = /\.(dll|exe|lib|a|so(\.\d+)*|dylib|pdb|jar)$/i
 
-/** The prebuilt libraries' binaries in OrcaSlicer's tree (Windows, for each architecture). */
-const PREBUILT_BINARY_DIRS: Record<string, string> = { GMP: 'deps/GMP/gmp/lib', MPFR: 'deps/MPFR/mpfr/lib' }
+/** Whether `rel` (a path of OrcaSlicer's tree) is a program or a library, by its name. */
+export function isBinaryPath(rel: string): boolean {
+  return BINARY_FILE.test(rel)
+}
 
 /**
- * What the bundle's Orca archive leaves out of OrcaSlicer's tree, as git pathspecs: binaries the
- * engine's build does not use, which would otherwise ship without their source. The GUI's WebView2
- * loader, the gettext and 7-Zip programs of tools/, and the prebuilt GMP and MPFR of every other
- * Windows architecture than the engine's (all of them off Windows, where the build makes both
- * from their source packages).
+ * What the bundle's Orca archive leaves out of OrcaSlicer's tree, as git pathspecs: the binaries in
+ * it, none of which the engine's build uses, and which would otherwise ship without their source.
+ * The GUI's WebView2 loader, the gettext and 7-Zip programs of tools/, and the prebuilt GMP and MPFR
+ * DLLs and import libraries Orca's Windows build copies (CGAL's builds of GMP 5.0.1 and MPFR 3.0.0,
+ * whose build recipe is not published): the engine's build makes GMP and MPFR from their source
+ * packages on every platform, on Windows with MinGW-w64 (patch 0007). Their headers and READMEs,
+ * which are not binaries, stay.
  */
-export function orcaArchiveExcludes(platform: Platform, arch: string): string[] {
-  const out = ['deps/WebView2', 'tools/*.exe']
-  for (const dir of Object.values(PREBUILT_BINARY_DIRS)) {
-    if (platform !== 'win32') out.push(dir)
-    else for (const a of ['win-x64', 'win-x86', 'win-arm64']) if (a !== `win-${arch}`) out.push(`${dir}/${a}`)
-  }
-  return out
+export function orcaArchiveExcludes(): string[] {
+  return ['deps/WebView2', 'tools/*.exe', 'deps/GMP/gmp/lib', 'deps/MPFR/mpfr/lib']
 }
 
 /** Whether `rel` is one of `excludes` (a folder and what is in it, or a * pattern within one folder). */
@@ -243,185 +207,16 @@ function excluded(rel: string, excludes: string[]): boolean {
 }
 
 /**
- * The binaries the Orca archive keeps (`files`: the paths of the commit's tree), by library: the
- * prebuilt GMP and MPFR, and `unknown` for any other binary, which has no source in the bundle.
+ * The binaries the Orca archive keeps (`files`: the paths of the commit's tree, less `excludes`).
+ * The bundle has the source of none of them, so each one keeps it from being complete.
  */
-export function archivedBinaries(files: string[], excludes: string[]): { prebuilt: Map<string, string[]>; unknown: string[] } {
-  const prebuilt = new Map<string, string[]>()
-  const unknown: string[] = []
-  for (const rel of files) {
-    if (!BINARY_FILE.test(rel) || excluded(rel, excludes)) continue
-    const name = Object.keys(PREBUILT_BINARY_DIRS).find((n) => rel.startsWith(`${PREBUILT_BINARY_DIRS[n]}/`))
-    if (name) prebuilt.set(name, [...(prebuilt.get(name) ?? []), rel])
-    else unknown.push(rel)
-  }
-  return { prebuilt, unknown }
+export function archivedBinaries(files: string[], excludes: string[]): string[] {
+  return files.filter((rel) => isBinaryPath(rel) && !excluded(rel, excludes))
 }
 
 /** The git pathspecs that leave `excludes` out of `git archive`. */
 export function excludePathspecs(excludes: string[]): string[] {
   return excludes.map((e) => (e.includes('*') ? `:(exclude,glob)${e}` : `:(exclude)${e}`))
-}
-
-/**
- * The source package of a library Orca ships prebuilt, pinned to the exact binary it is the source
- * of: the bundle takes it only for that binary (by its SHA-256 in the staged engine's manifest).
- */
-export interface PrebuiltSource {
-  name: string
-  version: string
-  /** The file in the engine's bin/, the architecture it is built for, and its SHA-256. */
-  binary: string
-  arch: string
-  binarySha256: string
-  /** The source package: its file name, where it is published (tried in order), its size and SHA-256. */
-  file: string
-  urls: string[]
-  size: number
-  sha256: string
-  /** How the binary was made from it, as far as is known (BUILDING.md: "The binary is ..."). */
-  provenance: string
-  /**
-   * The files of OrcaSlicer's tree at the locked commit that are this very build, by path and
-   * SHA-256: the DLL and the import library made from it. The Orca archive keeps them, and the
-   * bundle carries the package as their source only when these match (withArchivedSources).
-   */
-  archived: readonly { path: string; sha256: string }[]
-  /**
-   * The bundle's recipe that makes this very binary from the package (a file of engine/), when there
-   * is one. Without it the bundle has the source but not the scripts to rebuild the binary, and is
-   * not complete (`source` stops unless --allow-missing).
-   */
-  recipe?: string
-}
-
-/**
- * The prebuilt binaries whose exact source is known.
- *
- * GMP 5.0.1, Windows x64. OrcaSlicer's deps/GMP/gmp at v2.4.2 (libgmp-10.dll, include/gmp.h and
- * gmp.README) is byte for byte the GMP of CGAL's win64 auxiliary libraries
- * (CGAL-5.4.1-win64-auxiliary-libraries-gmp-mpfr.zip, from github.com/CGAL/cgal releases): a
- * MinGW-w64 build of the GMP 5.0.1 release. The DLL's debug strings name the gmp-5.0.1/ sources and
- * GCC 4.4.5 20100604 (prerelease, mingw-w64) with binutils 2.20.51, and gmp.h is gmp-5.0.1's
- * gmp-h.in with only configure's values filled in (a 64-bit DLL; CC gcc; CFLAGS -O2 -pedantic -m64
- * -std=gnu99 -mtune=k8 -march=k8). The package is the GMP project's release archive: the same
- * SHA-256 from gmplib.org, ftp.gnu.org, ftpmirror.gnu.org and mirrors.kernel.org, and a good
- * signature (gmp-5.0.1.tar.bz2.sig) by the GMP Project key
- * 73D4 6C36 6746 1E4B D939 7249 5D6D 47DF DB89 9F46 from the GNU keyring (checked 2026-10-31).
- *
- * MPFR 3.0.0, Windows x64. OrcaSlicer's deps/MPFR/mpfr at v2.4.2 (libmpfr-4.dll, libmpfr-4.lib,
- * include/mpfr.h, include/mpf2mpfr.h, mpfr.README, mpfr.COPYING, mpfr.COPYING.LESSER) is byte for
- * byte the MPFR of the same CGAL package (checked 2026-11-01): a MinGW-w64 build of the MPFR 3.0.0
- * release by the same compiler as the GMP above, linked against that libgmp-10.dll. The DLL's debug
- * strings name the mpfr-3.0.0/ sources and GNU C 4.4.5 20100604 (prerelease) [svn/rev.160271 -
- * mingw-w64/oz]; mpfr.h and mpf2mpfr.h are the release's own, unchanged, and its version string is
- * 3.0.0, so none of MPFR's later 3.0.0 patches was applied. The package is the MPFR release archive:
- * the same SHA-256 from www.mpfr.org and ftp.gnu.org, and a good signature (mpfr-3.0.0.tar.bz2.sig
- * and .asc) by Vincent Lefevre's key 07F3 DBBE CC1A 3960 5078 094D 980C 1976 98C3 739D from the GNU
- * keyring (checked 2026-11-01). The engine does not load MPFR; Orca's Windows dependency build
- * copies it, so the Orca archive keeps it.
- *
- * Each .lib is an import library in Microsoft's format (__IMPORT_DESCRIPTOR_libgmp-10), made from
- * its DLL's exports, so it is pinned with the DLL.
- */
-export const PREBUILT_SOURCES: readonly PrebuiltSource[] = [
-  {
-    name: 'GMP',
-    version: '5.0.1',
-    binary: 'libgmp-10.dll',
-    arch: 'x64',
-    binarySha256: 'fec43cb18ce0ec8a5dd6ad1db745747167310ccb92b5acff0d445a8b3013f009',
-    file: 'gmp-5.0.1.tar.bz2',
-    urls: ['https://gmplib.org/download/gmp/gmp-5.0.1.tar.bz2', 'https://ftp.gnu.org/gnu/gmp/gmp-5.0.1.tar.bz2'],
-    size: 2006109,
-    sha256: 'a2a610f01fd3298dc08c87bf30498c2402590e1bcb227fc40b15ee6d280939fb',
-    provenance:
-      "CGAL's MinGW-w64 build of this release (GCC 4.4.5 20100604, binutils 2.20.51; gmp.h records CC gcc and CFLAGS -O2 -pedantic -m64 -std=gnu99 -mtune=k8 -march=k8), as CGAL publishes it in its win64 auxiliary libraries; OrcaSlicer's build copies it from deps/GMP/gmp and does not rebuild it, and CGAL's package does not say how it was configured",
-    archived: [
-      { path: 'deps/GMP/gmp/lib/win-x64/libgmp-10.dll', sha256: 'fec43cb18ce0ec8a5dd6ad1db745747167310ccb92b5acff0d445a8b3013f009' },
-      { path: 'deps/GMP/gmp/lib/win-x64/libgmp-10.lib', sha256: '63fbb59cd3b7879f71cf2d3d9133f6edcd6d6afb122a1fff085afb7c2f486f0f' },
-    ],
-  },
-  {
-    name: 'MPFR',
-    version: '3.0.0',
-    binary: 'libmpfr-4.dll',
-    arch: 'x64',
-    binarySha256: '09b3b868b96433991fc15c9c5ae6f9a44c62d2e21194110442607917391ed927',
-    file: 'mpfr-3.0.0.tar.bz2',
-    urls: ['https://www.mpfr.org/mpfr-3.0.0/mpfr-3.0.0.tar.bz2', 'https://ftp.gnu.org/gnu/mpfr/mpfr-3.0.0.tar.bz2'],
-    size: 1138685,
-    sha256: '8f4e5f9c53536cb798a30455ac429b1f9fc75a0f8af32d6e0ac31ebf1024821f',
-    provenance:
-      "CGAL's MinGW-w64 build of this release (GNU C 4.4.5 20100604, the compiler of the GMP above, against whose libgmp-10.dll it is linked), as CGAL publishes it in its win64 auxiliary libraries; OrcaSlicer's build copies it from deps/MPFR/mpfr and does not rebuild it, the engine does not load it, and CGAL's package does not say how it was configured",
-    archived: [
-      { path: 'deps/MPFR/mpfr/lib/win-x64/libmpfr-4.dll', sha256: '09b3b868b96433991fc15c9c5ae6f9a44c62d2e21194110442607917391ed927' },
-      { path: 'deps/MPFR/mpfr/lib/win-x64/libmpfr-4.lib', sha256: 'db89bd46fcbbd99b56197284e5593b3f9ce744ccb8ead9aebee9b714bd2547dc' },
-    ],
-  },
-]
-
-/** The file each prebuilt library ships as, directly in the engine's bin/. */
-const PREBUILT_BINARY: Record<string, RegExp> = { GMP: /^bin\/libgmp[^/]*$/i, MPFR: /^bin\/libmpfr[^/]*$/i }
-
-/**
- * The prebuilt libraries with the binary the staged engine ships of each (from its manifest's
- * files, with the SHA-256) and, when `pins` has that very binary for the engine's architecture,
- * its source package.
- */
-export function withPrebuiltSources(libs: PrebuiltLibrary[], m: Pick<EngineManifest, 'files' | 'arch'>, pins: readonly PrebuiltSource[] = PREBUILT_SOURCES): PrebuiltLibrary[] {
-  return libs.map((lib) => {
-    const re = PREBUILT_BINARY[lib.name]
-    const bin = re ? m.files.find((f) => re.test(f.path)) : undefined
-    if (!bin) return { ...lib }
-    const out: PrebuiltLibrary = { ...lib, binary: bin.path, binarySha256: bin.sha256 }
-    const pin = pins.find((p) => p.name === lib.name && p.version === lib.version && p.arch === m.arch && `bin/${p.binary}` === bin.path && p.binarySha256 === bin.sha256)
-    if (pin) out.source = sourceOf(pin)
-    return out
-  })
-}
-
-function sourceOf(pin: PrebuiltSource): NonNullable<PrebuiltLibrary['source']> {
-  return { file: pin.file, urls: [...pin.urls], size: pin.size, sha256: pin.sha256, provenance: pin.provenance, ...(pin.recipe ? { recipe: pin.recipe } : {}) }
-}
-
-/** A binary of OrcaSlicer's tree that the bundle's Orca archive keeps: its path at the locked commit and its SHA-256. */
-export interface ArchivedBinary {
-  path: string
-  sha256: string
-}
-
-/** The Windows architecture a prebuilt binary's folder names (lib/win-x64/...), if any. */
-export function binaryArch(path: string): string | undefined {
-  return /\/win-([a-z0-9]+)\/[^/]+$/.exec(path)?.[1]
-}
-
-/**
- * The prebuilt libraries with the binaries the Orca archive keeps of each (`binaries`), apart from
- * the binaries the staged engine ships (withPrebuiltSources): a binary counts as sourced when a pin
- * of that library and version lists that very file (its path, the architecture its folder names
- * and its SHA-256) and the pin's package is the library's source in the bundle. A library the
- * engine does not ship (MPFR, which only the build reads) takes its source from the pin that lists
- * every one of its archived binaries.
- */
-export function withArchivedSources(libs: PrebuiltLibrary[], binaries: ArchivedBinary[], pins: readonly PrebuiltSource[] = PREBUILT_SOURCES): PrebuiltLibrary[] {
-  return libs.map((lib) => {
-    const dir = PREBUILT_BINARY_DIRS[lib.name]
-    const files = dir === undefined ? [] : binaries.filter((b) => b.path.startsWith(`${dir}/`))
-    if (files.length === 0) return { ...lib }
-    const pinOf = (b: ArchivedBinary) =>
-      pins.find((p) => p.name === lib.name && p.version === lib.version && p.arch === binaryArch(b.path) && p.archived.some((a) => a.path === b.path && a.sha256 === b.sha256))
-    const out: PrebuiltLibrary = { ...lib }
-    if (!out.source && !out.binary) {
-      const pin = pinOf(files[0]!)
-      if (pin && files.every((b) => pinOf(b) === pin)) out.source = sourceOf(pin)
-    }
-    out.archived = files.map((b) => {
-      const pin = pinOf(b)
-      return { path: b.path, sha256: b.sha256, sourced: pin !== undefined && out.source !== undefined && pin.file === out.source.file && pin.sha256 === out.source.sha256 }
-    })
-    return out
-  })
 }
 
 /** A file of `commit` (`rel`, with forward slashes), as `git archive` writes a binary. */
@@ -437,63 +232,25 @@ export function commitFileSha256(git: string, dir: string, commit: string, rel: 
   return sha256Bytes(commitFileBytes(git, dir, commit, rel))
 }
 
-/** A prebuilt library for messages: GMP 5.0.1 (bin/libgmp-10.dll, SHA-256 ...). */
-export function prebuiltLabel(p: PrebuiltLibrary): string {
-  return `${p.name} ${p.version}${p.binary ? ` (${p.binary}, SHA-256 ${p.binarySha256})` : ''}`
-}
-
-/** Gets the bytes at a URL; throws when it cannot. */
-export type Fetcher = (url: string) => Promise<Uint8Array>
-
-/** A Fetcher on the global fetch, following redirects. */
-export const httpFetcher: Fetcher = async (url) => {
-  const res = await fetch(url, { redirect: 'follow' })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return new Uint8Array(await res.arrayBuffer())
-}
-
-/** Where `source` keeps a prebuilt library's source package: <work>/prebuilt/<Name>/<file>. */
-export function prebuiltSourcePath(prebuiltDir: string, name: string, file: string): string {
-  return join(prebuiltDir, name, file)
+/**
+ * The files of the staged engine (its manifest's) that are byte for byte a binary of OrcaSlicer's
+ * tree (`treeBinaries`: path and SHA-256 of each, excluded from the archive or not), such as the
+ * prebuilt GMP that Orca's Windows build copies when GMP is not built from source: the bundle has
+ * no source for them, so it is not complete. Empty when the engine ships none.
+ */
+export function shippedTreeBinaries(files: readonly { path: string; sha256: string }[], treeBinaries: readonly { path: string; sha256: string }[]): string[] {
+  const bySha = new Map<string, string[]>()
+  for (const b of treeBinaries) bySha.set(b.sha256, [...(bySha.get(b.sha256) ?? []), b.path])
+  return files.filter((f) => bySha.has(f.sha256)).map((f) => `${f.path} (${bySha.get(f.sha256)!.join(', ')})`)
 }
 
 /**
- * The source package of a pinned prebuilt library, in `prebuiltDir`: a copy already there is kept
- * when its size and SHA-256 are the pin's (else removed), otherwise the pin's URLs are tried in
- * order and the first download of the pinned size and SHA-256 is kept. Throws, naming what each URL
- * gave, when none gives it.
+ * GMP and MPFR on Windows (patch 0007): built from the source packages of dependencies/GMP and
+ * dependencies/MPFR by the MinGW-w64 toolchain of MSYS2, which the pipeline unpacks from these
+ * pinned packages (mingw.ts). BUILDING.md lists them; bundle.json too (toolchain.mingw).
  */
-export async function ensurePrebuiltSource(lib: PrebuiltLibrary, prebuiltDir: string, fetcher: Fetcher, line: (msg: string) => void): Promise<string> {
-  const s = lib.source
-  if (!s) throw new StepError(`no pinned source for the prebuilt ${prebuiltLabel(lib)}`)
-  const path = prebuiltSourcePath(prebuiltDir, lib.name, s.file)
-  if (existsSync(path)) {
-    if (statSync(path).size === s.size && sha256File(path) === s.sha256) return path
-    line(`source: ${path} is not the pinned ${s.file} (SHA-256 ${s.sha256}); getting it again`)
-    rmSync(path, { force: true })
-  }
-  const failures: string[] = []
-  for (const url of s.urls) {
-    let bytes: Uint8Array
-    try {
-      line(`source: downloading ${url}`)
-      bytes = await fetcher(url)
-    } catch (err) {
-      failures.push(`${url}: ${(err as Error).message}`)
-      continue
-    }
-    const sha256 = sha256Bytes(bytes)
-    if (bytes.length !== s.size || sha256 !== s.sha256) {
-      failures.push(`${url}: ${bytes.length} bytes with SHA-256 ${sha256}, not ${s.size} bytes with ${s.sha256}`)
-      continue
-    }
-    mkdirSync(dirname(path), { recursive: true })
-    const partial = `${path}.partial`
-    writeFileSync(partial, bytes)
-    renameSync(partial, path)
-    return path
-  }
-  throw new StepError(`cannot get the source of the prebuilt ${prebuiltLabel(lib)}: ${failures.join('; ')}`)
+export function mingwToolchain(platform: Platform): MingwPackage[] {
+  return platform === 'win32' ? [MSYS2_BASE, ...MINGW_PACKAGES].map((p) => ({ ...p, urls: [...p.urls] })) : []
 }
 
 // ---------------------------------------------------------------- the bundle
@@ -555,22 +312,14 @@ export function repositoryFiles(git: string | undefined, dir: string): { files: 
   return { files, commit }
 }
 
-/** A prebuilt library's source package as the bundle copies it (ensurePrebuiltSource gives the path). */
-export interface PrebuiltArchive {
-  name: string
-  file: string
-  path: string
-}
-
 /**
- * What the bundle copies: the repository, the dependency packages and the prebuilt libraries'
- * source packages (both unless left out), and the staged licences.
+ * What the bundle copies: the repository, the dependency packages (unless left out), and the staged
+ * licences.
  */
-export function bundleCopies(o: { engineDir: string; engineFiles: string[]; archives: DependencyArchive[]; prebuiltArchives?: PrebuiltArchive[]; withDeps: boolean; licensesDir: string; licenseFiles: string[] }): StageCopy[] {
+export function bundleCopies(o: { engineDir: string; engineFiles: string[]; archives: DependencyArchive[]; withDeps: boolean; licensesDir: string; licenseFiles: string[] }): StageCopy[] {
   const out: StageCopy[] = []
   for (const rel of o.engineFiles) out.push({ from: nativePath(o.engineDir, rel), to: `engine/${rel}` })
   if (o.withDeps) for (const a of o.archives) out.push({ from: a.path, to: `dependencies/${a.name}/${a.file}` })
-  if (o.withDeps) for (const p of o.prebuiltArchives ?? []) out.push({ from: p.path, to: `prebuilt/${p.name}/${p.file}` })
   for (const rel of o.licenseFiles) out.push({ from: nativePath(o.licensesDir, rel), to: `LICENSES/${rel}` })
   const seen = new Set<string>()
   for (const c of out) {
@@ -601,37 +350,32 @@ export interface BundleInfo {
     archives: { name: string; file: string; url: string; sha256: string; size: number }[]
     inTree: string[]
     missing: string[]
-    prebuilt: PrebuiltLibrary[]
   }
+  /**
+   * Build tools the pipeline fetches itself, pinned: on Windows the MSYS2 packages of the MinGW-w64
+   * toolchain that builds GMP and MPFR (mingwToolchain); none elsewhere.
+   */
+  toolchain: { mingw: MingwPackage[] }
   inputs: string
   createdAt: string
 }
 
 /**
- * What a bundle lacks of complete corresponding source. `missing`: sources and recipes it cannot
- * have (a built dependency or a prebuilt binary with no pinned source, an archived binary no pin
- * lists, a pinned prebuilt binary with no recipe, or with one that is not a file of `engineFiles`,
- * the files the bundle carries as engine/, a binary the Orca archive keeps that is not a prebuilt
- * library's); `source` stops for them unless --allow-missing. `omitted`: the packages --no-deps
- * leaves out by choice; the bundle is then not complete either.
+ * What a bundle lacks of complete corresponding source. `missing`: sources it cannot have (a built
+ * dependency with no pinned package, a file of the engine that is a binary of Orca's tree, a binary
+ * the Orca archive keeps); `source` stops for them unless --allow-missing. `omitted`: the packages
+ * --no-deps leaves out by choice; the bundle is then not complete either.
  */
-export function sourceGaps(o: { plan: DependencyPlan; prebuilt: PrebuiltLibrary[]; withDeps: boolean; unknownBinaries?: string[]; engineFiles?: readonly string[] }): { missing: string[]; omitted: string[] } {
-  const { plan, prebuilt } = o
-  const unsourced = prebuilt.filter((p) => !p.source)
-  const unsourcedFiles = prebuilt.filter((p) => p.source).flatMap((p) => (p.archived ?? []).filter((a) => !a.sourced))
-  const unrecipied = prebuilt.filter((p) => p.source && !p.source.recipe)
-  const engineFiles = o.engineFiles === undefined ? undefined : new Set(o.engineFiles)
-  const unbundledRecipes = engineFiles === undefined ? [] : prebuilt.filter((p) => p.source?.recipe && !engineFiles.has(p.source.recipe))
-  const unknown = o.unknownBinaries ?? []
+export function sourceGaps(o: { plan: DependencyPlan; withDeps: boolean; archivedBinaries?: string[]; shippedTreeBinaries?: string[] }): { missing: string[]; omitted: string[] } {
+  const { plan } = o
+  const kept = o.archivedBinaries ?? []
+  const shipped = o.shippedTreeBinaries ?? []
   const missing = [
     ...(plan.missing.length > 0 ? [`no pinned source package for the built dependencies ${plan.missing.join(', ')}; fetch them with build`] : []),
-    ...(unsourced.length > 0 ? [`no pinned source for the prebuilt ${unsourced.map(prebuiltLabel).join(', ')}, whose binaries the Orca archive keeps (${unsourced.map((p) => (p.archived ?? []).map((a) => a.path).join(', ') || p.dir).join(', ')}); PREBUILT_SOURCES (scripts/lib/bundle.ts) pins the binaries whose source is known`] : []),
-    ...(unsourcedFiles.length > 0 ? [`the Orca archive keeps ${unsourcedFiles.map((f) => `${f.path} (SHA-256 ${f.sha256})`).join(', ')}, which no pin of the source the bundle carries lists by path and SHA-256 (PREBUILT_SOURCES archived)`] : []),
-    ...(unrecipied.length > 0 ? [`no recipe that rebuilds the prebuilt ${unrecipied.map(prebuiltLabel).join(', ')} from its pinned source (how it was configured and built is not known)`] : []),
-    ...(unbundledRecipes.length > 0 ? [`the recipes ${unbundledRecipes.map((p) => `engine/${p.source!.recipe} (${prebuiltLabel(p)})`).join(', ')} are not files of the bundle's engine/; commit them to this repository`] : []),
-    ...(unknown.length > 0 ? [`the Orca archive keeps binaries whose source the bundle does not have: ${unknown.join(', ')}; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or pin their source`] : []),
+    ...(shipped.length > 0 ? [`the engine ships binaries of OrcaSlicer's tree, whose source the bundle does not have: ${shipped.join(', ')}; build them from their source packages (GMP and MPFR on Windows: -DDEP_MINGW_ROOT, patch 0007)`] : []),
+    ...(kept.length > 0 ? [`the Orca archive keeps binaries whose source the bundle does not have: ${kept.join(', ')}; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts)`] : []),
   ]
-  const leftOut = o.withDeps ? [] : [...new Set([...plan.archives.map((a) => a.name), ...prebuilt.filter((p) => p.source).map((p) => p.name)])].sort()
+  const leftOut = o.withDeps ? [] : [...new Set(plan.archives.map((a) => a.name))].sort()
   const omitted = leftOut.length > 0 ? [`the source packages of ${leftOut.join(', ')} are left out (--no-deps); bundle.json lists each one with its URL and SHA-256`] : []
   return { missing, omitted }
 }
@@ -639,15 +383,16 @@ export function sourceGaps(o: { plan: DependencyPlan; prebuilt: PrebuiltLibrary[
 /**
  * The build instructions in the bundle; the command lines are the pipeline's own (cmake.ts). It
  * says the bundle is complete corresponding source only when neither `incomplete` nor its own
- * plan, prebuilt libraries and --no-deps (sourceGaps) name a gap.
+ * plan and --no-deps (sourceGaps) name a gap.
  */
-export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patches: string[]; plan: DependencyPlan; prebuilt: PrebuiltLibrary[]; withDeps: boolean; orcaExcluded?: string[]; incomplete?: string[] }): string {
+export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patches: string[]; plan: DependencyPlan; withDeps: boolean; orcaExcluded?: string[]; incomplete?: string[] }): string {
   const own = sourceGaps(o)
   const incomplete = [...new Set([...(o.incomplete ?? []), ...own.missing, ...own.omitted])]
   const { lock, manifest: m } = o
   const platform = m.platform
-  const ninja = platform === 'win32' ? '<ninja.exe>' : '<ninja>'
-  const deps = depsConfigureArgs({ ninja, sourceDir: '<src>/deps', buildDir: '<deps>', downloadDir: '<downloads>', ignorePrefixes: [], platform })
+  const win = platform === 'win32'
+  const ninja = win ? '<ninja.exe>' : '<ninja>'
+  const deps = depsConfigureArgs({ ninja, sourceDir: '<src>/deps', buildDir: '<deps>', downloadDir: '<downloads>', ignorePrefixes: [], platform, ...(win ? { mingwRoot: '<msys64>' } : {}) })
   const orca = orcaConfigureArgs({
     ninja,
     sourceDir: '<src>',
@@ -659,7 +404,10 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
     ignorePrefixes: [],
     platform,
   })
-  const exe = platform === 'win32' ? 'sketch-orca.exe' : 'sketch-orca'
+  const exe = win ? 'sketch-orca.exe' : 'sketch-orca'
+  const mingw = mingwToolchain(platform)
+  // The steps of a build from this folder alone; Windows has one more, the MinGW-w64 toolchain.
+  const step = { deps: win ? 5 : 4, engine: win ? 6 : 5 }
   const lines = [
     `# Building sketch-orca ${m.engine.version} from this source`,
     '',
@@ -684,6 +432,7 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
     `- ${BUILT_WITH.visualStudio} with the MSVC x64 tools ${BUILT_WITH.msvc} (toolset ${BUILT_WITH.msvcToolset}) and the Windows SDK ${BUILT_WITH.windowsSdk}.`,
     `- CMake ${BUILT_WITH.cmake} and Ninja ${BUILT_WITH.ninja} (the copies Strawberry Perl ships in its c\\bin; the CMake files ask for CMake 3.13 or later).`,
     `- Strawberry Perl ${BUILT_WITH.strawberryPerl} (64-bit), for OpenSSL's build.`,
+    `- ${BUILT_WITH.mingw}, which builds GMP and MPFR on Windows (patch 0007); the pipeline fetches its pinned packages itself${win ? ' (see "MinGW-w64" below)' : ''}.`,
     '- Linux and macOS: a C and C++ compiler (gcc or clang), make, autoconf, automake, libtool, m4',
     '  and perl. These platforms have not been tried yet.',
     '',
@@ -718,7 +467,13 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
     o.withDeps
       ? '3. Copy dependencies/ to a folder <downloads>. Orca\'s dependency build looks for each package there under its own name and, when its SHA-256 matches the pin, does not download it.'
       : '3. The dependency packages were left out of this bundle; bundle.json lists each one with its URL and SHA-256. Put them in <downloads>/<Name>/.',
-    '4. Build the dependencies (on Windows, in a Visual Studio x64 developer prompt, with Strawberry Perl\'s perl first on PATH and its C compiler folder off PATH):',
+    ...(win
+      ? [
+          '4. Unpack the MinGW-w64 toolchain (see "MinGW-w64" below) into a folder; call the msys64 folder',
+          '   it makes <msys64>.',
+        ]
+      : []),
+    `${step.deps}. Build the dependencies (on Windows, in a Visual Studio x64 developer prompt, with Strawberry Perl's perl first on PATH and its C compiler folder off PATH):`,
     '',
     '```',
     formatCommand('cmake', deps),
@@ -730,22 +485,26 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
     '   CL=/d1trimfile:"<folder>\\\\" for the folder that holds <src>, <deps> and <build> and for',
     '   <bundle>/engine, before configuring, so the source paths compiled into the engine do not',
     '   name those folders; that is optional.',
-    ...(platform === 'win32'
+    ...(win
       ? [
           '   -DDEP_MSVC_STATIC_RUNTIME=ON (patch 0005) builds every dependency with MSVC\'s static',
-          '   runtime library (/MT), as the engine is built in step 5, so that no Visual C++ runtime DLL',
+          `   runtime library (/MT), as the engine is built in step ${step.engine}, so that no Visual C++ runtime DLL`,
           '   ships with it.',
+          '   -DDEP_MINGW_ROOT=<msys64> (patch 0007) builds GMP and MPFR from their source packages in',
+          '   dependencies/ with that toolchain\'s GCC, as DLLs, and runs their test suites; without it',
+          '   Orca\'s build would copy the prebuilt DLLs of its tree, whose source this folder does not',
+          '   hold (the OrcaSlicer archive leaves them out).',
         ]
       : []),
     '',
-    '5. Build the engine:',
+    `${step.engine}. Build the engine:`,
     '',
     '```',
     formatCommand('cmake', orca),
     formatCommand('cmake', orcaBuildArgs('<build>', 8)),
     '```',
     '',
-    ...(platform === 'win32'
+    ...(win
       ? [
           'CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded, with policy CMP0091 NEW, is the static runtime for',
           'Orca and the front end; engine/cli/CMakeLists.txt refuses to configure with any other.',
@@ -754,36 +513,39 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
       : []),
     `The engine is <build>/sketch-orca/${exe}. \`${exe} version\` prints the Orca commit it was built from.`,
     '',
+    ...(mingw.length > 0
+      ? [
+          '## MinGW-w64',
+          '',
+          'GMP and MPFR are built with GCC, not MSVC: Orca\'s deps/MinGW/build.sh (patch 0007) runs their',
+          'configure scripts and makefiles with the bash, make and m4 of an MSYS2 tree and the GCC of its',
+          'mingw64 environment. The pipeline unpacks these packages, each checked against its size and',
+          'SHA-256, into <work>/mingw/msys64 (engine/scripts/lib/mingw.ts): the first, which holds',
+          'msys64/, then each of the others into that msys64 folder, without pacman\'s records (.PKGINFO,',
+          '.BUILDINFO, .MTREE, .INSTALL), with Windows\' own tar.exe. Nothing is installed.',
+          '',
+          ...mingw.map((p) => `- ${p.file} (${p.size} bytes, SHA-256 ${p.sha256}): ${p.urls.join(' or ')}`),
+          '',
+        ]
+      : []),
     '## Dependencies',
     '',
     ...o.plan.archives.map((a) => `- ${a.name}: ${a.file} from ${a.url} (SHA-256 ${a.sha256})`),
     ...o.plan.inTree.map((n) => `- ${n}: built from its sources inside the OrcaSlicer tree`),
-    ...o.prebuilt.map((p) => prebuiltLine(p, o.withDeps)),
     ...o.plan.missing.map((n) => `- ${n}: built, but its source package is NOT in this bundle`),
     '',
   ]
   return lines.join('\n')
 }
 
-/** BUILDING.md's line for a library Orca ships prebuilt: where it comes from, and where its source is. */
-export function prebuiltLine(p: PrebuiltLibrary, withDeps: boolean): string {
-  const kept = (p.archived ?? []).length > 0 ? ` The OrcaSlicer archive keeps ${(p.archived ?? []).map((a) => `${a.path} (SHA-256 ${a.sha256})`).join(' and ')}.` : ''
-  const ships = `- ${p.name} ${p.version}: OrcaSlicer ships it prebuilt for Windows in ${p.dir}${p.binary ? `, and the engine ships it as ${p.binary} (SHA-256 ${p.binarySha256})` : ''}; its licence is in LICENSES/deps/${p.name}.${kept}`
-  if (!p.source) return `${ships} Its source is NOT in this bundle: no source package is pinned for this binary (PREBUILT_SOURCES in engine/scripts/lib/bundle.ts).`
-  const from = `${p.source.urls[0]} (SHA-256 ${p.source.sha256})`
-  const where = withDeps ? `Its source is prebuilt/${p.name}/${p.source.file}, from ${from}.` : `Its source, ${p.source.file}, was left out of this bundle; it is at ${from}.`
-  const rebuild = p.source.recipe ? `engine/${p.source.recipe} rebuilds it from that source.` : 'The bundle has no recipe that rebuilds this binary from that source, so for it the bundle is not complete.'
-  return `${ships} ${where} The binary is ${p.source.provenance}. ${rebuild}`
-}
-
 /**
- * The bundle's files that privacyProblems reads: all but the packages of others (Orca's archive,
- * dependencies/ and prebuilt/), which are as their projects publish them, each pinned (the locked
- * commit, the SHA-256 of each package), so that nothing of this build can be in them. The binaries
- * the Orca archive keeps are read apart (archivedPrivacyProblems).
+ * The bundle's files that privacyProblems reads: all but the packages of others (Orca's archive and
+ * dependencies/), which are as their projects publish them, each pinned (the locked commit, the
+ * SHA-256 of each package), so that nothing of this build can be in them. The binaries the Orca
+ * archive keeps, if any, are read apart (archivedPrivacyProblems).
  */
 export function ownBundleFiles(rels: string[]): string[] {
-  return rels.filter((rel) => !/^(orca|dependencies|prebuilt)\//.test(rel))
+  return rels.filter((rel) => !/^(orca|dependencies)\//.test(rel))
 }
 
 /** The bundle's files whose lines marked PRIVACY_FIXTURE_MARK privacyProblems leaves out: the repository's own tests. */
@@ -842,7 +604,7 @@ export function stagedFor(ctx: Context): EngineManifest {
   return m
 }
 
-export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpFetcher): Promise<number> {
+export async function runSource(ctx: Context, log: Log): Promise<number> {
   const w = ctx.work
   const platform = currentPlatform()
   const withDeps = !ctx.args.includes('--no-deps')
@@ -857,36 +619,32 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
     return dir !== undefined && dir.startsWith(w.src)
   })
   for (const u of plan.unpinned) log.line(`source: ${u} is pinned by no recipe of this release; left out`)
-  // Every binary the Orca archive keeps is a prebuilt library whose source is pinned, or is named here.
-  const orcaExcluded = orcaArchiveExcludes(m.platform, m.arch)
+  // The binaries of Orca's tree: the archive keeps none of them (each one it kept would be named
+  // here), and the engine ships none of them (the prebuilt GMP, say, which has no source here).
+  const orcaExcluded = orcaArchiveExcludes()
   const tree = capture(git, ['-C', w.src, '-c', 'core.quotePath=false', 'ls-tree', '-r', '-z', '--name-only', ctx.lock.commit])
   if (tree.code !== 0) throw new StepError(`git ls-tree failed in ${w.src}: ${tree.stderr.trim()}`)
-  const archived = archivedBinaries(tree.stdout.split('\0').filter((rel) => rel !== ''), orcaExcluded)
-  // The prebuilt binaries the engine ships, and apart from them the ones the archive keeps, each matched to its pin by path and SHA-256.
-  const archivedBytes = new Map([...archived.prebuilt.values()].flat().map((rel) => [rel, commitFileBytes(git, w.src, ctx.lock.commit, rel)] as const))
-  const archivedFiles = [...archivedBytes].map(([rel, bytes]) => ({ path: rel, sha256: sha256Bytes(bytes) }))
+  const treeFiles = tree.stdout.split('\0').filter((rel) => rel !== '')
+  const kept = archivedBinaries(treeFiles, orcaExcluded)
+  const treeBinaries = treeFiles.filter(isBinaryPath).map((rel) => ({ path: rel, sha256: commitFileSha256(git, w.src, ctx.lock.commit, rel) }))
+  const shipped = shippedTreeBinaries(m.files, treeBinaries)
   // Nothing the bundle writes or copies from this repository names the builder (a current bundle too), and the binaries it archives name no machine.
   const needles = builderNeedles(ctx, platform, git)
-  const archivedPersonal = archivedPrivacyProblems(orcaArchiveName(ctx.lock), archivedBytes, needles)
+  const keptBytes = new Map(kept.map((rel) => [rel, commitFileBytes(git, w.src, ctx.lock.commit, rel)] as const))
+  const archivedPersonal = archivedPrivacyProblems(orcaArchiveName(ctx.lock), keptBytes, needles)
   if (archivedPersonal.length > 0) throw new StepError(`binaries the Orca archive keeps record a person's or a machine's folder: ${archivedPersonal.join('; ')}. They ship as OrcaSlicer publishes them: leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or allow the folder in ALLOWED_BUILD_PATHS (scripts/lib/stage.ts), saying why`)
-  const prebuilt = withArchivedSources(withPrebuiltSources(prebuiltLibraries(w.src, archivedFiles.map((f) => f.path.split('/').pop()!)), m), archivedFiles)
   const repository = repositoryFiles(git, ctx.engine.engine)
   const engineFiles = repository.files
   if (repository.commit === null) log.line(`source: ${ctx.engine.engine} is not a git checkout: every file in it but the local work folders goes in`)
-  const gaps = sourceGaps({ plan, prebuilt, withDeps, unknownBinaries: archived.unknown, engineFiles })
+  const gaps = sourceGaps({ plan, withDeps, archivedBinaries: kept, shippedTreeBinaries: shipped })
   const { missing } = gaps
-  const unsourced = prebuilt.filter((p) => !p.source)
   // What the bundle lacks of complete corresponding source, also what --no-deps leaves out by choice.
   const incomplete = [...gaps.missing, ...gaps.omitted]
   if (missing.length > 0 && !allowMissing) throw new StepError(`${missing.join('; ')}; or pass --allow-missing`)
-  // The prebuilt libraries' sources, from the work folder or downloaded there (checked against the pins).
-  const prebuiltArchives: PrebuiltArchive[] = []
-  if (withDeps) {
-    for (const p of prebuilt) if (p.source) prebuiltArchives.push({ name: p.name, file: p.source.file, path: await ensurePrebuiltSource(p, w.prebuilt, fetcher, (msg) => log.line(msg)) })
-  }
+  const toolchain = { mingw: mingwToolchain(m.platform) }
   const licensesDir = join(w.dist, 'engine', 'LICENSES')
   const licenseFiles = listFiles(licensesDir)
-  const copies = bundleCopies({ engineDir: ctx.engine.engine, engineFiles, archives: plan.archives, prebuiltArchives, withDeps, licensesDir, licenseFiles })
+  const copies = bundleCopies({ engineDir: ctx.engine.engine, engineFiles, archives: plan.archives, withDeps, licensesDir, licenseFiles })
   const manifestSha256 = sha256File(join(w.dist, 'engine', 'manifest.json'))
   const inputs = sha256Text(
     JSON.stringify({
@@ -897,8 +655,8 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
       archives: plan.archives.map((a) => [a.name, a.file, a.sha256]),
       withDeps,
       missing: plan.missing,
-      prebuilt,
       orcaExcluded,
+      toolchain,
       incomplete,
     }),
   )
@@ -929,10 +687,10 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   mkdirSync(join(tmp, 'orca'), { recursive: true })
   log.line(`source: archiving OrcaSlicer ${ctx.lock.tag} at ${ctx.lock.commit}`)
   await runLogged(git, ['-C', w.src, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'archive', '--format=tar.gz', `--prefix=OrcaSlicer-${ctx.lock.tag}/`, '-o', archive, ctx.lock.commit, '--', ...excludePathspecs(orcaExcluded)], { log })
-  log.line(`source: copying ${copies.length} files${withDeps ? ` (${plan.archives.length} dependency packages and ${prebuiltArchives.length} prebuilt libraries' sources, linked where the volume allows)` : ''}`)
-  for (const c of copies) copyFile(c.from, nativePath(tmp, c.to), { link: c.to.startsWith('dependencies/') || c.to.startsWith('prebuilt/') })
+  log.line(`source: copying ${copies.length} files${withDeps ? ` (${plan.archives.length} dependency packages, linked where the volume allows)` : ''}`)
+  for (const c of copies) copyFile(c.from, nativePath(tmp, c.to), { link: c.to.startsWith('dependencies/') })
   const patches = listPatches(ctx.engine.patches)
-  writeText(join(tmp, 'BUILDING.md'), buildingText({ lock: ctx.lock, manifest: m, patches: patches.map((p) => p.name), plan, prebuilt, withDeps, orcaExcluded, incomplete }))
+  writeText(join(tmp, 'BUILDING.md'), buildingText({ lock: ctx.lock, manifest: m, patches: patches.map((p) => p.name), plan, withDeps, orcaExcluded, incomplete }))
   const info: BundleInfo = {
     format: SOURCE_FORMAT,
     sourceVersion: SOURCE_VERSION,
@@ -950,8 +708,8 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
       archives: plan.archives.map((a) => ({ name: a.name, file: a.file, url: a.url, sha256: a.sha256, size: a.size })),
       inTree: plan.inTree,
       missing: plan.missing,
-      prebuilt,
     },
+    toolchain,
     inputs,
     createdAt: new Date().toISOString(),
   }
@@ -967,8 +725,6 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   const bytes = listFiles(dir).reduce((n, rel) => n + statSync(nativePath(dir, rel)).size, 0)
   writeStamp(w.state, 'source', inputs, { name, bytes })
   log.line(`source: ${dir} (${(bytes / 1048576).toFixed(0)} MB${withDeps ? '' : ', without the dependency packages'})`)
-  for (const p of unsourced) log.line(`source: note: ${prebuiltLabel(p)} ships prebuilt from Orca's tree; its source is not in the bundle (--allow-missing)`)
-  if (!withDeps) for (const p of prebuilt) if (p.source) log.line(`source: note: the source of the prebuilt ${p.name} ${p.version} (${p.source.file}) is left out (--no-deps)`)
   if (plan.missing.length > 0) log.line(`source: note: no source package for ${plan.missing.join(', ')} (--allow-missing)`)
   if (incomplete.length > 0) log.line(`source: the bundle is NOT complete corresponding source${missing.length > 0 ? ' (--allow-missing)' : ''}: ${incomplete.join('; ')}`)
   return 0

@@ -35,7 +35,7 @@ Whoever distributes a sketch-orca engine must offer its complete corresponding s
 
 - Every binary release carries, in the same release, the complete source bundle that `source`
   made for that very engine: OrcaSlicer at the locked commit, this repository, the source packages
-  of every library built into the engine (with `dependencies/` and `prebuilt/`), its licences, and
+  of every library built into the engine (in `dependencies/`), its licences, and
   a `BUILDING.md` that builds it from the bundle alone. `bundle.json` names the SHA-256 of the
   engine's manifest, so a bundle belongs to one engine.
 - A bundle made with `--no-deps` or `--allow-missing` is not complete and is not published.
@@ -73,7 +73,7 @@ bun run typecheck                      # tsc: type-check the scripts and tests
 | `build [--step deps\|orca] [--fresh]` | Applies `patches/`, builds Orca's dependencies without the GUI ones, then libslic3r and `sketch-orca` (Release, `SLIC3R_GUI=OFF`; on Windows with MSVC's static runtime, `/MT`). Fetches first when the checkout is missing or at another commit. The dependency build starts from an empty `deps/`, so each dependency is unpacked from its downloaded package, unless it resumes a stopped build of the same inputs (`state/deps-run.json`), which then does not count as fresh for `stage`; `--fresh` starts it over. It records its commit, the patches of `deps/` and a digest of the prefix it installed (`state/deps.json`). The engine is built only on such a build of the inputs there are now (also with `--step orca`), and the prefix must hash the same before and after Ninja. |
 | `smoke [--case <id,...>]` | Slices the test models with the built engine and checks the results (see Smoke). |
 | `stage [--without-smoke]` | The engine as it ships, in `<work>/dist/engine`, with a manifest. Only an engine that passed smoke is staged; `--without-smoke` stages a dev build and the manifest says so. |
-| `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. `--no-deps` leaves the dependency packages and the prebuilt libraries' sources out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency, or a prebuilt binary the Orca archive keeps, has no pinned source, or a pinned prebuilt binary no recipe to rebuild it (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
+| `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. `--no-deps` leaves the dependency packages out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency has no pinned source, the Orca archive keeps a binary, or the engine ships a binary of Orca's tree (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
 | `release [--offline] [--no-deps] [--allow-missing]` | `check`, `update` (only to a newer stable release), `fetch`, `build`, `smoke`, `stage` and `source`, in order, stopping at the first failure. `--offline` leaves out `check` and `update`. |
 | `env` | Prints the toolchain found and the cleaned build PATH. |
 
@@ -122,7 +122,8 @@ The work folder is `%LOCALAPPDATA%\SketchDev\orca-engine` on Windows and
 ```
 src/            OrcaSlicer at the locked commit, with patches/ applied
 downloads/      the dependency source packages, one folder per dependency, kept across rebuilds
-prebuilt/       the source packages of the libraries Orca ships prebuilt (GMP, MPFR), kept across runs
+mingw/          Windows: the MinGW-w64 toolchain that builds GMP and MPFR (patch 0007), its pinned
+                packages in mingw/downloads/ and unpacked in mingw/msys64/, kept across runs
 deps/           Orca's dependency build; its install prefix is deps/OrcaSlicer_dep/usr/local
 build/          Orca's build; the engine is build/sketch-orca/sketch-orca(.exe)
 smoke/          the smoke run: presets, one folder per case, report.json
@@ -170,10 +171,10 @@ when the engine was linked against it; that a full smoke run passed for this ver
 the same libraries and resources (the stamp and `smoke/report.json`); that every library the engine imports is found (Windows: the PE
 import closure); that on Windows neither the engine nor any library it loads imports MSVC's
 dynamic C runtime (the Visual C++ runtime DLLs, `ucrtbase.dll` or its `api-ms-win-crt-*` API sets),
-since everything is built with the static runtime and no runtime DLL ships (Orca's prebuilt GMP
-loads Windows' own `msvcrt.dll`, which is not one); that every built dependency, and every
-`deps_src` library on the engine's link line (read from `build/build.ninja`), has a licence text; that the link line holds no Intel IPP; that the GMP and
-SoftFloat texts a Windows engine needs are there; that `NOTICE` and `AUTHORS` are there; and that
+since everything is built with the static runtime and no runtime DLL ships (GMP and MPFR, built
+with MinGW-w64, load Windows' own `msvcrt.dll`, which is not one); that every built dependency, and every
+`deps_src` library on the engine's link line (read from `build/build.ninja`), has a licence text; that the link line holds no Intel IPP; that the GMP,
+MinGW-w64 runtime and SoftFloat texts a Windows engine needs are there; that `NOTICE` and `AUTHORS` are there; and that
 `sketch-orca version` names the locked commit. It builds the folder next to the old one and
 refuses it (and checks a current one it would keep the same way) when a staged file names the builder's home folder, user name, git e-mail
 or (on Windows) build folders, any Windows user folder, or a program database with its folder (`__FILE__`
@@ -200,16 +201,14 @@ engine/                        this repository: lock, patches, cli, protocol, li
                                folders; source refuses a checkout with changes that are not
                                committed or files git does not track)
 dependencies/<Name>/<file>     the source packages Orca's dependency build downloaded, each
-                               matched against the SHA-256 its recipe pins
-prebuilt/<Name>/<file>         the source packages of the libraries Orca ships prebuilt, when
-                               their binaries are the ones pinned (GMP 5.0.1 and MPFR 3.0.0 on
-                               Windows x64)
+                               matched against the SHA-256 its recipe pins (GMP's and MPFR's
+                               too, which patch 0007 builds on Windows)
 LICENSES/                      the staged engine's licences
 BUILDING.md                    how to build the engine from the bundle alone
 bundle.json                    sketch-orca-source/1: the engine it belongs to (its manifest's
                                SHA-256), this repository's commit, the lock, the patches, each package with URL and
-                               SHA-256, and the libraries built from Orca's tree or shipped
-                               prebuilt, with their sources
+                               SHA-256, the libraries built from Orca's tree, and on
+                               Windows the pinned MinGW-w64 toolchain packages
 SHA256SUMS                     every other file (check with sha256sum -c SHA256SUMS)
 ```
 
@@ -230,6 +229,12 @@ Windows is the platform the pipeline has been run on (`BUILDING.md` has the vers
   folder such as `C:\Strawberry\c`, that prefix goes to `CMAKE_IGNORE_PREFIX_PATH` so CMake does
   not find its MinGW libraries.
 - Strawberry Perl's `perl.exe` (`C:\Strawberry\perl\bin`), for OpenSSL's Configure.
+- The MinGW-w64 toolchain of MSYS2, for GMP and MPFR (patch 0007): `build` downloads its pinned
+  packages (`scripts/lib/mingw.ts`) into `<work>/mingw/downloads`, unpacks them with Windows'
+  own `tar.exe` into `<work>/mingw/msys64` and configures the dependencies with
+  `-DDEP_MINGW_ROOT` naming it. Nothing is installed. Orca's `deps/MinGW/build.sh` runs with that
+  tree's own programs on its PATH and none of the MSVC build's compiler variables.
+  `SKETCH_ORCA_JOBS` caps its make jobs too (`DEP_MINGW_JOBS`).
 - git, for `fetch` and the patches.
 
 The build PATH is made from vcvars: Strawberry's `c\bin` (gcc and MinGW libraries), Git's MSYS
@@ -378,7 +383,7 @@ starts, and any failing run removes it too.
 
 ## Open items
 
-These are for the maintainers to decide, and some for a lawyer. The first two were open until
+These are for the maintainers to decide, and some for a lawyer. The first three were open until
 2026-11-01 and are settled in the build; they stay here with what was decided and why.
 
 - **The Visual C++ runtime (Windows): settled 2026-11-01, built with the static runtime.** Until
@@ -389,8 +394,8 @@ These are for the maintainers to decide, and some for a lawyer. The first two we
   configure lines in `scripts/lib/cmake.ts`, and a check in `cli/CMakeLists.txt`), no Visual C++
   runtime DLL is shipped, and `stage` refuses an engine in which any file imports a Visual C++
   runtime DLL (`vcruntime*`, `msvcp*`, `concrt*`, `vcomp*` and the like), `ucrtbase.dll` or an
-  `api-ms-win-crt-*` set. The prebuilt GMP
-  DLL imports only `KERNEL32.dll` and `msvcrt.dll`, which are part of Windows. Why: the FSF's FAQ
+  `api-ms-win-crt-*` set. The GMP and MPFR
+  DLLs import only `KERNEL32.dll` and `msvcrt.dll` (and MPFR's also GMP's), which are part of Windows. Why: the FSF's FAQ
   ("I'm writing a Windows application with Microsoft Visual C++ (or Visual Basic) and I will be
   releasing it under the GPL. Is dynamically linking my program with the Visual C++ (or Visual
   Basic) runtime library permitted under the GPL?",
@@ -424,21 +429,20 @@ These are for the maintainers to decide, and some for a lawyer. The first two we
   2.0, compatible with version 3 of the GPL and the AGPL. Its licence is staged as
   `LICENSES/deps/OpenSSL/LICENSE.txt`, and the source bundle carries `openssl-3.5.9.tar.gz`
   (`BUILDING.md`, OpenSSL).
-- **GMP (Windows).** Its source is pinned and bundled (`BUILDING.md`, Prebuilt libraries). Not
-  known: the exact configure command line and build scripts CGAL used for the DLL (gmp.h gives
-  the compiler and flags only); a source for any other GMP binary (arm64, x86, or a changed DLL
-  in a later Orca release, which `source` then refuses); and the libgcc and MinGW-w64 runtime code
-  linked statically into the DLL by GCC 4.4.5 (under the GCC Runtime Library Exception and the
-  MinGW-w64 runtime's permissive terms; counsel may confirm that no further source is needed).
-  Until a recipe that rebuilds the DLL from that source is in the bundle (`PREBUILT_SOURCES`
-  `recipe`), `source` refuses, or makes an incomplete bundle with `--allow-missing`.
-- **MPFR (Windows).** Orca ships MPFR 3.0.0 prebuilt too. The engine does not load it, but Orca's
-  Windows dependency build copies its header, import library and DLL from the tree, so the Orca
-  archive keeps them (for the engine's architecture only). Their source is pinned and bundled like
-  GMP's (`BUILDING.md`, Prebuilt libraries): CGAL's MinGW-w64 build of the MPFR 3.0.0 release
-  archive, matched by path and SHA-256. Not known, as for GMP: CGAL's configure command line and
-  build scripts, so there is no recipe yet and `source` refuses, or makes an incomplete bundle with
-  `--allow-missing`.
+- **GMP and MPFR (Windows): settled 2026-11-01, built from source with MinGW-w64.** Until then
+  the Windows engine shipped the GMP DLL that OrcaSlicer copies from its tree (`deps/GMP/gmp`):
+  CGAL's MinGW-w64 build of GMP 5.0.1. Its release archive was pinned and bundled, but CGAL's build
+  recipe (its configure command line and scripts) is not published, so the bundle could not say how
+  to make that very DLL; MPFR 3.0.0, from the same package, was copied into the dependency prefix
+  too. Patch 0007 builds on Windows the GMP 6.2.1 and MPFR 4.2.2 archives that Orca builds on Linux
+  and macOS, pinned by the same SHA-256s, with the pinned MinGW-w64 GCC of MSYS2
+  (`scripts/lib/mingw.ts`), runs their test suites, and the bundle's Orca archive leaves the
+  prebuilt DLLs out (`BUILDING.md`, GMP and MPFR on Windows). GMP 5.0.1 was not rebuilt from its
+  own archive: with today's GCC its test suite fails (`t-perfpow`, even at `-O0`) and crashes
+  (`t-scan`), while 6.2.1 and 4.2.2 pass theirs, and GMP 6 keeps GMP 5's ABI and DLL name. Still
+  open, for counsel: whether the libgcc and mingw-w64 runtime code GCC links into the two DLLs needs
+  more than the licence texts `stage` ships in `LICENSES/MinGW-w64/` (libgcc's GPL 3 with the GCC
+  Runtime Library Exception, and the mingw-w64 runtime's permissive terms).
 - **libnoise.** The package Orca pins dropped libnoise's `COPYING.txt`. Staging ships the grant
   from its sources (`src/noise.h`, LGPL 2.1 or later) and the LGPL 2.1 text from `licenses/`.
 - **The toolchain record.** `BUILT_WITH` (`scripts/lib/bundle.ts`, and so each bundle's
