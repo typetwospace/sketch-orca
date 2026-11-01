@@ -42,9 +42,10 @@
 //   refusals         a missing model, an unknown setting (also one with capital letters), a key of the preset files as
 //                    an override, an old name with the value Orca drops it for (top_one_wall_type none), a pause
 //                    below the first layer, two custom G-codes at one print Z, a cube bigger than the bed, a flat
-//                    model, a lone triangle (OBJ), layer profiles that do not start at 0 or go above the nozzle, and
-//                    a G-code folder that cannot be made get their named errors, exit codes and object, and write
-//                    no G-code
+//                    model, a lone triangle (OBJ), layer profiles that do not start at 0 or go above the nozzle, a
+//                    G-code folder that cannot be made and a work folder from the root of the current drive
+//                    (\sketch-smoke-work, absolute on no system) get their named errors, exit codes and object, and
+//                    write no G-code
 // Every run's exit code must be the one its result gives (exitCode). The engine is run hidden, with
 // a timeout; on Windows its libraries are checked first, so a missing DLL fails the case instead of
 // raising a system dialog. `stage` runs some of these cases again on the staged copy (runCases).
@@ -62,7 +63,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import type { Context } from '../orca.ts'
 import type { Platform } from './env.ts'
 import { commandsAfter, configValue, extrusions, featureLengths, firstExtrusionLine, layerAtLine, layerBounds, layerHitsRect, scanGcode, type GcodeScan, type Rect } from './gcode.ts'
-import { parseProgress, readResult, validateJob, writeJob, type CustomGcode, type Job, type JobObject, type JobResult, type Overrides } from './job.ts'
+import { isEngineAbsolute, parseProgress, readResult, validateJob, writeJob, type CustomGcode, type Job, type JobObject, type JobResult, type Overrides } from './job.ts'
 import type { OrcaLock } from './lock.ts'
 import { boxTriangles, boxWithPocket, cube, meshBounds, uvSphere, writeStl, type Mesh } from './models.ts'
 import { checkPresetSet, loadProfileTree, presetSet, serializePreset, settingList, settingNumber, writePresetSet, type PresetFiles, type PresetSet } from './profiles.ts'
@@ -861,7 +862,8 @@ async function runJob(
   } = {},
 ): Promise<{ result?: JobResult; raw?: Record<string, unknown>; code: number | null; problems: string[]; warnings: string[] }> {
   if (model) writeStl(job.model.path, model, name)
-  mkdirSync(job.workDir, { recursive: true })
+  // A refused job's work folder may not be absolute: it is not made (in the drive's root or here).
+  if (isEngineAbsolute(job.workDir)) mkdirSync(job.workDir, { recursive: true })
   for (const out of [job.output.gcode, job.output.bambu3mf]) if (out) rmSync(out, { force: true })
   const jobPath = join(env.dir, 'job.json')
   const resultPath = join(env.dir, 'result.json')
@@ -922,9 +924,17 @@ function cubeExpected(set: PresetSet): number[] {
 /**
  * What the refused jobs use: a setting no Orca has, one with capital letters (Orca's keys are case
  * sensitive: it has layer_height), a key of the preset files written with a capital letter, a print
- * Z below the cube's 0.25 mm first layer, a cube wider than the bed.
+ * Z below the cube's 0.25 mm first layer, a cube wider than the bed, a work folder from the root of
+ * the current drive (never made: runJob makes only absolute work folders).
  */
-export const REFUSE = { unknownSetting: 'sketch_smoke_no_such_setting', capitalisedSetting: 'Layer_Height', presetFileKey: 'Inherits', belowFirstLayer: 0.1, tooBig: 400 } as const
+export const REFUSE = {
+  unknownSetting: 'sketch_smoke_no_such_setting',
+  capitalisedSetting: 'Layer_Height',
+  presetFileKey: 'Inherits',
+  belowFirstLayer: 0.1,
+  tooBig: 400,
+  driveRooted: '\\sketch-smoke-work',
+} as const
 
 export interface Refusal extends RefusalExpectation {
   id: string
@@ -1098,6 +1108,19 @@ export const REFUSALS: Refusal[] = [
       const job = smokeJob({ command: 'slice', dir, resources, presets, overrides: cubeOverrides })
       return { job: { ...job, output: { ...job.output, gcode: join(dir, 'blocker', 'out.gcode') } }, model: cube(CUBE.size) }
     },
+  },
+  {
+    // A path from the root of the current drive: absolute nowhere (on Windows it lacks the drive),
+    // so the engine and job.ts both refuse it.
+    id: 'drive-rooted-path',
+    code: 'job-invalid',
+    exitCode: -2,
+    mentions: 'workDir must be an absolute path',
+    unchecked: true,
+    make: (dir, resources, presets) => ({
+      job: { ...smokeJob({ command: 'slice', dir, resources, presets, overrides: cubeOverrides }), workDir: REFUSE.driveRooted },
+      model: cube(CUBE.size),
+    }),
   },
 ]
 

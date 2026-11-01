@@ -30,8 +30,9 @@ which must agree.
 
 - Every file is UTF-8 JSON. The progress file is newline-delimited JSON: one object per line.
 - Every path in a job is absolute on the system the engine runs on (`/...` on Linux and macOS;
-  `C:\...`, `C:/...` or `\...` on Windows). Paths in a manifest are relative to its folder, with
-  forward slashes.
+  `C:\...`, `C:/...` or a UNC share, `\\server\share\...`, on Windows). A Windows path from the
+  root of the current drive (`\...` or `/...`) is not absolute: the engine refuses it
+  (`job-invalid`). Paths in a manifest are relative to its folder, with forward slashes.
 - An optional field of a job given as `null` is the same as one left out. Fields the formats do not
   name are ignored by the engine and should be ignored by clients, so fields can be added within a
   version.

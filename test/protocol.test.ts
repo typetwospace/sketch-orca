@@ -7,7 +7,7 @@ import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, posix, win32 } from 'node:path'
 import { Ajv2020, type ValidateFunction } from 'ajv/dist/2020'
-import { CUSTOM_GCODE_TYPES, JOB_COMMANDS, JOB_FORMAT, MODEL_EXTENSIONS, ORCA_EXIT_CODES, OVERRIDE_KEY_RE, parseProgress, RESERVED_OVERRIDES, RESULT_FORMAT, validateJob, validateResult } from '../scripts/lib/job.ts'
+import { CUSTOM_GCODE_TYPES, JOB_COMMANDS, JOB_FORMAT, MODEL_EXTENSIONS, ORCA_EXIT_CODES, OVERRIDE_KEY_RE, parseProgress, RESERVED_OVERRIDES, RESULT_FORMAT, isEngineAbsolute, validateJob, validateResult } from '../scripts/lib/job.ts'
 import { parseConfigDef } from '../scripts/lib/smoke.ts'
 import { ENGINE_FORMAT, isSafeRelPath, parseVersionOutput, STAGE_VERSION, validateManifest } from '../scripts/lib/stage.ts'
 
@@ -47,7 +47,7 @@ function schemaErrors(kind: Kind, path: string): string[] {
 function ownRefusal(kind: Kind, path: string): string | undefined {
   try {
     const text = read(path)
-    if (kind === 'job') validateJob(JSON.parse(text))
+    if (kind === 'job') validatePosixJob(JSON.parse(text))
     else if (kind === 'result') validateResult(JSON.parse(text))
     else if (kind === 'progress') parseProgress(text)
     else if (kind === 'engine-manifest') validateManifest(JSON.parse(text))
@@ -62,6 +62,9 @@ function ownRefusal(kind: Kind, path: string): string | undefined {
 const files = (dir: string) => readdirSync(dir, { withFileTypes: true }).filter((d) => d.isFile()).map((d) => d.name).sort()
 const valid = files(EXAMPLES)
 const invalid = files(join(EXAMPLES, 'invalid'))
+
+/** The examples' paths are POSIX paths (/jobs/...): the validator checks them as for an engine on Linux or macOS. */
+const validatePosixJob = (value: unknown) => validateJob(value, { platform: 'linux' })
 
 function job(over: Record<string, unknown>): Record<string, unknown> {
   return { ...(readJson(join(EXAMPLES, 'job-info.json')) as Record<string, unknown>), ...over }
@@ -122,12 +125,12 @@ describe('the schemas and the validators take the same values', () => {
       for (const name of [`/m/part${ext}`, `/m/part${ext.toUpperCase()}`]) {
         const j = job({ model: { path: name } })
         expect(validate.job(j)).toBe(true)
-        expect(() => validateJob(j)).not.toThrow()
+        expect(() => validatePosixJob(j)).not.toThrow()
       }
     }
     const other = job({ model: { path: '/m/part.step' } })
     expect(validate.job(other)).toBe(false)
-    expect(() => validateJob(other)).toThrow()
+    expect(() => validatePosixJob(other)).toThrow()
   })
 
   test('override keys: the shape of Orca\'s keys, never a key of the preset files in any letter case', () => {
@@ -138,7 +141,7 @@ describe('the schemas and the validators take the same values', () => {
       const j = job({ overrides: { [key]: '1' } })
       let own = true
       try {
-        validateJob(j)
+        validatePosixJob(j)
       } catch {
         own = false
       }
@@ -150,20 +153,33 @@ describe('the schemas and the validators take the same values', () => {
     for (const value of ['15%', 0.2, 3, true, false]) {
       const j = job({ overrides: { wall_loops: value } })
       expect(validate.job(j)).toBe(true)
-      expect(() => validateJob(j)).not.toThrow()
+      expect(() => validatePosixJob(j)).not.toThrow()
     }
     for (const value of [null, [1], { a: 1 }]) {
       const j = job({ overrides: { wall_loops: value } })
       expect(validate.job(j)).toBe(false)
-      expect(() => validateJob(j)).toThrow()
+      expect(() => validatePosixJob(j)).toThrow()
     }
   })
 
-  test('an absolute path is one on Windows or on POSIX systems; the validator asks the system it runs on', () => {
-    for (const p of ['/jobs/1', '\\jobs\\1', 'C:\\jobs\\1', 'c:/jobs/1', '\\\\server\\share\\1', 'jobs/1', 'C:jobs', './jobs', '']) {
-      expect({ p, schema: absolutePath(p) }).toEqual({ p, schema: win32.isAbsolute(p) || posix.isAbsolute(p) })
-      if (process.platform === 'win32') expect({ p, own: !throws(() => validateJob(job({ workDir: p }))) }).toEqual({ p, own: win32.isAbsolute(p) })
+  test('an absolute path is one the engine reads as absolute on Windows or on POSIX systems; the validator asks the system it runs on', () => {
+    for (const p of ['/jobs/1', '\\jobs\\1', 'C:\\jobs\\1', 'c:/jobs/1', '\\\\server\\share\\1', '//server/share/1', 'jobs/1', 'C:jobs', './jobs', '']) {
+      expect({ p, schema: absolutePath(p) }).toEqual({ p, schema: isEngineAbsolute(p, 'win32') || isEngineAbsolute(p, 'linux') })
+      expect({ p, posix: !throws(() => validatePosixJob(job({ workDir: p }))) }).toEqual({ p, posix: isEngineAbsolute(p, 'linux') })
+      // The same job with its other paths on drive C:, for an engine on Windows.
+      const onC = JSON.parse(JSON.stringify(job({}), (_k, v: unknown) => (typeof v === 'string' && v.startsWith('/') ? `C:${v}` : v))) as Record<string, unknown>
+      expect({ p, win32: !throws(() => validateJob({ ...onC, workDir: p }, { platform: 'win32' })) }).toEqual({ p, win32: isEngineAbsolute(p, 'win32') })
     }
+    // By default the validator asks about the system it runs on.
+    expect(isEngineAbsolute('C:\\jobs\\1')).toBe(process.platform === 'win32')
+    // Boost.Filesystem's is_absolute, which the engine asks: on Windows a root name (a drive or a
+    // UNC share) and a root directory, so a path from the current drive's root (\jobs) is not
+    // absolute there, though Node's win32.isAbsolute says it is.
+    for (const p of ['C:\\jobs\\1', 'c:/jobs/1', '\\\\server\\share\\1', '//server/share/1']) expect({ p, win32: isEngineAbsolute(p, 'win32') }).toEqual({ p, win32: true })
+    for (const p of ['\\jobs\\1', '/jobs/1', 'C:jobs', 'jobs/1', '']) expect({ p, win32: isEngineAbsolute(p, 'win32') }).toEqual({ p, win32: false })
+    expect(win32.isAbsolute('\\jobs\\1')).toBe(true)
+    for (const p of ['/jobs/1', '//server/share/1']) expect({ p, posix: isEngineAbsolute(p, 'linux') }).toEqual({ p, posix: posix.isAbsolute(p) })
+    for (const p of ['\\jobs\\1', 'C:\\jobs\\1', 'c:/jobs/1', 'jobs/1']) expect({ p, posix: isEngineAbsolute(p, 'darwin') }).toEqual({ p, posix: false })
   })
 
   test('a manifest path is isSafeRelPath', () => {
@@ -190,7 +206,7 @@ describe('the schemas and the validators take the same values', () => {
     ]
     for (const [item, ok] of cases) {
       const j = job({ customGcodes: [item] })
-      expect({ item, schema: validate.job(j), own: !throws(() => validateJob(j)) }).toEqual({ item, schema: ok, own: ok })
+      expect({ item, schema: validate.job(j), own: !throws(() => validatePosixJob(j)) }).toEqual({ item, schema: ok, own: ok })
     }
   })
 
@@ -209,7 +225,7 @@ describe('the schemas and the validators take the same values', () => {
     ]
     for (const [layerHeights, ok] of cases) {
       const j = job({ objects: [{ index: 0, layerHeights }] })
-      expect({ layerHeights, schema: validate.job(j), own: !throws(() => validateJob(j)) }).toEqual({ layerHeights, schema: ok, own: ok })
+      expect({ layerHeights, schema: validate.job(j), own: !throws(() => validatePosixJob(j)) }).toEqual({ layerHeights, schema: ok, own: ok })
     }
   })
 
@@ -225,7 +241,7 @@ describe('the schemas and the validators take the same values', () => {
       ['info', { bambu3mf: '/o/a.zip' }, false],
     ] as [string, unknown, boolean][]) {
       const j = job({ command, output })
-      expect({ command, output, schema: validate.job(j), own: !throws(() => validateJob(j)) }).toEqual({ command, output, schema: ok, own: ok })
+      expect({ command, output, schema: validate.job(j), own: !throws(() => validatePosixJob(j)) }).toEqual({ command, output, schema: ok, own: ok })
     }
   })
 

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { scanGcode } from '../scripts/lib/gcode.ts'
-import { RESULT_FORMAT, validateJob, type JobResult } from '../scripts/lib/job.ts'
+import { isEngineAbsolute, RESULT_FORMAT, validateJob, type JobResult } from '../scripts/lib/job.ts'
 import type { OrcaLock } from '../scripts/lib/lock.ts'
 import { writeStamp, workPaths } from '../scripts/lib/paths.ts'
 import { cube, meshBounds } from '../scripts/lib/models.ts'
@@ -580,7 +580,8 @@ describe('jobs and the engine environment', () => {
     // refusals; version 4 z-offset, override-keys, config-def's obsolete keys and two refusals;
     // version 5 the lowered nozzle past the top-of-print slack, config-def's stillDefined, the old
     // name Orca renames for its value (override-keys) and the refusal of the value it drops;
-    // version 6 preset-metadata, flush-volumes, prime-tower and file-collisions.
+    // version 6 preset-metadata, flush-volumes, prime-tower, file-collisions and the drive-rooted
+    // work folder refusal.
     expect(SMOKE_VERSION).toBe(6)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
@@ -814,6 +815,7 @@ describe('exit codes, refusals and info', () => {
       'profile-not-at-zero',
       'layers-above-the-nozzle',
       'gcode-folder-unmakeable',
+      'drive-rooted-path',
     ])
     for (const r of REFUSALS) expect(`${r.code} ${table.get(r.code)}`).toBe(`${r.code} ${r.exitCode}`)
     for (const j of FLUSH_JOBS) if (j.refused) expect(`${j.refused.code} ${table.get(j.refused.code)}`).toBe(`${j.refused.code} ${j.refused.exitCode}`)
@@ -833,6 +835,10 @@ describe('exit codes, refusals and info', () => {
     // A failed G-code export keeps no layers (contract: a failed job has no layers, printZ or outputs).
     expect(REFUSALS.find((r) => r.id === 'gcode-folder-unmakeable')!.absent).toEqual(['layers', 'printZ', 'outputs'])
     expect(existsSync(join(dir, 'gcode-folder-unmakeable', 'blocker'))).toBe(true)
+    // A work folder from the drive's root: absolute on no system, refused by job.ts as by the engine.
+    expect(made['drive-rooted-path']!.job.workDir).toBe(REFUSE.driveRooted)
+    expect([isEngineAbsolute(REFUSE.driveRooted, 'win32'), isEngineAbsolute(REFUSE.driveRooted, 'linux')]).toEqual([false, false])
+    expect(() => validateJob(made['drive-rooted-path']!.job)).toThrow(/workDir must be an absolute path/)
     expect(made['flat-model']!.model).toEqual(flatSquare())
     // An OBJ: Orca's STL loader would drop the lone facet and fail the whole file instead.
     expect(made['lone-triangle']!.model).toBeUndefined()

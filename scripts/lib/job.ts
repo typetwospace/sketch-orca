@@ -5,7 +5,6 @@
 // An optional field of a job given as null is the same as one left out, on both sides.
 
 import { readFileSync, writeFileSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
 
 export const JOB_FORMAT = 'sketch-orca-job/1'
 export const RESULT_FORMAT = 'sketch-orca-result/1'
@@ -169,9 +168,19 @@ function num(v: unknown, field: string): number {
   return v
 }
 
-function absPath(v: unknown, field: string, extensions?: readonly string[]): string {
+/**
+ * Whether a path is absolute as the engine reads it (Boost.Filesystem's is_absolute): on Windows a
+ * drive and a root (C:\... or C:/...) or a UNC share (\\server\share...); elsewhere /... . A
+ * Windows path from the root of the current drive (\jobs) is not: it would depend on the drive.
+ */
+export function isEngineAbsolute(p: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (platform === 'win32') return /^[A-Za-z]:[\\/]/.test(p) || /^[\\/]{2}[^\\/]/.test(p)
+  return p.startsWith('/')
+}
+
+function absPath(v: unknown, field: string, extensions?: readonly string[], platform: NodeJS.Platform = process.platform): string {
   const p = text(v, field)
-  if (p === '' || !isAbsolute(p)) throw new JobError(`${field} must be an absolute path, got ${JSON.stringify(p)}`)
+  if (p === '' || !isEngineAbsolute(p, platform)) throw new JobError(`${field} must be an absolute path, got ${JSON.stringify(p)}`)
   if (extensions && !extensions.some((e) => p.toLowerCase().endsWith(e))) throw new JobError(`${field} must end with ${extensions.join(' or ')}, got ${JSON.stringify(p)}`)
   return p
 }
@@ -285,8 +294,12 @@ function normalizeCustomGcodes(v: unknown): CustomGcode[] {
   return out
 }
 
-/** Checks a job (parsed JSON or built in code) and returns it complete, with defaults filled in. Throws JobError naming the field. */
-export function validateJob(value: unknown): Job {
+/**
+ * Checks a job (parsed JSON or built in code) and returns it complete, with defaults filled in. Throws JobError naming the field.
+ * Its paths must be absolute on `opts.platform`, the system the engine runs on (this one by default).
+ */
+export function validateJob(value: unknown, opts: { platform?: NodeJS.Platform } = {}): Job {
+  const platform = opts.platform ?? process.platform
   const o = record(value, 'job')
   if (o.format !== JOB_FORMAT) throw new JobError(`format must be "${JOB_FORMAT}", got ${JSON.stringify(o.format)}`)
   const command = o.command
@@ -302,20 +315,20 @@ export function validateJob(value: unknown): Job {
     output = { gcode: '', bambu3mf: null, stats: false }
   } else {
     const out = record(o.output, 'output')
-    const gcode = command === 'slice' || (out.gcode != null && out.gcode !== '') ? absPath(out.gcode, 'output.gcode', ['.gcode']) : ''
-    const bambu3mf = out.bambu3mf == null ? null : absPath(out.bambu3mf, 'output.bambu3mf', ['.3mf'])
+    const gcode = command === 'slice' || (out.gcode != null && out.gcode !== '') ? absPath(out.gcode, 'output.gcode', ['.gcode'], platform) : ''
+    const bambu3mf = out.bambu3mf == null ? null : absPath(out.bambu3mf, 'output.bambu3mf', ['.3mf'], platform)
     output = { gcode, bambu3mf, stats: bool(out.stats, 'output.stats', true) }
   }
   return {
     format: JOB_FORMAT,
     command: command as JobCommand,
-    resources: absPath(o.resources, 'resources'),
-    workDir: absPath(o.workDir, 'workDir'),
-    model: { path: absPath(model.path, 'model.path', MODEL_EXTENSIONS) },
+    resources: absPath(o.resources, 'resources', undefined, platform),
+    workDir: absPath(o.workDir, 'workDir', undefined, platform),
+    model: { path: absPath(model.path, 'model.path', MODEL_EXTENSIONS, platform) },
     presets: {
-      machine: absPath(presets.machine, 'presets.machine', ['.json']),
-      process: absPath(presets.process, 'presets.process', ['.json']),
-      filaments: presets.filaments.map((p, i) => absPath(p, `presets.filaments[${i}]`, ['.json'])),
+      machine: absPath(presets.machine, 'presets.machine', ['.json'], platform),
+      process: absPath(presets.process, 'presets.process', ['.json'], platform),
+      filaments: presets.filaments.map((p, i) => absPath(p, `presets.filaments[${i}]`, ['.json'], platform)),
     },
     overrides: normalizeOverrides(o.overrides, 'overrides'),
     objects: normalizeObjects(o.objects),

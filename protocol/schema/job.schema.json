@@ -75,9 +75,9 @@
   },
   "$defs": {
     "absolutePath": {
-      "description": "An absolute path on the system the engine runs on: /... on Linux and macOS; C:\\..., C:/..., \\... or /... on Windows.",
+      "description": "An absolute path on the system the engine runs on: /... on Linux and macOS; C:\\..., C:/... or a UNC share (\\\\server\\share\\...) on Windows. A Windows path from the root of the current drive (\\...) is not absolute.",
       "type": "string",
-      "pattern": "^([/\\\\]|[A-Za-z]:[/\\\\])"
+      "pattern": "^(/|[A-Za-z]:[/\\\\]|[/\\\\]{2}[^/\\\\])"
     },
     "jsonPath": { "allOf": [{ "$ref": "#/$defs/absolutePath" }, { "type": "string", "pattern": "\\.[Jj][Ss][Oo][Nn]$" }] },
     "gcodePath": { "allOf": [{ "$ref": "#/$defs/absolutePath" }, { "type": "string", "pattern": "\\.[Gg][Cc][Oo][Dd][Ee]$" }] },
