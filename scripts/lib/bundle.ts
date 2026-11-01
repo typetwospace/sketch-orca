@@ -23,7 +23,7 @@
 // The bundle is made only for a staged engine that matches the current lock, patches and front end.
 // Run again, it skips when its inputs are unchanged and every file matches SHA256SUMS.
 // --no-deps leaves the dependency packages and the prebuilt libraries' sources out (they stay listed
-// in bundle.json, with their URLs). A built dependency, or a prebuilt binary the Orca archive keeps,
+// in bundle.json, with their URLs), and the bundle then says it is not complete. A built dependency, or a prebuilt binary the Orca archive keeps,
 // whose source is not pinned, and a pinned prebuilt binary with no recipe that rebuilds it from that
 // source, stop the step, unless --allow-missing; bundle.json and BUILDING.md then say the bundle is
 // not complete.
@@ -602,8 +602,39 @@ export interface BundleInfo {
   createdAt: string
 }
 
-/** The build instructions in the bundle; the command lines are the pipeline's own (cmake.ts). */
+/**
+ * What a bundle lacks of complete corresponding source. `missing`: sources and recipes it cannot
+ * have (a built dependency or a prebuilt binary with no pinned source, an archived binary no pin
+ * lists, a pinned prebuilt binary with no recipe, a binary the Orca archive keeps that is not a
+ * prebuilt library's); `source` stops for them unless --allow-missing. `omitted`: the packages
+ * --no-deps leaves out by choice; the bundle is then not complete either.
+ */
+export function sourceGaps(o: { plan: DependencyPlan; prebuilt: PrebuiltLibrary[]; withDeps: boolean; unknownBinaries?: string[] }): { missing: string[]; omitted: string[] } {
+  const { plan, prebuilt } = o
+  const unsourced = prebuilt.filter((p) => !p.source)
+  const unsourcedFiles = prebuilt.filter((p) => p.source).flatMap((p) => (p.archived ?? []).filter((a) => !a.sourced))
+  const unrecipied = prebuilt.filter((p) => p.source && !p.source.recipe)
+  const unknown = o.unknownBinaries ?? []
+  const missing = [
+    ...(plan.missing.length > 0 ? [`no pinned source package for the built dependencies ${plan.missing.join(', ')}; fetch them with build`] : []),
+    ...(unsourced.length > 0 ? [`no pinned source for the prebuilt ${unsourced.map(prebuiltLabel).join(', ')}, whose binaries the Orca archive keeps (${unsourced.map((p) => (p.archived ?? []).map((a) => a.path).join(', ') || p.dir).join(', ')}); PREBUILT_SOURCES (scripts/lib/bundle.ts) pins the binaries whose source is known`] : []),
+    ...(unsourcedFiles.length > 0 ? [`the Orca archive keeps ${unsourcedFiles.map((f) => `${f.path} (SHA-256 ${f.sha256})`).join(', ')}, which no pin of the source the bundle carries lists by path and SHA-256 (PREBUILT_SOURCES archived)`] : []),
+    ...(unrecipied.length > 0 ? [`no recipe that rebuilds the prebuilt ${unrecipied.map(prebuiltLabel).join(', ')} from its pinned source (how it was configured and built is not known)`] : []),
+    ...(unknown.length > 0 ? [`the Orca archive keeps binaries whose source the bundle does not have: ${unknown.join(', ')}; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or pin their source`] : []),
+  ]
+  const leftOut = o.withDeps ? [] : [...new Set([...plan.archives.map((a) => a.name), ...prebuilt.filter((p) => p.source).map((p) => p.name)])].sort()
+  const omitted = leftOut.length > 0 ? [`the source packages of ${leftOut.join(', ')} are left out (--no-deps); bundle.json lists each one with its URL and SHA-256`] : []
+  return { missing, omitted }
+}
+
+/**
+ * The build instructions in the bundle; the command lines are the pipeline's own (cmake.ts). It
+ * says the bundle is complete corresponding source only when neither `incomplete` nor its own
+ * plan, prebuilt libraries and --no-deps (sourceGaps) name a gap.
+ */
 export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patches: string[]; plan: DependencyPlan; prebuilt: PrebuiltLibrary[]; withDeps: boolean; orcaExcluded?: string[]; incomplete?: string[] }): string {
+  const own = sourceGaps(o)
+  const incomplete = [...new Set([...(o.incomplete ?? []), ...own.missing, ...own.omitted])]
   const { lock, manifest: m } = o
   const platform = m.platform
   const ninja = platform === 'win32' ? '<ninja.exe>' : '<ninja>'
@@ -623,13 +654,13 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
   const lines = [
     `# Building sketch-orca ${m.engine.version} from this source`,
     '',
-    `This folder is the ${(o.incomplete ?? []).length === 0 ? 'complete corresponding source' : 'source'} of the sketch-orca engine ${m.engine.version}`,
+    `This folder is the ${incomplete.length === 0 ? 'complete corresponding source' : 'source'} of the sketch-orca engine ${m.engine.version}`,
     `staged for ${platform} (${m.arch}): OrcaSlicer ${lock.tag} (commit ${lock.commit}) with the changes`,
     'in engine/patches, the command-line front end in engine/cli, and the scripts that fetch, build,',
     'test and stage it (engine/scripts). It is offered under the GNU Affero General Public License',
     'version 3; the licence texts are in LICENSES/.',
     '',
-    ...((o.incomplete ?? []).length > 0 ? ['It is NOT complete corresponding source:', '', ...(o.incomplete ?? []).map((m) => `- ${m}`), ''] : []),
+    ...(incomplete.length > 0 ? ['It is NOT complete corresponding source:', '', ...incomplete.map((m) => `- ${m}`), ''] : []),
     ...((o.orcaExcluded ?? []).length > 0
       ? [
           `The OrcaSlicer archive leaves out binaries of its tree that this build does not use: ${(o.orcaExcluded ?? []).join(', ')}.`,
@@ -807,16 +838,11 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   // The prebuilt binaries the engine ships, and apart from them the ones the archive keeps, each matched to its pin by path and SHA-256.
   const archivedFiles = [...archived.prebuilt.values()].flat().map((rel) => ({ path: rel, sha256: commitFileSha256(git, w.src, ctx.lock.commit, rel) }))
   const prebuilt = withArchivedSources(withPrebuiltSources(prebuiltLibraries(w.src, archivedFiles.map((f) => f.path.split('/').pop()!)), m), archivedFiles)
+  const gaps = sourceGaps({ plan, prebuilt, withDeps, unknownBinaries: archived.unknown })
+  const { missing } = gaps
   const unsourced = prebuilt.filter((p) => !p.source)
-  const unsourcedFiles = prebuilt.filter((p) => p.source).flatMap((p) => (p.archived ?? []).filter((a) => !a.sourced))
-  const unrecipied = prebuilt.filter((p) => p.source && !p.source.recipe)
-  const missing = [
-    ...(plan.missing.length > 0 ? [`no pinned source package for the built dependencies ${plan.missing.join(', ')}; fetch them with build`] : []),
-    ...(unsourced.length > 0 ? [`no pinned source for the prebuilt ${unsourced.map(prebuiltLabel).join(', ')}, whose binaries the Orca archive keeps (${unsourced.flatMap((p) => archived.prebuilt.get(p.name) ?? []).join(', ')}); PREBUILT_SOURCES (scripts/lib/bundle.ts) pins the binaries whose source is known`] : []),
-    ...(unsourcedFiles.length > 0 ? [`the Orca archive keeps ${unsourcedFiles.map((f) => `${f.path} (SHA-256 ${f.sha256})`).join(', ')}, which no pin of the source the bundle carries lists by path and SHA-256 (PREBUILT_SOURCES archived)`] : []),
-    ...(unrecipied.length > 0 ? [`no recipe that rebuilds the prebuilt ${unrecipied.map(prebuiltLabel).join(', ')} from its pinned source (how it was configured and built is not known)`] : []),
-    ...(archived.unknown.length > 0 ? [`the Orca archive keeps binaries whose source the bundle does not have: ${archived.unknown.join(', ')}; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or pin their source`] : []),
-  ]
+  // What the bundle lacks of complete corresponding source, also what --no-deps leaves out by choice.
+  const incomplete = [...gaps.missing, ...gaps.omitted]
   if (missing.length > 0 && !allowMissing) throw new StepError(`${missing.join('; ')}; or pass --allow-missing`)
   // The prebuilt libraries' sources, from the work folder or downloaded there (checked against the pins).
   const prebuiltArchives: PrebuiltArchive[] = []
@@ -841,7 +867,7 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
       missing: plan.missing,
       prebuilt,
       orcaExcluded,
-      incomplete: missing,
+      incomplete,
     }),
   )
   const name = bundleName(m)
@@ -876,7 +902,7 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   log.line(`source: copying ${copies.length} files${withDeps ? ` (${plan.archives.length} dependency packages and ${prebuiltArchives.length} prebuilt libraries' sources, linked where the volume allows)` : ''}`)
   for (const c of copies) copyFile(c.from, nativePath(tmp, c.to), { link: c.to.startsWith('dependencies/') || c.to.startsWith('prebuilt/') })
   const patches = listPatches(ctx.engine.patches)
-  writeText(join(tmp, 'BUILDING.md'), buildingText({ lock: ctx.lock, manifest: m, patches: patches.map((p) => p.name), plan, prebuilt, withDeps, orcaExcluded, incomplete: missing }))
+  writeText(join(tmp, 'BUILDING.md'), buildingText({ lock: ctx.lock, manifest: m, patches: patches.map((p) => p.name), plan, prebuilt, withDeps, orcaExcluded, incomplete }))
   const info: BundleInfo = {
     format: SOURCE_FORMAT,
     sourceVersion: SOURCE_VERSION,
@@ -887,8 +913,8 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
     cli: m.cli,
     repository: { commit: repository.commit },
     orcaExcluded,
-    complete: missing.length === 0,
-    incomplete: missing,
+    complete: incomplete.length === 0,
+    incomplete,
     dependencies: {
       included: withDeps,
       archives: plan.archives.map((a) => ({ name: a.name, file: a.file, url: a.url, sha256: a.sha256, size: a.size })),
@@ -914,6 +940,6 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   for (const p of unsourced) log.line(`source: note: ${prebuiltLabel(p)} ships prebuilt from Orca's tree; its source is not in the bundle (--allow-missing)`)
   if (!withDeps) for (const p of prebuilt) if (p.source) log.line(`source: note: the source of the prebuilt ${p.name} ${p.version} (${p.source.file}) is left out (--no-deps)`)
   if (plan.missing.length > 0) log.line(`source: note: no source package for ${plan.missing.join(', ')} (--allow-missing)`)
-  if (missing.length > 0) log.line(`source: the bundle is NOT complete corresponding source (--allow-missing): ${missing.join('; ')}`)
+  if (incomplete.length > 0) log.line(`source: the bundle is NOT complete corresponding source${missing.length > 0 ? ' (--allow-missing)' : ''}: ${incomplete.join('; ')}`)
   return 0
 }

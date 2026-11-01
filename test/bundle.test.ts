@@ -31,6 +31,7 @@ import {
   prebuiltSourcePath,
   repositoryFiles,
   SOURCE_VERSION,
+  sourceGaps,
   verifySums,
   withArchivedSources,
   withPrebuiltSources,
@@ -342,7 +343,13 @@ describe('the bundle', () => {
     expect(text).toContain('(the copies Strawberry Perl ships in its c\\bin;')
     expect(lines).toContain('- TBB: built, but its source package is NOT in this bundle')
     expect(text.endsWith('\n')).toBe(true)
-    expect(text).toContain('This folder is the complete corresponding source of the sketch-orca engine')
+    // TBB has no package and GMP no source: the text says so itself, whatever the caller passes.
+    expect(text).toContain('This folder is the source of the sketch-orca engine')
+    expect(text).toContain('It is NOT complete corresponding source:')
+    expect(lines).toContain('- no pinned source package for the built dependencies TBB; fetch them with build')
+    const whole = buildingText({ lock: LOCK, manifest: manifest(), patches, plan: { ...plan, missing: [] }, prebuilt: [], withDeps: true })
+    expect(whole).toContain('This folder is the complete corresponding source of the sketch-orca engine')
+    expect(whole).not.toContain('NOT complete')
     // A bundle made with --allow-missing says so, and what the Orca archive leaves out.
     const partial = buildingText({ lock: LOCK, manifest: manifest(), patches, plan, prebuilt, withDeps: true, orcaExcluded: ['deps/WebView2', 'tools/*.exe'], incomplete: ['no pinned source for the prebuilt MPFR 3.1.6'] })
     expect(partial).toContain('This folder is the source of the sketch-orca engine')
@@ -358,6 +365,37 @@ describe('the bundle', () => {
     expect(linux).not.toContain('CMAKE_MSVC_RUNTIME_LIBRARY')
     expect(linux).toContain('The engine is <build>/sketch-orca/sketch-orca.')
     expect(linux).not.toContain('NOT in this bundle')
+    // --no-deps leaves the packages out: never complete corresponding source.
+    expect(linux).not.toContain('complete corresponding source of')
+    expect(linux.split('\n')).toContain('- the source packages of OpenSSL are left out (--no-deps); bundle.json lists each one with its URL and SHA-256')
+  })
+
+  test('sourceGaps: what stops source unless --allow-missing, apart from what --no-deps leaves out', () => {
+    const archive = { name: 'OpenSSL', file: 'o.tar.gz', path: 'p', url: 'https://example.invalid/o.tar.gz', sha256: H('2'), size: 1 }
+    const plan = { archives: [archive], inTree: ['EXPAT'], missing: [], unpinned: [] }
+    const source = { file: 'gmp-5.0.1.tar.bz2', urls: ['https://example.invalid/gmp-5.0.1.tar.bz2'], size: 1, sha256: H('3'), provenance: 'a test' }
+    const gmp: PrebuiltLibrary = { name: 'GMP', version: '5.0.1', dir: 'deps/GMP/gmp', source: { ...source, recipe: 'prebuilt/gmp.sh' }, archived: [{ path: 'deps/GMP/gmp/lib/win-x64/libgmp-10.dll', sha256: H('4'), sourced: true }] }
+    expect(sourceGaps({ plan, prebuilt: [gmp], withDeps: true })).toEqual({ missing: [], omitted: [] })
+    // The audit's case: --no-deps with nothing else missing still leaves out what complete source needs.
+    expect(sourceGaps({ plan, prebuilt: [gmp], withDeps: false })).toEqual({ missing: [], omitted: ['the source packages of GMP, OpenSSL are left out (--no-deps); bundle.json lists each one with its URL and SHA-256'] })
+    expect(sourceGaps({ plan: { ...plan, archives: [] }, prebuilt: [], withDeps: false })).toEqual({ missing: [], omitted: [] })
+    const gaps = sourceGaps({
+      plan: { ...plan, missing: ['TBB'] },
+      prebuilt: [
+        { ...gmp, source, archived: [{ ...gmp.archived![0]!, sourced: false }] },
+        { name: 'MPFR', version: '3.0.0', dir: 'deps/MPFR/mpfr', archived: [{ path: 'deps/MPFR/mpfr/lib/win-x64/libmpfr-4.dll', sha256: H('5'), sourced: false }] },
+      ],
+      withDeps: true,
+      unknownBinaries: ['tools/new.exe'],
+    })
+    expect(gaps.omitted).toEqual([])
+    expect(gaps.missing).toEqual([
+      'no pinned source package for the built dependencies TBB; fetch them with build',
+      'no pinned source for the prebuilt MPFR 3.0.0, whose binaries the Orca archive keeps (deps/MPFR/mpfr/lib/win-x64/libmpfr-4.dll); PREBUILT_SOURCES (scripts/lib/bundle.ts) pins the binaries whose source is known',
+      `the Orca archive keeps deps/GMP/gmp/lib/win-x64/libgmp-10.dll (SHA-256 ${H('4')}), which no pin of the source the bundle carries lists by path and SHA-256 (PREBUILT_SOURCES archived)`,
+      'no recipe that rebuilds the prebuilt GMP 5.0.1 from its pinned source (how it was configured and built is not known)',
+      'the Orca archive keeps binaries whose source the bundle does not have: tools/new.exe; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or pin their source',
+    ])
   })
 
   test('verifySums: changed, missing and unlisted files', () => {
