@@ -73,7 +73,7 @@ bun run typecheck                      # tsc: type-check the scripts and tests
 | `build [--step deps\|orca]` | Applies `patches/`, builds Orca's dependencies without the GUI ones, then libslic3r and `sketch-orca` (Release, `SLIC3R_GUI=OFF`; on Windows with MSVC's static runtime, `/MT`). Fetches first when the checkout is missing or at another commit. |
 | `smoke [--case <id,...>]` | Slices the test models with the built engine and checks the results (see Smoke). |
 | `stage [--without-smoke]` | The engine as it ships, in `<work>/dist/engine`, with a manifest. Only an engine that passed smoke is staged; `--without-smoke` stages a dev build and the manifest says so. |
-| `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. `--no-deps` leaves the dependency packages and the prebuilt libraries' sources out (they stay listed with URL and SHA-256); `--allow-missing` makes the bundle even when a built dependency or a prebuilt library has no pinned source. |
+| `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. `--no-deps` leaves the dependency packages and the prebuilt libraries' sources out (they stay listed with URL and SHA-256); `--allow-missing` makes the bundle even when a built dependency, or a prebuilt binary the Orca archive keeps, has no pinned source, or a pinned prebuilt binary no recipe to rebuild it (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
 | `release [--offline] [--no-deps] [--allow-missing]` | `check`, `update` (only to a newer stable release), `fetch`, `build`, `smoke`, `stage` and `source`, in order, stopping at the first failure. `--offline` leaves out `check` and `update`. |
 | `env` | Prints the toolchain found and the cleaned build PATH. |
 
@@ -183,7 +183,8 @@ plus `bin/` as the library path): `version`, which proves `bin/` is complete, th
 ```
 orca/OrcaSlicer-<tag>.tar.gz   OrcaSlicer at the locked commit (git archive with no line-ending
                                conversion: each file as committed, most with LF, some, mostly
-                               under resources/profiles, with CRLF)
+                               under resources/profiles, with CRLF), less the binaries the build
+                               does not use (orcaArchiveExcludes, bundle.json orcaExcluded)
 engine/                        this repository: lock, patches, cli, protocol, licenses, scripts,
                                tests, README, NOTICE, AUTHORS, LICENSE: the files git tracks, at
                                the commit bundle.json names (no .git, node_modules or local work
@@ -415,8 +416,13 @@ These are for the maintainers to decide, and some for a lawyer. The first two we
   in a later Orca release, which `source` then refuses); and the libgcc and MinGW-w64 runtime code
   linked statically into the DLL by GCC 4.4.5 (under the GCC Runtime Library Exception and the
   MinGW-w64 runtime's permissive terms; counsel may confirm that no further source is needed).
-- **MPFR (Windows).** Orca ships MPFR 3.0.0 prebuilt too; the engine does not link it, so it is
-  neither shipped nor bundled. If a build ever links it, its source must be pinned like GMP's.
+  Until a recipe that rebuilds the DLL from that source is in the bundle (`PREBUILT_SOURCES`
+  `recipe`), `source` refuses, or makes an incomplete bundle with `--allow-missing`.
+- **MPFR (Windows).** Orca ships MPFR 3.0.0 prebuilt too. The engine does not load it, but Orca's
+  Windows dependency build copies its header, import library and DLL from the tree, so the Orca
+  archive keeps them (for the engine's architecture only), and `source` refuses until their source
+  is pinned like GMP's (or makes an incomplete bundle with `--allow-missing`). Not known yet: which
+  MPFR release and build CGAL's binary is.
 - **libnoise.** The package Orca pins dropped libnoise's `COPYING.txt`. Staging ships the grant
   from its sources (`src/noise.h`, LGPL 2.1 or later) and the LGPL 2.1 text from `licenses/`.
 - **The toolchain record.** `BUILT_WITH` (`scripts/lib/bundle.ts`, and so each bundle's

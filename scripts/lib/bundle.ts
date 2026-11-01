@@ -1,7 +1,9 @@
 // `source`: the complete corresponding source of the staged engine (AGPL-3.0, section 6), in
 // <work>/dist/source/<name>/:
 //
-//   orca/OrcaSlicer-<tag>.tar.gz    OrcaSlicer at the locked commit, as upstream has it (git archive)
+//   orca/OrcaSlicer-<tag>.tar.gz    OrcaSlicer at the locked commit, as upstream has it (git archive),
+//                                   less the binaries the engine's build does not use
+//                                   (orcaArchiveExcludes)
 //   engine/                         this repository (sketch-orca): the lock, the patches, the
 //                                   command-line front end (cli/), the protocol, the pipeline scripts
 //                                   and their tests, the README and the licence files; from a git
@@ -12,7 +14,7 @@
 //                                   checked against the SHA-256 that Orca's recipe pins
 //   prebuilt/<Name>/<file>          the source packages of the libraries Orca ships prebuilt (GMP on
 //                                   Windows), each pinned to the very binary the engine ships
-//                                   (PREBUILT_SOURCES)
+//                                   (PREBUILT_SOURCES); the Orca archive keeps these binaries
 //   LICENSES/                       the licence texts shipped with the engine
 //   BUILDING.md                     how to build the engine from this folder
 //   bundle.json                     sketch-orca-source/1: what this is the source of, and what it holds
@@ -21,8 +23,10 @@
 // The bundle is made only for a staged engine that matches the current lock, patches and front end.
 // Run again, it skips when its inputs are unchanged and every file matches SHA256SUMS.
 // --no-deps leaves the dependency packages and the prebuilt libraries' sources out (they stay listed
-// in bundle.json, with their URLs). A built dependency or a shipped prebuilt library whose source is
-// not pinned stops the step, unless --allow-missing.
+// in bundle.json, with their URLs). A built dependency, or a prebuilt binary the Orca archive keeps,
+// whose source is not pinned, and a pinned prebuilt binary with no recipe that rebuilds it from that
+// source, stop the step, unless --allow-missing; bundle.json and BUILDING.md then say the bundle is
+// not complete.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -39,7 +43,7 @@ import { currentPlatform } from './toolchain.ts'
 
 export const SOURCE_FORMAT = 'sketch-orca-source/1'
 /** Bump when the bundle's layout changes: a bundle of an older version is made again. */
-export const SOURCE_VERSION = 3
+export const SOURCE_VERSION = 4
 
 /**
  * The toolchain the engine has been built with, on Windows x64 (2026-10-30, 2026-11-01), as BUILDING.md (the
@@ -181,7 +185,7 @@ export interface PrebuiltLibrary {
   binary?: string
   binarySha256?: string
   /** Its source package, when PREBUILT_SOURCES pins that very binary; in the bundle as prebuilt/<name>/<file>. */
-  source?: { file: string; urls: string[]; size: number; sha256: string; provenance: string }
+  source?: { file: string; urls: string[]; size: number; sha256: string; provenance: string; recipe?: string }
 }
 
 export function gmpHeaderVersion(text: string): string | undefined {
@@ -196,13 +200,61 @@ export function mpfrHeaderVersion(text: string): string | undefined {
   return /#define\s+MPFR_VERSION_STRING\s+"([^"]+)"/.exec(text)?.[1]
 }
 
-/** The prebuilt libraries the staged engine ships (by the manifest's runtime list). */
+/** The prebuilt libraries among `files` (file names: the staged engine's runtime, or the binaries the Orca archive keeps). */
 export function prebuiltLibraries(srcDir: string, runtime: string[]): PrebuiltLibrary[] {
   const out: PrebuiltLibrary[] = []
   const read = (p: string) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
   if (runtime.some((r) => /^libgmp/i.test(r))) out.push({ name: 'GMP', version: gmpHeaderVersion(read(join(srcDir, 'deps', 'GMP', 'gmp', 'include', 'gmp.h'))) ?? 'unknown', dir: 'deps/GMP/gmp' })
   if (runtime.some((r) => /^libmpfr/i.test(r))) out.push({ name: 'MPFR', version: mpfrHeaderVersion(read(join(srcDir, 'deps', 'MPFR', 'mpfr', 'include', 'mpfr.h'))) ?? 'unknown', dir: 'deps/MPFR/mpfr' })
   return out
+}
+
+/** Programs and libraries, by their file name. */
+const BINARY_FILE = /\.(dll|exe|lib|a|so(\.\d+)*|dylib|pdb|jar)$/i
+
+/** The prebuilt libraries' binaries in OrcaSlicer's tree (Windows, for each architecture). */
+const PREBUILT_BINARY_DIRS: Record<string, string> = { GMP: 'deps/GMP/gmp/lib', MPFR: 'deps/MPFR/mpfr/lib' }
+
+/**
+ * What the bundle's Orca archive leaves out of OrcaSlicer's tree, as git pathspecs: binaries the
+ * engine's build does not use, which would otherwise ship without their source. The GUI's WebView2
+ * loader, the gettext and 7-Zip programs of tools/, and the prebuilt GMP and MPFR of every other
+ * Windows architecture than the engine's (all of them off Windows, where the build makes both
+ * from their source packages).
+ */
+export function orcaArchiveExcludes(platform: Platform, arch: string): string[] {
+  const out = ['deps/WebView2', 'tools/*.exe']
+  for (const dir of Object.values(PREBUILT_BINARY_DIRS)) {
+    if (platform !== 'win32') out.push(dir)
+    else for (const a of ['win-x64', 'win-x86', 'win-arm64']) if (a !== `win-${arch}`) out.push(`${dir}/${a}`)
+  }
+  return out
+}
+
+/** Whether `rel` is one of `excludes` (a folder and what is in it, or a * pattern within one folder). */
+function excluded(rel: string, excludes: string[]): boolean {
+  return excludes.some((e) => (e.includes('*') ? new RegExp(`^${e.split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`).test(rel) : rel === e || rel.startsWith(`${e}/`)))
+}
+
+/**
+ * The binaries the Orca archive keeps (`files`: the paths of the commit's tree), by library: the
+ * prebuilt GMP and MPFR, and `unknown` for any other binary, which has no source in the bundle.
+ */
+export function archivedBinaries(files: string[], excludes: string[]): { prebuilt: Map<string, string[]>; unknown: string[] } {
+  const prebuilt = new Map<string, string[]>()
+  const unknown: string[] = []
+  for (const rel of files) {
+    if (!BINARY_FILE.test(rel) || excluded(rel, excludes)) continue
+    const name = Object.keys(PREBUILT_BINARY_DIRS).find((n) => rel.startsWith(`${PREBUILT_BINARY_DIRS[n]}/`))
+    if (name) prebuilt.set(name, [...(prebuilt.get(name) ?? []), rel])
+    else unknown.push(rel)
+  }
+  return { prebuilt, unknown }
+}
+
+/** The git pathspecs that leave `excludes` out of `git archive`. */
+export function excludePathspecs(excludes: string[]): string[] {
+  return excludes.map((e) => (e.includes('*') ? `:(exclude,glob)${e}` : `:(exclude)${e}`))
 }
 
 /**
@@ -223,6 +275,12 @@ export interface PrebuiltSource {
   sha256: string
   /** How the binary was made from it, as far as is known (BUILDING.md: "The binary is ..."). */
   provenance: string
+  /**
+   * The bundle's recipe that makes this very binary from the package (a file of engine/), when there
+   * is one. Without it the bundle has the source but not the scripts to rebuild the binary, and is
+   * not complete (`source` stops unless --allow-missing).
+   */
+  recipe?: string
 }
 
 /**
@@ -270,7 +328,7 @@ export function withPrebuiltSources(libs: PrebuiltLibrary[], m: Pick<EngineManif
     if (!bin) return { ...lib }
     const out: PrebuiltLibrary = { ...lib, binary: bin.path, binarySha256: bin.sha256 }
     const pin = pins.find((p) => p.name === lib.name && p.version === lib.version && p.arch === m.arch && `bin/${p.binary}` === bin.path && p.binarySha256 === bin.sha256)
-    if (pin) out.source = { file: pin.file, urls: [...pin.urls], size: pin.size, sha256: pin.sha256, provenance: pin.provenance }
+    if (pin) out.source = { file: pin.file, urls: [...pin.urls], size: pin.size, sha256: pin.sha256, provenance: pin.provenance, ...(pin.recipe ? { recipe: pin.recipe } : {}) }
     return out
   })
 }
@@ -429,6 +487,11 @@ export interface BundleInfo {
   cli: string
   /** The commit of this repository that engine/ holds (its files as git tracks them); null when it was not made from a git checkout. */
   repository: { commit: string | null }
+  /** The binaries of OrcaSlicer's tree the archive leaves out (orcaArchiveExcludes, as git pathspecs). */
+  orcaExcluded: string[]
+  /** Whether every binary the engine and the archive carry has its source and recipe here; `incomplete` says what has not. */
+  complete: boolean
+  incomplete: string[]
   dependencies: {
     included: boolean
     archives: { name: string; file: string; url: string; sha256: string; size: number }[]
@@ -441,7 +504,7 @@ export interface BundleInfo {
 }
 
 /** The build instructions in the bundle; the command lines are the pipeline's own (cmake.ts). */
-export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patches: string[]; plan: DependencyPlan; prebuilt: PrebuiltLibrary[]; withDeps: boolean }): string {
+export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patches: string[]; plan: DependencyPlan; prebuilt: PrebuiltLibrary[]; withDeps: boolean; orcaExcluded?: string[]; incomplete?: string[] }): string {
   const { lock, manifest: m } = o
   const platform = m.platform
   const ninja = platform === 'win32' ? '<ninja.exe>' : '<ninja>'
@@ -461,12 +524,19 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
   const lines = [
     `# Building sketch-orca ${m.engine.version} from this source`,
     '',
-    `This folder is the complete corresponding source of the sketch-orca engine ${m.engine.version}`,
+    `This folder is the ${(o.incomplete ?? []).length === 0 ? 'complete corresponding source' : 'source'} of the sketch-orca engine ${m.engine.version}`,
     `staged for ${platform} (${m.arch}): OrcaSlicer ${lock.tag} (commit ${lock.commit}) with the changes`,
     'in engine/patches, the command-line front end in engine/cli, and the scripts that fetch, build,',
     'test and stage it (engine/scripts). It is offered under the GNU Affero General Public License',
     'version 3; the licence texts are in LICENSES/.',
     '',
+    ...((o.incomplete ?? []).length > 0 ? ['It is NOT complete corresponding source:', '', ...(o.incomplete ?? []).map((m) => `- ${m}`), ''] : []),
+    ...((o.orcaExcluded ?? []).length > 0
+      ? [
+          `The OrcaSlicer archive leaves out binaries of its tree that this build does not use: ${(o.orcaExcluded ?? []).join(', ')}.`,
+          '',
+        ]
+      : []),
     '## Tools',
     '',
     'The engine has been built on Windows x64 with these; other versions may work, these are known to:',
@@ -562,7 +632,8 @@ export function prebuiltLine(p: PrebuiltLibrary, withDeps: boolean): string {
   if (!p.source) return `${ships} Its source is NOT in this bundle: no source package is pinned for this binary (PREBUILT_SOURCES in engine/scripts/lib/bundle.ts).`
   const from = `${p.source.urls[0]} (SHA-256 ${p.source.sha256})`
   const where = withDeps ? `Its source is prebuilt/${p.name}/${p.source.file}, from ${from}.` : `Its source, ${p.source.file}, was left out of this bundle; it is at ${from}.`
-  return `${ships} ${where} The binary is ${p.source.provenance}.`
+  const rebuild = p.source.recipe ? `engine/${p.source.recipe} rebuilds it from that source.` : 'The bundle has no recipe that rebuilds this binary from that source, so for it the bundle is not complete.'
+  return `${ships} ${where} The binary is ${p.source.provenance}. ${rebuild}`
 }
 
 /**
@@ -628,11 +699,19 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
     return dir !== undefined && dir.startsWith(w.src)
   })
   for (const u of plan.unpinned) log.line(`source: ${u} is pinned by no recipe of this release; left out`)
-  const prebuilt = withPrebuiltSources(prebuiltLibraries(w.src, m.runtime), m)
+  // Every binary the Orca archive keeps is a prebuilt library whose source is pinned, or is named here.
+  const orcaExcluded = orcaArchiveExcludes(m.platform, m.arch)
+  const tree = capture(git, ['-C', w.src, '-c', 'core.quotePath=false', 'ls-tree', '-r', '-z', '--name-only', ctx.lock.commit])
+  if (tree.code !== 0) throw new StepError(`git ls-tree failed in ${w.src}: ${tree.stderr.trim()}`)
+  const archived = archivedBinaries(tree.stdout.split('\0').filter((rel) => rel !== ''), orcaExcluded)
+  const prebuilt = withPrebuiltSources(prebuiltLibraries(w.src, [...archived.prebuilt.values()].flat().map((rel) => rel.split('/').pop()!)), m)
   const unsourced = prebuilt.filter((p) => !p.source)
+  const unrecipied = prebuilt.filter((p) => p.source && !p.source.recipe)
   const missing = [
     ...(plan.missing.length > 0 ? [`no pinned source package for the built dependencies ${plan.missing.join(', ')}; fetch them with build`] : []),
-    ...(unsourced.length > 0 ? [`no pinned source for the prebuilt ${unsourced.map(prebuiltLabel).join(', ')}; PREBUILT_SOURCES (scripts/lib/bundle.ts) pins the binaries whose source is known`] : []),
+    ...(unsourced.length > 0 ? [`no pinned source for the prebuilt ${unsourced.map(prebuiltLabel).join(', ')}, whose binaries the Orca archive keeps (${unsourced.flatMap((p) => archived.prebuilt.get(p.name) ?? []).join(', ')}); PREBUILT_SOURCES (scripts/lib/bundle.ts) pins the binaries whose source is known`] : []),
+    ...(unrecipied.length > 0 ? [`no recipe that rebuilds the prebuilt ${unrecipied.map(prebuiltLabel).join(', ')} from its pinned source (how it was configured and built is not known)`] : []),
+    ...(archived.unknown.length > 0 ? [`the Orca archive keeps binaries whose source the bundle does not have: ${archived.unknown.join(', ')}; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or pin their source`] : []),
   ]
   if (missing.length > 0 && !allowMissing) throw new StepError(`${missing.join('; ')}; or pass --allow-missing`)
   // The prebuilt libraries' sources, from the work folder or downloaded there (checked against the pins).
@@ -657,6 +736,8 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
       withDeps,
       missing: plan.missing,
       prebuilt,
+      orcaExcluded,
+      incomplete: missing,
     }),
   )
   const name = bundleName(m)
@@ -687,11 +768,11 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   const archive = nativePath(tmp, orcaArchiveName(ctx.lock))
   mkdirSync(join(tmp, 'orca'), { recursive: true })
   log.line(`source: archiving OrcaSlicer ${ctx.lock.tag} at ${ctx.lock.commit}`)
-  await runLogged(git, ['-C', w.src, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'archive', '--format=tar.gz', `--prefix=OrcaSlicer-${ctx.lock.tag}/`, '-o', archive, ctx.lock.commit], { log })
+  await runLogged(git, ['-C', w.src, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'archive', '--format=tar.gz', `--prefix=OrcaSlicer-${ctx.lock.tag}/`, '-o', archive, ctx.lock.commit, '--', ...excludePathspecs(orcaExcluded)], { log })
   log.line(`source: copying ${copies.length} files${withDeps ? ` (${plan.archives.length} dependency packages and ${prebuiltArchives.length} prebuilt libraries' sources, linked where the volume allows)` : ''}`)
   for (const c of copies) copyFile(c.from, nativePath(tmp, c.to), { link: c.to.startsWith('dependencies/') || c.to.startsWith('prebuilt/') })
   const patches = listPatches(ctx.engine.patches)
-  writeText(join(tmp, 'BUILDING.md'), buildingText({ lock: ctx.lock, manifest: m, patches: patches.map((p) => p.name), plan, prebuilt, withDeps }))
+  writeText(join(tmp, 'BUILDING.md'), buildingText({ lock: ctx.lock, manifest: m, patches: patches.map((p) => p.name), plan, prebuilt, withDeps, orcaExcluded, incomplete: missing }))
   const info: BundleInfo = {
     format: SOURCE_FORMAT,
     sourceVersion: SOURCE_VERSION,
@@ -701,6 +782,9 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
     patches: patches.map((p) => ({ name: p.name, sha256: p.sha256 })),
     cli: m.cli,
     repository: { commit: repository.commit },
+    orcaExcluded,
+    complete: missing.length === 0,
+    incomplete: missing,
     dependencies: {
       included: withDeps,
       archives: plan.archives.map((a) => ({ name: a.name, file: a.file, url: a.url, sha256: a.sha256, size: a.size })),
@@ -726,5 +810,6 @@ export async function runSource(ctx: Context, log: Log, fetcher: Fetcher = httpF
   for (const p of unsourced) log.line(`source: note: ${prebuiltLabel(p)} ships prebuilt from Orca's tree; its source is not in the bundle (--allow-missing)`)
   if (!withDeps) for (const p of prebuilt) if (p.source) log.line(`source: note: the source of the prebuilt ${p.name} ${p.version} (${p.source.file}) is left out (--no-deps)`)
   if (plan.missing.length > 0) log.line(`source: note: no source package for ${plan.missing.join(', ')} (--allow-missing)`)
+  if (missing.length > 0) log.line(`source: the bundle is NOT complete corresponding source (--allow-missing): ${missing.join('; ')}`)
   return 0
 }

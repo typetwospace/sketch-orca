@@ -7,13 +7,16 @@ import {
   buildingText,
   BUILT_WITH,
   bundleCopies,
+  archivedBinaries,
   bundleName,
   ensurePrebuiltSource,
+  excludePathspecs,
   gmpHeaderVersion,
   keepEngineFile,
   listDownloads,
   LOCAL_WORK_FOLDERS,
   mpfrHeaderVersion,
+  orcaArchiveExcludes,
   orcaArchiveName,
   ownBundleFiles,
   parsePinnedSources,
@@ -336,6 +339,13 @@ describe('the bundle', () => {
     expect(text).toContain('(the copies Strawberry Perl ships in its c\\bin;')
     expect(lines).toContain('- TBB: built, but its source package is NOT in this bundle')
     expect(text.endsWith('\n')).toBe(true)
+    expect(text).toContain('This folder is the complete corresponding source of the sketch-orca engine')
+    // A bundle made with --allow-missing says so, and what the Orca archive leaves out.
+    const partial = buildingText({ lock: LOCK, manifest: manifest(), patches, plan, prebuilt, withDeps: true, orcaExcluded: ['deps/WebView2', 'tools/*.exe'], incomplete: ['no pinned source for the prebuilt MPFR 3.1.6'] })
+    expect(partial).toContain('This folder is the source of the sketch-orca engine')
+    expect(partial).not.toContain('complete corresponding source of')
+    expect(partial.split('\n')).toContain('- no pinned source for the prebuilt MPFR 3.1.6')
+    expect(partial).toContain('The OrcaSlicer archive leaves out binaries of its tree that this build does not use: deps/WebView2, tools/*.exe.')
 
     const linux = buildingText({ lock: LOCK, manifest: manifest({ platform: 'linux' }), patches, plan: { ...plan, missing: [] }, prebuilt: [], withDeps: false })
     expect(linux).toContain('The dependency packages were left out of this bundle')
@@ -481,8 +491,66 @@ describe('prebuilt libraries and their sources', () => {
     expect(line).toContain("The binary is CGAL's MinGW-w64 build of this release")
     expect(prebuiltLine(lib!, false)).toContain('Its source, gmp-5.0.1.tar.bz2, was left out of this bundle; it is at https://gmplib.org/download/gmp/gmp-5.0.1.tar.bz2')
     expect(prebuiltLine(gmp(), true)).toContain('Its source is NOT in this bundle')
-    // engine/ as git tracks it, and its commit in bundle.json, is a new bundle version: an older bundle is made again.
-    expect(SOURCE_VERSION).toBe(3)
+    // The pin has no recipe that rebuilds the DLL: BUILDING.md says the bundle is not complete for it.
+    expect(GMP_PIN.recipe).toBeUndefined()
+    expect(line).toContain('The bundle has no recipe that rebuilds this binary from that source, so for it the bundle is not complete.')
+    const withRecipe = withPrebuiltSources([gmp()], shipping(GMP_PIN.binarySha256), [{ ...pins[0]!, recipe: 'prebuilt/gmp-5.0.1.sh' }])[0]!
+    expect(withRecipe.source?.recipe).toBe('prebuilt/gmp-5.0.1.sh')
+    expect(prebuiltLine(withRecipe, true)).toContain('engine/prebuilt/gmp-5.0.1.sh rebuilds it from that source.')
+    // The archive's binaries are accounted for, and the bundle says whether it is complete: a new bundle version.
+    expect(SOURCE_VERSION).toBe(4)
+  })
+
+  test("orcaArchiveExcludes and archivedBinaries: the Orca archive keeps only the prebuilt binaries the engine's build uses", () => {
+    // OrcaSlicer v2.4.2's binaries.
+    const tree = [
+      ...['win-arm64', 'win-x64', 'win-x86'].flatMap((a) => [`deps/GMP/gmp/lib/${a}/libgmp-10.dll`, `deps/GMP/gmp/lib/${a}/libgmp-10.lib`, `deps/MPFR/mpfr/lib/${a}/libmpfr-4.dll`, `deps/MPFR/mpfr/lib/${a}/libmpfr-4.lib`]),
+      ...['win-arm64', 'win-x64', 'win-x86'].flatMap((a) => [`deps/WebView2/lib/${a}/WebView2Loader.dll`, `deps/WebView2/lib/${a}/WebView2LoaderStatic.lib`]),
+      'tools/7z.exe',
+      'tools/msgfmt.exe',
+      'tools/msgmerge.exe',
+      'tools/xgettext.exe',
+      'tools/README.md',
+      'deps/GMP/gmp/include/gmp.h',
+      'src/libslic3r/Print.cpp',
+    ]
+    const win = orcaArchiveExcludes('win32', 'x64')
+    expect(win).toEqual(['deps/WebView2', 'tools/*.exe', 'deps/GMP/gmp/lib/win-x86', 'deps/GMP/gmp/lib/win-arm64', 'deps/MPFR/mpfr/lib/win-x86', 'deps/MPFR/mpfr/lib/win-arm64'])
+    expect(excludePathspecs(win).slice(0, 3)).toEqual([':(exclude)deps/WebView2', ':(exclude,glob)tools/*.exe', ':(exclude)deps/GMP/gmp/lib/win-x86'])
+    const kept = archivedBinaries(tree, win)
+    expect(Object.fromEntries(kept.prebuilt)).toEqual({
+      GMP: ['deps/GMP/gmp/lib/win-x64/libgmp-10.dll', 'deps/GMP/gmp/lib/win-x64/libgmp-10.lib'],
+      MPFR: ['deps/MPFR/mpfr/lib/win-x64/libmpfr-4.dll', 'deps/MPFR/mpfr/lib/win-x64/libmpfr-4.lib'],
+    })
+    expect(kept.unknown).toEqual([])
+    // Off Windows the build makes GMP and MPFR from their packages: the archive keeps no binary.
+    const linux = archivedBinaries(tree, orcaArchiveExcludes('linux', 'x64'))
+    expect(linux).toEqual({ prebuilt: new Map(), unknown: [] })
+    // A binary a later Orca release adds, which the archive would carry without its source.
+    expect(archivedBinaries([...tree, 'tools/sub/new.exe', 'deps/Foo/foo.dll'], win).unknown).toEqual(['tools/sub/new.exe', 'deps/Foo/foo.dll'])
+    // Without the exclusions every one of them would ship.
+    expect(archivedBinaries(tree, []).unknown).toHaveLength(10)
+  })
+
+  test.skipIf(firstExisting(gitCandidates(currentPlatform(), process.env)) === undefined)('excludePathspecs: git archive leaves out what orcaArchiveExcludes names', () => {
+    const git = firstExisting(gitCandidates(currentPlatform(), process.env))!
+    const repo = join(dir, 'orca')
+    for (const rel of ['deps/GMP/gmp/lib/win-x64/libgmp-10.dll', 'deps/GMP/gmp/lib/win-x86/libgmp-10.dll', 'deps/WebView2/lib/win-x64/WebView2Loader.dll', 'tools/msgfmt.exe', 'tools/README.md', 'src/a.cpp']) put(`orca/${rel}`, 'x')
+    const empty = join(dir, 'gitconfig')
+    writeFileSync(empty, '')
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: empty, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 'test@example.invalid' }
+    const run = (...args: string[]) => {
+      const r = spawnSync(git, ['-C', repo, ...args], { encoding: 'utf8', windowsHide: true, env })
+      if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`)
+      return r.stdout
+    }
+    run('init', '-q')
+    run('add', '-A')
+    run('commit', '-q', '-m', 'tree')
+    const tar = join(dir, 'orca.tar')
+    run('archive', '--format=tar', '-o', tar, 'HEAD', '--', ...excludePathspecs(orcaArchiveExcludes('win32', 'x64')))
+    const names = readFileSync(tar, 'latin1').match(/(deps|tools|src)\/[\w./-]+/g) ?? []
+    expect([...new Set(names)].filter((n) => !n.endsWith('/')).sort()).toEqual(['deps/GMP/gmp/lib/win-x64/libgmp-10.dll', 'src/a.cpp', 'tools/README.md'])
   })
 })
 

@@ -89,6 +89,14 @@ fec43cb18ce0ec8a5dd6ad1db745747167310ccb92b5acff0d445a8b3013f009). For any other
 bundle's `BUILDING.md` says that its source is not in the bundle, and `source` stops unless given
 `--allow-missing`. `PREBUILT_SOURCES` in `scripts/lib/bundle.ts` records the pin and how it was
 checked; `README.md` (Open items) says what is still not known about how that DLL was built.
+Until the bundle has a recipe that rebuilds that DLL from the archive (the pin's `recipe`),
+`source` stops for GMP too unless given `--allow-missing`, and the bundle says it is not complete.
+
+The bundle's Orca archive leaves out the binaries of OrcaSlicer's tree that the engine's build does
+not use (the WebView2 loader, the programs in `tools/`, and GMP and MPFR for other architectures;
+`orcaArchiveExcludes`). It keeps MPFR's header, import library and DLL for the engine's
+architecture, which Orca's Windows dependency build copies; their source is not pinned yet, so
+`source` stops unless given `--allow-missing`.
 
 ## From a source bundle
 
