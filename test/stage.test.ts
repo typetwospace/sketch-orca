@@ -36,6 +36,7 @@ import {
   readManifest,
   requiredLicenses,
   resourceCopies,
+  runtimeRefusal,
   serializeManifest,
   STAGED_CASES,
   stagedEnv,
@@ -464,6 +465,28 @@ describe('runtime libraries', () => {
       missing: [],
       crt: [],
     })
+  })
+
+  test('Windows: stage refuses an engine whose dependency loads a debug or an older Visual C++ runtime, also one System32 has', () => {
+    const files = new Map<string, string[]>([
+      ['/bin/sketch-orca.exe', ['KERNEL32.dll', 'TKernel.dll', 'libgmp-10.dll']],
+      ['/bin/TKernel.dll', ['KERNEL32.dll', 'ucrtbased.dll', 'msvcr120.dll']],
+      ['/bin/libgmp-10.dll', ['KERNEL32.dll', 'msvcrt.dll']],
+    ])
+    const io: RuntimeIo = {
+      importsOf: (p) => files.get(p) ?? [],
+      find: (d, n) => [...files.keys()].find((p) => p.toLowerCase() === `${d}/${n}`.toLowerCase()),
+      isSystem: (n) => ['kernel32.dll', 'msvcrt.dll', 'msvcr120.dll'].includes(n.toLowerCase()),
+    }
+    const plan = windowsRuntime('/bin/sketch-orca.exe', ['/bin'], io)
+    expect(plan.crt).toEqual(['ucrtbased.dll (needed by TKernel.dll)', 'msvcr120.dll (needed by TKernel.dll)'])
+    expect(plan.system).toEqual(['KERNEL32.dll', 'msvcrt.dll'])
+    const refusal = runtimeRefusal(plan)
+    expect(refusal).toContain("MSVC's dynamic C runtime")
+    expect(refusal).toContain('ucrtbased.dll (needed by TKernel.dll), msvcr120.dll (needed by TKernel.dll)')
+    // The static runtime's engine, with GMP's msvcrt.dll, passes.
+    expect(runtimeRefusal({ copy: [], system: ['KERNEL32.dll', 'msvcrt.dll'], missing: [], crt: [] })).toBeUndefined()
+    expect(runtimeRefusal({ copy: [], system: [], missing: ['zlib1.dll (needed by TKernel.dll)'], crt: [] })).toContain('not all found: zlib1.dll')
   })
 
   test('ldd output: resolved, not found, and the lines without =>', () => {

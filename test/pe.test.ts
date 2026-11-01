@@ -118,6 +118,47 @@ describe('runtime closure', () => {
     for (const n of ['msvcrt.dll', 'KERNEL32.dll', 'api-ms-win-core-synch-l1-2-0.dll', 'libgmp-10.dll', 'TKernel.dll']) expect({ n, crt: isDynamicCrt(n) }).toEqual({ n, crt: false })
   })
 
+  test('the debug builds and the older Visual C++ runtimes are the dynamic C runtime too', () => {
+    const debugAndLegacy = [
+      'vcruntime140d.dll',
+      'VCRUNTIME140_1D.dll',
+      'vcruntime140_threads.dll',
+      'msvcp140d.dll',
+      'msvcp140d_atomic_wait.dll',
+      'msvcp140_1d.dll',
+      'ucrtbased.dll',
+      'msvcr120.dll',
+      'MSVCR100D.dll',
+      'msvcp120.dll',
+      'concrt140d.dll',
+      'vcomp140d.dll',
+    ]
+    for (const n of debugAndLegacy) expect({ n, crt: isDynamicCrt(n) }).toEqual({ n, crt: true })
+    // Windows' own C runtime and names that only start like one are not.
+    for (const n of ['msvcrt.dll', 'MSVCRT.DLL', 'msvcrtd.dll.mui', 'ucrtbase_clr0400.dll', 'vcruntime.dll']) expect({ n, crt: isDynamicCrt(n) }).toEqual({ n, crt: false })
+  })
+
+  test('a dependency on a debug or older runtime is named in crt, and never taken from Windows', () => {
+    const files: Record<string, string[]> = {
+      'build/engine.exe': ['KERNEL32.dll', 'TKernel.dll'],
+      'build/TKernel.dll': ['KERNEL32.dll', 'msvcr120.dll', 'ucrtbased.dll', 'vcruntime140d.dll'],
+    }
+    const io: RuntimeIo = {
+      importsOf: (p) => files[p] ?? [],
+      find: (dir, name) => (`${dir}/${name}` in files ? `${dir}/${name}` : undefined),
+      // An installed runtime in System32 does not make it the system's.
+      isSystem: (n) => ['kernel32.dll', 'msvcr120.dll', 'vcruntime140d.dll'].includes(n.toLowerCase()),
+    }
+    const c = resolveRuntime('build/engine.exe', ['build'], io)
+    expect(c.crt).toEqual([
+      { name: 'msvcr120.dll', neededBy: 'TKernel.dll' },
+      { name: 'ucrtbased.dll', neededBy: 'TKernel.dll' },
+      { name: 'vcruntime140d.dll', neededBy: 'TKernel.dll' },
+    ])
+    expect(c.system).toEqual(['KERNEL32.dll'])
+    expect(c.missing.map((m) => m.name)).toEqual(['msvcr120.dll', 'ucrtbased.dll', 'vcruntime140d.dll'])
+  })
+
   test('walks imports through the search folders; the C++ runtime is never taken from Windows', () => {
     const files: Record<string, string[]> = {
       'build/engine.exe': ['TKernel.dll', 'KERNEL32.dll', 'api-ms-win-crt-heap-l1-1-0.dll', 'VCRUNTIME140.dll'],

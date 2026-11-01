@@ -87,19 +87,24 @@ export function isApiSet(name: string): boolean {
   return /^(api|ext)-ms-/i.test(name)
 }
 
-/** The Visual C++ runtime DLLs (the redistributable's), which are never taken from the system. */
+/**
+ * The Visual C++ runtime DLLs (the redistributable's), which are never taken from the system: those
+ * of Visual Studio 2015 and later (vcruntime140, msvcp140 and their _1, _2, _atomic_wait... parts),
+ * the older msvcr<version> and msvcp<version>, and the debug builds of each (a d after the version
+ * or the part: vcruntime140d, msvcp140d_atomic_wait, vcruntime140_1d, msvcr120d).
+ */
 export function isMsvcRuntime(name: string): boolean {
-  return /^(vcruntime\d+(_\d+)?|msvcp\d+(_\w+)?|concrt\d+|vcomp\d+|vccorlib\d+|vcamp\d+|mfc\d+\w*)\.dll$/i.test(name)
+  return /^(vcruntime\d+d?(_\w+)?|msvcp\d+d?(_\w+)?|msvcr\d+d?|concrt\d+d?|vcomp\d+d?|vccorlib\d+d?|vcamp\d+d?|mfc\d+\w*)\.dll$/i.test(name)
 }
 
 /**
  * The dynamic C runtime of MSVC builds: the Visual C++ runtime DLLs and the Universal CRT
- * (ucrtbase.dll and its api-ms-win-crt-* API sets). A program built with the static runtime (/MT)
- * imports none of them. Windows' own msvcrt.dll, which MinGW builds such as Orca's prebuilt GMP
- * load, is not one.
+ * (ucrtbase.dll, its debug build ucrtbased.dll, and its api-ms-win-crt-* API sets). A program built
+ * with the static runtime (/MT) imports none of them. Windows' own msvcrt.dll, which MinGW builds
+ * such as Orca's prebuilt GMP load, is not one.
  */
 export function isDynamicCrt(name: string): boolean {
-  return isMsvcRuntime(name) || /^ucrtbase\.dll$/i.test(name) || /^api-ms-win-crt-/i.test(name)
+  return isMsvcRuntime(name) || /^ucrtbased?\.dll$/i.test(name) || /^api-ms-win-crt-/i.test(name)
 }
 
 export interface RuntimeIo {

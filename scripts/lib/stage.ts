@@ -512,6 +512,15 @@ export function isUnixSystemLibrary(path: string, workHome: string): boolean {
   return !path.startsWith(workHome.endsWith('/') ? workHome : `${workHome}/`)
 }
 
+/** Why stage refuses the engine's libraries: any import of MSVC's dynamic C runtime, then any library not found. */
+export function runtimeRefusal(runtime: RuntimePlan): string | undefined {
+  if (runtime.crt.length > 0) {
+    return `the engine loads MSVC's dynamic C runtime, which would have to ship with it: ${runtime.crt.join(', ')}. Build the dependencies and the engine with the static runtime (/MT: patch 0005, and the configure lines in scripts/lib/cmake.ts), then stage again`
+  }
+  if (runtime.missing.length > 0) return `the engine's libraries are not all found: ${runtime.missing.join(', ')}`
+  return undefined
+}
+
 /** Windows: the PE import closure of the engine (see pe.ts). */
 export function windowsRuntime(exe: string, searchDirs: string[], io: RuntimeIo): RuntimePlan {
   const c = resolveRuntime(exe, searchDirs, io)
@@ -710,12 +719,8 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
 
   const libDirs = engineLibraryDirs(w, exe, platform)
   const runtime = platform === 'win32' ? windowsRuntime(exe, libDirs, windowsRuntimeIo()) : unixRuntime(exe, w, platform, libDirs)
-  if (runtime.crt.length > 0) {
-    throw new StepError(
-      `the engine loads MSVC's dynamic C runtime, which would have to ship with it: ${runtime.crt.join(', ')}. Build the dependencies and the engine with the static runtime (/MT: patch 0005, and the configure lines in scripts/lib/cmake.ts), then stage again`,
-    )
-  }
-  if (runtime.missing.length > 0) throw new StepError(`the engine's libraries are not all found: ${runtime.missing.join(', ')}`)
+  const runtimeProblem = runtimeRefusal(runtime)
+  if (runtimeProblem) throw new StepError(runtimeProblem)
   const licenses = [...licenseCopies(w, platform, ctx.engine.licenses), ...ownNoticeCopies(ctx.engine)]
   const unlicensed = unlicensedDependencies(w, licenses)
   if (unlicensed.length > 0) {
