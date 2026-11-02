@@ -87,6 +87,7 @@ function parts(over: Partial<ManifestParts> = {}): ManifestParts {
     cli: H('c'),
     runtime: { copy: [{ name: 'vcruntime140.dll', path: 'X' }, { name: 'TKernel.dll', path: 'Y' }], system: ['KERNEL32.dll', 'api-ms-win-crt-runtime-l1-1-0.dll'], missing: [], crt: [] },
     smokePassed: true,
+    deps: { inputs: H('7'), mingw: H('8') },
     inputs: H('d'),
     files: [
       { path: 'resources/profiles/BBL.json', size: 2, sha256: H('b') },
@@ -112,6 +113,7 @@ describe('manifest', () => {
       runtime: ['TKernel.dll', 'vcruntime140.dll'],
       system: ['api-ms-win-crt-runtime-l1-1-0.dll', 'KERNEL32.dll'],
       smoke: { passed: true, smokeVersion: expect.any(Number) },
+      deps: { inputs: H('7'), mingw: H('8') },
       inputs: H('d'),
       stagedAt: '2026-10-30T12:00:00.000Z',
       files: [
@@ -137,6 +139,9 @@ describe('manifest', () => {
       [{ ...good, smoke: { passed: 'yes', smokeVersion: 1 } }, /smoke/],
       [{ ...good, runtime: [1] }, /runtime/],
       [{ ...good, inputs: '' }, /inputs/],
+      [{ ...good, deps: { inputs: 'x', mingw: null } }, /deps\.inputs/],
+      [{ ...good, deps: { inputs: H('7'), mingw: 'x' } }, /deps\.mingw/],
+      [{ ...good, deps: 'x' }, /deps/],
     ]
     for (const [value, re] of bad) expect(() => validateManifest(value)).toThrow(re)
   })
@@ -160,6 +165,7 @@ describe('manifest', () => {
       licenses: [{ to: 'LICENSES/OrcaSlicer/LICENSE.txt', sha256: H('3') }],
       smokePassed: true,
       platform: 'win32' as const,
+      depsInputs: H('7'),
     }
     const h = stageInputs(base)
     expect(stageInputs({ ...base })).toBe(h)
@@ -174,6 +180,7 @@ describe('manifest', () => {
       { ...base, licenses: [] },
       { ...base, smokePassed: false },
       { ...base, platform: 'linux' as const },
+      { ...base, depsInputs: H('9') },
     ]) {
       expect(stageInputs(changed)).not.toBe(h)
     }

@@ -50,6 +50,12 @@
       "required": ["passed", "smokeVersion"],
       "properties": { "passed": { "type": "boolean" }, "smokeVersion": { "type": "number" } }
     },
+    "deps": {
+      "description": "What the engine's dependencies were built from: a hash of the dependency build's inputs, and of the MinGW-w64 pins that built GMP and MPFR (null off Windows). Stage version 3 on.",
+      "type": "object",
+      "required": ["inputs", "mingw"],
+      "properties": { "inputs": { "$ref": "#/$defs/sha256" }, "mingw": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] } }
+    },
     "inputs": { "$ref": "#/$defs/sha256", "description": "A hash of what staging read." },
     "stagedAt": { "type": "string" },
     "files": {

@@ -35,12 +35,13 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { applyPatches, depsPatchesOf, fetchSource, headCommit, listPatches, patchedDigest, sourceDigest, type PatchInfo } from './lib/checkout.ts'
-import { defaultDepsJobs, defaultJobs, depsBuildArgs, depsConfigureArgs, depsParallelEnv, jobsCap, orcaBuildArgs, orcaConfigureArgs } from './lib/cmake.ts'
-import { firstExisting, gitCandidates, sourcePathTrimEnv } from './lib/env.ts'
+import { defaultDepsJobs, defaultJobs, depsBuildArgs, depsParallelEnv, jobsCap, orcaBuildArgs, orcaConfigureArgs } from './lib/cmake.ts'
+import { compilerEnv as sharedCompilerEnv, depsConfigure, depsWant as sharedDepsWant, type DepsWant } from './lib/depsinputs.ts'
+import { firstExisting, gitCandidates } from './lib/env.ts'
 import { hashTree } from './lib/files.ts'
 import { githubGetter, resolveLatestRelease } from './lib/github.ts'
 import { compareLock, lockForRelease, readLock, releaseDecision, serializeLock, writeLock, type OrcaLock, type ReleaseDecision } from './lib/lock.ts'
-import { ensureMingw, mingwPinsDigest, mingwRoot } from './lib/mingw.ts'
+import { ensureMingw } from './lib/mingw.ts'
 import { depsStampProblems, enginePaths, readStamp, sha256File, sha256Text, workHome, workPathProblem, workPaths, writeStamp, type DepsRecord, type WorkPaths } from './lib/paths.ts'
 import { runSteps, stepArgs, type ReleaseStep } from './lib/release.ts'
 import { EXIT, Log, runLogged, StepError, UsageError } from './lib/run.ts'
@@ -128,13 +129,9 @@ async function cmdEnv(ctx: Context): Promise<number> {
   return 0
 }
 
-/**
- * The compiler settings of both builds that come from the environment: the work folder and this
- * checkout are trimmed from __FILE__, so the binaries do not carry the builder's user name
- * (env.ts, sourcePathTrimEnv).
- */
+/** The compiler settings of both builds that come from the environment (depsinputs.ts), for this checkout. */
 function compilerEnv(t: Toolchain, w: WorkPaths): Record<string, string> {
-  return sourcePathTrimEnv(t.platform, [w.home, E.engine])
+  return sharedCompilerEnv(t, w, E.engine)
 }
 
 /**
@@ -162,29 +159,13 @@ function matchCompilerEnv(w: WorkPaths, name: string, dir: string, env: Record<s
   writeStamp(w.state, `${name}-env`, want, { compilerEnv: env })
 }
 
-function depsConfigure(t: Toolchain, w: WorkPaths): string[] {
-  return depsConfigureArgs({
-    ninja: t.ninja,
-    sourceDir: join(w.src, 'deps'),
-    buildDir: w.deps,
-    downloadDir: w.downloads,
-    ignorePrefixes: t.ignorePrefixes,
-    platform: t.platform,
-    ...(t.platform === 'win32' ? { mingwRoot: mingwRoot(w) } : {}),
-  })
-}
-
 /**
- * What the dependency build is of, as build works it out now: the locked commit, the patches of
- * deps/, its configuration, CMake and the compiler settings, and on Windows the pinned MinGW-w64
- * toolchain that builds GMP and MPFR (mingw.ts). The engine is built only on a finished dependency
- * build of these (depsStampProblems).
+ * What the dependency build is of, as build works it out now (depsinputs.ts, which stage and
+ * source share). The engine is built only on a finished dependency build of these
+ * (depsStampProblems).
  */
-function depsWant(ctx: Context, t: Toolchain, depsPatches: PatchInfo[]): { commit: string; depsPatches: { name: string; sha256: string }[]; inputs: string } {
-  const patchesHash = sha256Text(JSON.stringify(depsPatches.map((p) => [p.name, p.sha256])))
-  const mingw = t.platform === 'win32' ? { mingw: mingwPinsDigest() } : {}
-  const inputs = sha256Text(JSON.stringify({ commit: ctx.lock.commit, patchesHash, configure: depsConfigure(t, ctx.work), cmake: t.cmake, compilerEnv: compilerEnv(t, ctx.work), ...mingw }))
-  return { commit: ctx.lock.commit, depsPatches: depsPatches.map((p) => ({ name: p.name, sha256: p.sha256 })), inputs }
+function depsWant(ctx: Context, t: Toolchain, depsPatches: PatchInfo[]): DepsWant {
+  return sharedDepsWant(ctx.lock, ctx.work, t, E.engine, depsPatches)
 }
 
 /**

@@ -73,7 +73,7 @@ bun run typecheck                      # tsc: type-check the scripts and tests
 | `build [--step deps\|orca] [--fresh]` | Applies `patches/`, builds Orca's dependencies without the GUI ones, then libslic3r and `sketch-orca` (Release, `SLIC3R_GUI=OFF`; on Windows with MSVC's static runtime, `/MT`). Fetches first when the checkout is missing or at another commit. The dependency build starts from an empty `deps/`, so each dependency is unpacked from its downloaded package, unless it resumes a stopped build of the same inputs (`state/deps-run.json`), which then does not count as fresh for `stage`; `--fresh` starts it over. It records its commit, the patches of `deps/` and a digest of the prefix it installed (`state/deps.json`). The engine is built only on such a build of the inputs there are now (also with `--step orca`), and the prefix must hash the same before and after Ninja. |
 | `smoke [--case <id,...>]` | Slices the test models with the built engine and checks the results (see Smoke). |
 | `stage [--without-smoke]` | The engine as it ships, in `<work>/dist/engine`, with a manifest. Only an engine that passed smoke is staged; `--without-smoke` stages a dev build and the manifest says so. |
-| `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. `--no-deps` leaves the dependency packages out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency has no pinned source, the Orca archive keeps a binary, or the engine ships a binary of Orca's tree (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
+| `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. It takes the staged engine only when its manifest's `deps` are the dependency inputs `build` works out now, so the MinGW-w64 toolchain `bundle.json` names is the one that built GMP and MPFR. `--no-deps` leaves the dependency packages out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency has no pinned source, the Orca archive keeps a binary, or the engine ships a binary of Orca's tree (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
 | `release [--offline] [--no-deps] [--allow-missing]` | `check`, `update` (only to a newer stable release), `fetch`, `build`, `smoke`, `stage` and `source`, in order, stopping at the first failure. `--offline` leaves out `check` and `update`. |
 | `env` | Prints the toolchain found and the cleaned build PATH. |
 
@@ -154,8 +154,9 @@ manifest.json   sketch-orca-engine/1 (protocol/schema/engine-manifest.schema.jso
 The manifest holds the engine (name, version, `exe`, `resources` and `libraryPath`, relative to the
 folder), the lock (`orca`), platform and arch, the patches with their SHA-256, the hash of the
 `cli/` the engine was built from, the libraries in `bin/` (`runtime`) and those the system
-provides (`system`), the smoke result, the hash of the staging inputs, the time, and every other
-file with its size and SHA-256. `stage.ts` `readManifest` reads and checks it.
+provides (`system`), the smoke result, what the dependencies were built from (`deps`: the hash of
+the dependency build's inputs and of the MinGW-w64 pins), the hash of the staging inputs, the time,
+and every other file with its size and SHA-256. `stage.ts` `readManifest` reads and checks it.
 
 Before staging, `stage` checks that the checkout is at the locked commit; that the patches `build`
 last applied (`state/patches.json`, names and SHA-256) are `patches/` as it is now (`build`
@@ -168,8 +169,9 @@ hashes as it did when the last build started (`state/orca.json`; the build itsel
 recorded as finished (`state/orca.json`, which the build removes before Ninja runs, and a
 dependency build that starts over removes too), of this commit, these patches, the checkout as it
 is now, the same dependency build and the same libraries; that the dependency build on record
-(`state/deps.json`) is of this commit and the patches of `deps/` there are now, ran fresh (from an
-empty folder, not resumed), and that its prefix still hashes as it did when that build finished and
+(`state/deps.json`) is of this commit and the patches of `deps/` there are now, and of the inputs
+`build` works out now (`scripts/lib/depsinputs.ts`: the configuration, CMake, the compiler settings
+and on Windows the MinGW-w64 pins), ran fresh (from an empty folder, not resumed), and that its prefix still hashes as it did when that build finished and
 when the engine was linked against it; that a full smoke run passed for this very executable, with
 the same libraries and resources (the stamp and `smoke/report.json`); that every library the engine imports is found (Windows: the PE
 import closure); that on Windows neither the engine nor any library it loads imports MSVC's

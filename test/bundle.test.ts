@@ -127,6 +127,7 @@ function manifest(over: Partial<{ version: string; arch: string; platform: 'win3
     cli: H('c'),
     runtime: { copy: [], system: [], missing: [], crt: [] },
     smokePassed: true,
+    deps: { inputs: H('7'), mingw: over.platform === 'linux' ? null : H('8') },
     inputs: H('d'),
     files: [{ path: over.platform === 'linux' ? 'bin/sketch-orca' : 'bin/sketch-orca.exe', size: 1, sha256: H('a') }],
     stagedAt: '2026-10-30T12:00:00.000Z',

@@ -31,8 +31,9 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '../orca.ts'
-import { headCommit, listPatches } from './checkout.ts'
+import { depsPatchesOf, headCommit, listPatches } from './checkout.ts'
 import { depsBuildArgs, depsConfigureArgs, formatCommand, orcaBuildArgs, orcaConfigureArgs } from './cmake.ts'
+import { depsWant, stagedDepsProblems } from './depsinputs.ts'
 import { firstExisting, gitCandidates, type Platform } from './env.ts'
 import { copyFile, hashTree, listFiles, nativePath, parseSha256Sums, sha256Bytes, sha256Sums, treeEntries, writeText } from './files.ts'
 import type { OrcaLock } from './lock.ts'
@@ -40,7 +41,7 @@ import { MINGW_PACKAGES, MSYS2_BASE, type MingwPackage } from './mingw.ts'
 import { sha256File, sha256Text, writeStamp } from './paths.ts'
 import { capture, Log, runLogged, StepError } from './run.ts'
 import { builderNeedles, builtDependencies, dependencySourceDir, privacyProblems, privacyProblemsIn, privacyRefusal, readManifest, USER_FOLDER_NEEDLES, verifyStaged, type EngineManifest, type StageCopy } from './stage.ts'
-import { currentPlatform } from './toolchain.ts'
+import { currentPlatform, findDepsTools } from './toolchain.ts'
 
 export const SOURCE_FORMAT = 'sketch-orca-source/1'
 /** Bump when the bundle's layout changes: a bundle of an older version is made again. */
@@ -612,6 +613,11 @@ export async function runSource(ctx: Context, log: Log): Promise<number> {
   const withDeps = !ctx.args.includes('--no-deps')
   const allowMissing = ctx.args.includes('--allow-missing')
   const m = stagedFor(ctx)
+  // The staged engine's dependencies were built from the inputs build works out now, the MinGW-w64
+  // pins among them, so the toolchain the bundle names (mingwToolchain) is the one that built them.
+  const depsNow = depsWant(ctx.lock, w, findDepsTools(), ctx.engine.engine, depsPatchesOf(listPatches(ctx.engine.patches)))
+  const depsProblems = stagedDepsProblems(m.deps, depsNow)
+  if (depsProblems.length > 0) throw new StepError(`${depsProblems.join('; ')}; run build --fresh and stage`)
   const git = findGit(platform)
   if (headCommit(git, w.src) !== ctx.lock.commit) throw new StepError(`${w.src} is not at the locked commit ${ctx.lock.commit}; run fetch`)
 

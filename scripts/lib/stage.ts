@@ -21,6 +21,7 @@ import { basename, isAbsolute, join } from 'node:path'
 import type { Context } from '../orca.ts'
 import { depsPatchesOf, headCommit, listPatches, sourceDigest, type PatchInfo } from './checkout.ts'
 import { firstExisting, gitCandidates, type Platform } from './env.ts'
+import { depsWant } from './depsinputs.ts'
 import { copyFile, hashTree, listFiles, nativePath, sha256Bytes, treeEntries, verifyTree, writeText, type FileEntry } from './files.ts'
 import type { OrcaLock } from './lock.ts'
 import { MINGW_RUNTIME_LICENSES, mingwRoot } from './mingw.ts'
@@ -28,11 +29,11 @@ import { builtCliSha256, depsStampProblems, readStamp, sha256File, sha256Text, w
 import { readPeDebugPaths, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from './pe.ts'
 import { capture, Log, StepError } from './run.ts'
 import { checkVersion, ENGINE_RESOURCES, engineEnv, engineLibraryDirs, engineRuntime, runCases, runEngine, SMOKE_CASES, smokeFingerprint, smokePassedFor, smokePresetSets, smokeTimeoutMs, SMOKE_VERSION } from './smoke.ts'
-import { currentPlatform } from './toolchain.ts'
+import { currentPlatform, findDepsTools } from './toolchain.ts'
 
 export const ENGINE_FORMAT = 'sketch-orca-engine/1'
 /** Bump when the staged layout or the manifest changes: a stage of an older version is redone. */
-export const STAGE_VERSION = 2
+export const STAGE_VERSION = 3
 /** Folders of Orca's resources/ that libslic3r reads (ENGINE_RESOURCES, smoke.ts): presets, nozzle tables, flush volumes. */
 export const STAGED_RESOURCES = ENGINE_RESOURCES
 /**
@@ -65,6 +66,13 @@ export interface EngineManifest {
   /** Libraries the system provides. */
   system: string[]
   smoke: { passed: boolean; smokeVersion: number }
+  /**
+   * What the engine's dependencies were built from (depsinputs.ts, DepsWant): the inputs of the
+   * dependency build and the MinGW-w64 pins that built GMP and MPFR (null off Windows). source
+   * takes the staged engine only when they are what build works out now. Undefined in a manifest
+   * of stage version 2 or older.
+   */
+  deps?: { inputs: string; mingw: string | null }
   /** Hash of what staging read; with the same inputs and matching files, staging has nothing to do. */
   inputs: string
   stagedAt: string
@@ -125,6 +133,13 @@ export function validateManifest(value: unknown): EngineManifest {
   const commit = str(o, 'commit', 'orca')
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('manifest: orca.commit must be 40 hex characters')
   if (typeof value.inputs !== 'string' || !HEX64.test(value.inputs)) throw new Error('manifest: inputs must be a sha256')
+  let deps: EngineManifest['deps']
+  if (value.deps !== undefined) {
+    const d = rec(value.deps, 'deps')
+    if (typeof d.inputs !== 'string' || !HEX64.test(d.inputs)) throw new Error('manifest: deps.inputs must be a sha256')
+    if (d.mingw !== null && (typeof d.mingw !== 'string' || !HEX64.test(d.mingw))) throw new Error('manifest: deps.mingw must be a sha256 or null')
+    deps = { inputs: d.inputs, mingw: d.mingw }
+  }
   return {
     format: ENGINE_FORMAT,
     stageVersion: value.stageVersion,
@@ -137,6 +152,7 @@ export function validateManifest(value: unknown): EngineManifest {
     runtime: strings(value.runtime, 'runtime'),
     system: strings(value.system, 'system'),
     smoke: { passed: s.passed, smokeVersion: s.smokeVersion },
+    ...(deps ? { deps } : {}),
     inputs: value.inputs,
     stagedAt: typeof value.stagedAt === 'string' ? value.stagedAt : '',
     files,
@@ -738,6 +754,7 @@ export interface ManifestParts {
   cli: string
   runtime: RuntimePlan
   smokePassed: boolean
+  deps: { inputs: string; mingw: string | null }
   inputs: string
   files: FileEntry[]
   stagedAt: string
@@ -756,6 +773,7 @@ export function buildManifest(p: ManifestParts): EngineManifest {
     runtime: p.runtime.copy.map((c) => c.name).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())),
     system: [...p.runtime.system].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())),
     smoke: { passed: p.smokePassed, smokeVersion: SMOKE_VERSION },
+    deps: { inputs: p.deps.inputs, mingw: p.deps.mingw },
     inputs: p.inputs,
     stagedAt: p.stagedAt,
     files: [...p.files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
@@ -774,6 +792,8 @@ export function stageInputs(o: {
   licenses: { to: string; sha256: string }[]
   smokePassed: boolean
   platform: Platform
+  /** The inputs of the dependency build (depsinputs.ts). */
+  depsInputs: string
 }): string {
   return sha256Text(
     JSON.stringify({
@@ -789,6 +809,7 @@ export function stageInputs(o: {
       smoke: o.smokePassed,
       smokeVersion: SMOKE_VERSION,
       platform: o.platform,
+      deps: o.depsInputs,
     }),
   )
 }
@@ -921,12 +942,13 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
   if (cliProblem) throw new StepError(`${cliProblem}; run build`)
   // The engine is the build of the checkout as it is: the locked commit, patches/ and nothing else,
   // on dependencies built fresh from their pinned packages with the patches of deps/ there are now,
-  // whose prefix is still what that build installed.
+  // from the inputs build works out now (their configuration, CMake, the compiler settings and the
+  // MinGW-w64 pins; depsinputs.ts), whose prefix is still what that build installed.
   const deps = readStamp(w.state, 'deps')
+  const depsNow = depsWant(ctx.lock, w, findDepsTools(), ctx.engine.engine, depsPatchesOf(patchFiles))
   let depsPrefixDigest: string | null = null
   const depsProblems = depsStampProblems(deps, {
-    commit: ctx.lock.commit,
-    depsPatches: depsPatchesOf(patchFiles),
+    ...depsNow,
     fresh: true,
     prefixDigest: () => (depsPrefixDigest = hashTree(w.depsPrefix)),
   })
@@ -977,6 +999,7 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     licenses: licenses.map((l) => ({ to: l.to, sha256: sha256File(l.from) })),
     smokePassed,
     platform,
+    depsInputs: depsNow.inputs,
   })
 
   // Nothing staged names the builder or the build machine (a staged engine that is current too).
@@ -1034,6 +1057,7 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     cli,
     runtime,
     smokePassed,
+    deps: { inputs: depsNow.inputs, mingw: depsNow.mingw },
     inputs,
     files: treeEntries(tmp),
     stagedAt: new Date().toISOString(),

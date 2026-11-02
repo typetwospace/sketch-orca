@@ -68,6 +68,21 @@ export function vcvarsEnvironment(vcvars: string, env: NodeJS.ProcessEnv): Recor
   return out
 }
 
+/**
+ * CMake and Ninja as findToolchain finds them, without the compiler environment: what the
+ * dependency build's inputs name (depsinputs.ts), for stage and source to work them out as build
+ * does. Throws a StepError naming what is missing.
+ */
+export function findDepsTools(env: NodeJS.ProcessEnv = process.env): Pick<Toolchain, 'platform' | 'cmake' | 'ninja' | 'ignorePrefixes'> {
+  const platform = currentPlatform()
+  const vsInstall = platform === 'win32' ? findVisualStudio(env) : undefined
+  const cmake = firstExisting(cmakeCandidates(platform, vsInstall, env))
+  const ninja = firstExisting(ninjaCandidates(platform, vsInstall, env))
+  const missing = [...(cmake ? [] : ['CMake (set SKETCH_ORCA_CMAKE)']), ...(ninja ? [] : ['Ninja (set SKETCH_ORCA_NINJA)'])]
+  if (missing.length > 0) throw new StepError(`missing build tools: ${missing.join('; ')}`)
+  return { platform, cmake: cmake!, ninja: ninja!, ignorePrefixes: cmakeIgnorePrefixes(cmake!) }
+}
+
 /** The toolchain for this machine; throws a StepError naming what is missing. */
 export function findToolchain(env: NodeJS.ProcessEnv = process.env): Toolchain {
   const platform = currentPlatform()
