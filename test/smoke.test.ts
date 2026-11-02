@@ -589,8 +589,9 @@ describe('jobs and the engine environment', () => {
     // version 6 preset-metadata, flush-volumes, prime-tower, imported-settings, file-collisions and
     // the drive-rooted work folder refusal; version 7 file-collisions' runs with both files on
     // inputs, invalid jobs, wrong command lines, presets, other names for a file and the result's
-    // temporary file.
-    expect(SMOKE_VERSION).toBe(7)
+    // temporary file; version 8 flush-volumes' support filament read with a flush_multiplier of 1,
+    // since the G-code's config block gives the matrix times the multiplier.
+    expect(SMOKE_VERSION).toBe(8)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
     expect(CAPITAL_KEY.key).not.toBe(CAPITAL_KEY.key.toLowerCase())

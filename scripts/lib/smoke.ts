@@ -82,7 +82,7 @@ import { currentPlatform } from './toolchain.ts'
 import { extractZipEntry, readZipEntries } from './zip.ts'
 
 /** Bump when the cases or their expectations change: a passed stamp of an older version does not count. */
-export const SMOKE_VERSION = 7
+export const SMOKE_VERSION = 8
 /** Folders of Orca's resources/ that libslic3r reads (resources_dir()): presets, nozzle tables, flush volumes. */
 export const ENGINE_RESOURCES = ['profiles', 'info', 'flush'] as const
 
@@ -1131,8 +1131,12 @@ export const REFUSALS: Refusal[] = [
   },
 ]
 
-/** A volume past the largest flushing volume Orca computes (20000 mm³), which its int() would overflow. */
-export const FLUSH = { outOfRange: '1e100' } as const
+/**
+ * outOfRange: a volume past the largest flushing volume Orca computes (20000 mm³), which its int()
+ * would overflow. multiplier: the flush_multiplier with which the G-code's config block gives the
+ * flushing volumes as computed.
+ */
+export const FLUSH = { outOfRange: '1e100', multiplier: '1' } as const
 
 /**
  * A job of the flush-volumes and prime-tower cases: the cube, sliced with a copy of one of the
@@ -1202,10 +1206,12 @@ export const FLUSH_JOBS: SettingsJob[] = [
   {
     // Filament 2 made a support filament by an override: Orca flushes 230 mm³ into a support filament
     // and at least 700 mm³ out of one (g_flush_volume_to_support, g_min_flush_volume_from_support).
+    // The G-code's config block gives the matrix times flush_multiplier (GCode::append_full_config;
+    // Orca's default is 0.3), so the job sets the multiplier to 1 to read the volumes as computed.
     id: 'support-filament-override',
     set: 'generic2',
-    overrides: { filament_is_support: '0,1' },
-    config: { filament_is_support: '0,1', flush_volumes_matrix: '0,230,700,0' },
+    overrides: { filament_is_support: '0,1', flush_multiplier: FLUSH.multiplier },
+    config: { filament_is_support: '0,1', flush_multiplier: FLUSH.multiplier, flush_volumes_matrix: '0,230,700,0' },
   },
 ]
 
