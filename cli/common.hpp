@@ -107,9 +107,11 @@ void make_directories(const std::string &path);
 void make_parent_directories(const std::string &path);
 std::string parent_directory(const std::string &path);
 bool is_absolute_path(const std::string &path);
-// Whether two paths name one file: for two existing files, whether they are the same file (links,
-// short names); else the same absolute path once normalized, without letter case on Windows
-// (sketch-orca, 2026-11-01).
+// Whether two paths may name one file (sketch-orca, 2026-11-01): the same file once each path is read
+// as the system opens it (on Windows: GetFullPathNameW's conversion, which drops a name's trailing
+// dots and spaces, the \\?\-style prefixes, NTFS stream names, the folders that exist resolved
+// through links and short names, and letter case), or two existing files that are one (hard links).
+// Two names that only may be one file count as one: that refuses a run, never loses a file.
 bool same_file(const std::string &a, const std::string &b);
 
 // Numbers for the result: rounded to a micrometre, so 20.049999999999997 reads 20.05.

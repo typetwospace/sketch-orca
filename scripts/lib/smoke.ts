@@ -28,22 +28,26 @@
 //   preset-metadata  preset files that carry the lists the engine fills in itself (inherits_group...), shorter or
 //                    longer than its own, and a process with a filament setting as an empty list: the cube slices,
 //                    with the filament's filament_type and none of the files' lists
-//   flush-volumes    the flushing volumes between filaments: a nozzle_volume past what an int holds, in the machine
-//                    preset or as an override, is refused (config-invalid) instead of being converted; an override
-//                    that makes filament 2 a support filament gives the matrix Orca's support volumes (0,230,700,0)
+//   flush-volumes    the flushing volumes between filaments: a nozzle_volume past what an int holds (1e100, and 1e10,
+//                    which Orca's own check takes), in the machine preset or as an override, is refused
+//                    (config-invalid) instead of being converted; an H2D whose nozzle_volume is given per extruder
+//                    variant flushes each nozzle with its own variant's volume; an override that makes filament 2
+//                    a support filament gives the matrix Orca's support volumes (0,230,700,0)
 //   prime-tower      where the prime tower goes (wipe_tower_x/y): an object that sets only raft_layers keeps the
 //                    print's support on filament 2, so its tower is placed as for a filament change; on the printer's
 //                    bed moved by -150, -150 (0,0 at its centre, as a delta's) the tower moves with the bed; on the
-//                    bed cut to a diamond, and with its back half excluded, the tower prints on the diamond and off
-//                    the excluded half; a place the job sets off the diamond is config-invalid, and a tower wider
-//                    than the bed arrange-failed
+//                    bed cut to a diamond, with its back half excluded, and cut to a strip and a corridor the tower
+//                    fits in with 0.85 mm to spare, the tower prints on the bed and off the excluded half; a place
+//                    the job sets off the diamond or past the bed is config-invalid, and a tower wider than the bed
+//                    arrange-failed
 //   imported-settings a 3MF project (a .gcode.3mf the engine wrote) whose object has wall_loops 6 slices, as a model
 //                    the job does not list, with the plate's wall_loops 2: its inner walls are the plain cube's
 //   file-collisions  a --progress on the job, the model or a preset, and a --out on the job, the model, a preset or
 //                    output.gcode, are refused before anything is written over them: invalid-params (exit -2), and
 //                    when the result itself would replace an input, nothing written at all; also both at once, for
 //                    a job that is not valid, a wrong command line, another name for the file (a hard link, a
-//                    path through ..) and the result's temporary file; the job, the model and presets keep their bytes
+//                    path through ..; on Windows a trailing dot or space, \\?\, ::$DATA and a named stream) and
+//                    the result's temporary file; the job, the model and presets keep their bytes
 //   crash-result     an engine that crashes in Orca's code (SKETCH_ORCA_TEST_CRASH) still writes its result:
 //                    internal-error, exit code 255, no outputs
 //   refusals         a missing model, an unknown setting (also one with capital letters), a key of the preset files as
@@ -82,18 +86,20 @@ import { currentPlatform } from './toolchain.ts'
 import { extractZipEntry, readZipEntries } from './zip.ts'
 
 /** Bump when the cases or their expectations change: a passed stamp of an older version does not count. */
-export const SMOKE_VERSION = 8
+export const SMOKE_VERSION = 9
 /** Folders of Orca's resources/ that libslic3r reads (resources_dir()): presets, nozzle tables, flush volumes. */
 export const ENGINE_RESOURCES = ['profiles', 'info', 'flush'] as const
 
 /**
  * Presets the cases slice with: a generic Klipper printer (plain G-code), the same printer with two
- * filaments (its prime tower is Orca's Prusa-style one), and a Bambu X1 Carbon (.gcode.3mf).
+ * filaments (its prime tower is Orca's Prusa-style one), a Bambu X1 Carbon (.gcode.3mf), and a Bambu
+ * H2D with two filaments (two nozzles, each with a Standard and a High Flow variant).
  */
 export const SMOKE_PRESETS = {
   generic: { vendor: 'Voron', machine: 'Voron 2.4 300 0.4 nozzle', process: '0.20mm Standard @Voron', filaments: ['Generic PLA @System'] },
   generic2: { vendor: 'Voron', machine: 'Voron 2.4 300 0.4 nozzle', process: '0.20mm Standard @Voron', filaments: ['Generic PLA @System', 'Generic PLA @System'] },
   bambu: { vendor: 'BBL', machine: 'Bambu Lab X1 Carbon 0.4 nozzle', process: '0.20mm Standard @BBL X1C', filaments: ['Bambu PLA Basic @BBL X1C'] },
+  h2d: { vendor: 'BBL', machine: 'Bambu Lab H2D 0.4 nozzle', process: '0.20mm Standard @BBL H2D', filaments: ['Bambu PLA Basic @BBL H2D', 'Bambu PLA Basic @BBL H2D'] },
 } as const
 
 /** The lists the engine fills itself in its merge of the presets (cli/presets.cpp, merge_metadata_key); preset-metadata gives them in the preset files. */
@@ -1133,15 +1139,52 @@ export const REFUSALS: Refusal[] = [
 
 /**
  * outOfRange: a volume past the largest flushing volume Orca computes (20000 mm³), which its int()
- * would overflow. multiplier: the flush_multiplier with which the G-code's config block gives the
- * flushing volumes as computed.
+ * would overflow. aboveInt: one past what an int holds that Orca's own check of the settings takes
+ * (nozzle_volume has no maximum), so only the engine's check before the conversion refuses it.
+ * refusal: what that check's message says, which Orca's own check of the settings does not.
+ * multiplier: the flush_multiplier with which the G-code's config block gives the flushing volumes
+ * as computed.
  */
-export const FLUSH = { outOfRange: '1e100', multiplier: '1' } as const
+export const FLUSH = { outOfRange: '1e100', aboveInt: '1e10', refusal: 'nozzle_volume cannot be', multiplier: '1' } as const
+
+/**
+ * h2d-nozzle-variants: the H2D's nozzle_volume given once per extruder variant, in the order of its
+ * printer_extruder_variant (nozzle 1 Standard and High Flow, nozzle 2 Standard and High Flow), and
+ * the volumes of the variants the job picks (nozzle_volume_type Standard for both).
+ */
+export const H2D_FLUSH = { variantVolumes: ['100', '200', '400', '500'], volumeTypes: 'Standard,Standard', picked: [100, 400] } as const
+
+/**
+ * h2d-nozzle-variants' check: the G-code's config block gives the picked nozzle volumes, and each
+ * nozzle's flushing volumes between the two filaments (of one colour) are that nozzle's volume plus
+ * the same colour flush, so the second nozzle's are the first's plus the difference of the volumes.
+ * The flushing volumes computed from the variants as given (nozzle 1's High Flow volume for nozzle
+ * 2) fail it.
+ */
+export function nozzleFlushProblems(matrix: string | undefined, volumes: string | undefined, picked: readonly number[]): string[] {
+  if (matrix === undefined || volumes === undefined) return ["the G-code's config block has no flush_volumes_matrix or nozzle_volume"]
+  const v = volumes.split(',').map(Number)
+  if (v.length !== picked.length || v.some((x, i) => x !== picked[i])) return [`the G-code's config block gives nozzle_volume = ${volumes}, expected ${picked.join(',')}`]
+  const m = matrix.split(',').map(Number)
+  const n = Math.round(Math.sqrt(m.length / picked.length))
+  if (n < 2 || n * n * picked.length !== m.length || m.some((x) => !Number.isFinite(x))) return [`flush_volumes_matrix = ${matrix} is not ${picked.length} blocks of n x n volumes`]
+  // Each nozzle's flush between two filaments of one colour, less its own volume.
+  const above = picked.map((vol, nozzle) => {
+    const block = m.slice(nozzle * n * n, (nozzle + 1) * n * n)
+    const off = block.filter((_, i) => i % (n + 1) !== 0)
+    return new Set(off).size === 1 ? off[0]! - vol : undefined
+  })
+  if (above.some((a) => a === undefined)) return [`flush_volumes_matrix = ${matrix}: a nozzle's volumes between filaments of one colour differ`]
+  if (above.some((a) => a !== above[0] || a! < 0)) {
+    return [`flush_volumes_matrix = ${matrix}: each nozzle's volumes should be its own nozzle_volume (${picked.join(', ')}) plus one colour flush, but they are ${above.map((a, i) => `${picked[i]} + ${a}`).join(' and ')}`]
+  }
+  return []
+}
 
 /**
  * A job of the flush-volumes and prime-tower cases: the cube, sliced with a copy of one of the
  * smoke's preset sets (changed by `presets`) and these settings, refused as `refused` says or done,
- * giving `config` in the G-code's config block.
+ * giving `config` in the G-code's config block and passing `check`.
  */
 export interface SettingsJob {
   id: string
@@ -1153,6 +1196,7 @@ export interface SettingsJob {
   customGcodes?: (expected: number[]) => CustomGcode[]
   refused?: RefusalExpectation
   config?: Record<string, string>
+  check?: (scan: GcodeScan) => string[]
 }
 
 /** Runs each job in `<case>/<id>`; the G-code of each job that was done is in `scans`. */
@@ -1183,6 +1227,7 @@ async function runSettingsJobs(env: CaseEnv, jobs: SettingsJob[]): Promise<CaseO
     if (!g.scan) continue
     scans.set(j.id, g.scan)
     for (const [key, want] of Object.entries(j.config ?? {})) problems.push(...checkConfigValue(g.scan, key, want).map(named))
+    problems.push(...(j.check?.(g.scan) ?? []).map(named))
   }
   return { problems, warnings, scans }
 }
@@ -1194,14 +1239,39 @@ export const FLUSH_JOBS: SettingsJob[] = [
     presets: (set) => {
       set.machine.nozzle_volume = [FLUSH.outOfRange]
     },
-    refused: { code: 'config-invalid', exitCode: -18, mentions: 'nozzle_volume' },
+    refused: { code: 'config-invalid', exitCode: -18, mentions: FLUSH.refusal },
   },
   {
     // The same volume as an override: the overrides are in the settings the volumes are computed from.
     id: 'nozzle-volume-override',
     set: 'generic',
     overrides: { nozzle_volume: FLUSH.outOfRange },
-    refused: { code: 'config-invalid', exitCode: -18, mentions: 'nozzle_volume' },
+    refused: { code: 'config-invalid', exitCode: -18, mentions: FLUSH.refusal },
+  },
+  {
+    // Past an int but within what Orca's own check of the settings takes: only the engine's check
+    // before the conversion refuses it.
+    id: 'nozzle-volume-above-int',
+    set: 'generic',
+    presets: (set) => {
+      set.machine.nozzle_volume = [FLUSH.aboveInt]
+    },
+    refused: { code: 'config-invalid', exitCode: -18, mentions: FLUSH.refusal },
+  },
+  {
+    // Two nozzles with two variants each: each nozzle's flushing volumes come from the volume of the
+    // variant it prints with, as the print picks it, not from the list as given (sketch-orca,
+    // 2026-11-01). Filaments of one colour and no cutter retraction, so the volumes differ by the
+    // nozzles' volumes alone.
+    id: 'h2d-nozzle-variants',
+    set: 'h2d',
+    presets: (set) => {
+      set.machine.nozzle_volume = [...H2D_FLUSH.variantVolumes]
+      set.machine.enable_long_retraction_when_cut = '0'
+    },
+    overrides: { filament_colour: '#FFFFFF;#FFFFFF', flush_multiplier: '1,1', nozzle_volume_type: H2D_FLUSH.volumeTypes },
+    customGcodes: (expected) => [{ printZ: Number(expected[PAUSE_LAYER_INDEX]!.toFixed(6)), type: 'filament', extruder: 2 }],
+    check: (scan) => nozzleFlushProblems(configValue(scan.lines, 'flush_volumes_matrix'), configValue(scan.lines, 'nozzle_volume'), H2D_FLUSH.picked),
   },
   {
     // Filament 2 made a support filament by an override: Orca flushes 230 mm³ into a support filament
@@ -1226,6 +1296,18 @@ export const TOWER_TOO_WIDE = 400
 
 /** How far, in mm, the tower's extrusions may pass an edge of the bed or the excluded area: half a 0.4 mm line. */
 export const TOWER_TOLERANCE = 0.2
+
+/**
+ * prime-tower's corridor bed: a strip along the front of the 300 mm bed and a corridor up from it
+ * 66.85 mm wide, at a fraction of a millimetre, where a tower CORRIDOR_TOWER mm wide (66 mm with its
+ * brim) fits with 0.85 mm to spare: a search of whole-millimetre moves from the default place misses
+ * it (sketch-orca, 2026-11-01).
+ */
+export const CORRIDOR_BED: [number, number][] = [[0, 0], [300, 0], [300, 25], [166.95, 25], [166.95, 300], [100.1, 300], [100.1, 25], [0, 25]]
+export const CORRIDOR_TOWER = 60
+
+/** A place for the tower (wipe_tower_x and _y) past every smoke printer's bed. */
+export const TOWER_OFF_BED = 1000
 
 export const PRIME_TOWER_JOBS: SettingsJob[] = [
   {
@@ -1276,6 +1358,24 @@ export const PRIME_TOWER_JOBS: SettingsJob[] = [
     overrides: { wipe_tower_x: '5', wipe_tower_y: '5' },
     customGcodes: changeToFilament2,
     refused: { code: 'config-invalid', exitCode: -18, mentions: 'wipe_tower_x' },
+  },
+  {
+    // A place set past the bed's bounding box is refused too, not pulled back onto the bed.
+    id: 'tower-set-off-rect',
+    set: 'generic2',
+    overrides: { wipe_tower_x: String(TOWER_OFF_BED), wipe_tower_y: String(TOWER_OFF_BED) },
+    customGcodes: changeToFilament2,
+    refused: { code: 'config-invalid', exitCode: -18, mentions: 'wipe_tower_x' },
+  },
+  {
+    // A tower that fits only at a fraction of a millimetre: placed, on the corridor.
+    id: 'bed-corridor',
+    set: 'generic2',
+    presets: (set) => {
+      set.machine.printable_area = CORRIDOR_BED.map(([x, y]) => `${x}x${y}`)
+    },
+    overrides: { prime_tower_width: String(CORRIDOR_TOWER) },
+    customGcodes: changeToFilament2,
   },
   {
     // A tower wider than the bed fits nowhere.
@@ -1370,19 +1470,50 @@ export const RUN_INPUTS: readonly RunFile[] = ['job', 'model', 'machine', 'proce
 export const INVALID_COMMAND = 'carve'
 
 /**
+ * How a file-collisions run names a file another way. hard-link: a hard link to it; dot-dot: a path
+ * through a folder and `..`. On Windows only, where each is the same file as the path (sketch-orca,
+ * 2026-11-01): trailing-dot and trailing-space, the path with a `.` or ` ` after its name, which the
+ * system drops; device-prefix, the absolute path behind `\\?\`; default-stream, the path with
+ * `::$DATA`, its unnamed stream; named-stream, the path with `:progress`, a stream of the file that
+ * writing would add to it.
+ */
+export type AliasKind = 'hard-link' | 'dot-dot' | 'trailing-dot' | 'trailing-space' | 'device-prefix' | 'default-stream' | 'named-stream'
+
+/** The alias kinds that name the same file on Windows alone. */
+export const WINDOWS_ALIASES: readonly AliasKind[] = ['trailing-dot', 'trailing-space', 'device-prefix', 'default-stream', 'named-stream']
+
+/** `path` named as `how` names it (the hard link aside, which is a file of its own to make). */
+export function aliasPath(path: string, how: Exclude<AliasKind, 'hard-link'>): string {
+  switch (how) {
+    case 'dot-dot':
+      return [dirname(path), 'sub', '..', basename(path)].join(sep)
+    case 'trailing-dot':
+      return `${path}.`
+    case 'trailing-space':
+      return `${path} `
+    case 'device-prefix':
+      return `\\\\?\\${resolve(path)}`
+    case 'default-stream':
+      return `${path}::$DATA`
+    case 'named-stream':
+      return `${path}:progress`
+  }
+}
+
+/**
  * A run of file-collisions whose command line or job names one file twice, or whose command line is
  * wrong. `out` and `progress` say which file --out and --progress get, `alias` that one of them
- * names its file another way: a hard link to it, or a path through a folder and `..`. `jobName` is
+ * names its file another way (AliasKind); the Windows kinds are run on Windows alone. `jobName` is
  * the job file's name (job.json): result.json.tmp is the file the result is written through.
  * `invalidJob` gives the job an unknown command, `args` adds to the command line. The run is refused
  * with `code` in the result at `resultAt`, or (no `code`) writes nothing at all, --out included;
- * the files in `intact` keep their bytes.
+ * the files in `intact` keep their bytes, and a named stream is not made.
  */
 export interface Collision {
   id: string
   out: RunFile
   progress: RunFile
-  alias?: { of: 'out' | 'progress'; how: 'hard-link' | 'dot-dot' }
+  alias?: { of: 'out' | 'progress'; how: AliasKind }
   jobName?: string
   invalidJob?: boolean
   args?: string[]
@@ -1423,6 +1554,16 @@ export const COLLISIONS: Collision[] = [
   { id: 'result-on-model', out: 'model', progress: 'progress', intact: ['job', 'model'] },
   // The result would replace the G-code it reports as done.
   { id: 'result-on-gcode', out: 'gcode', progress: 'progress', code: 'invalid-params', mentions: 'output.gcode', resultAt: 'gcode', intact: ['job', 'model'] },
+  // Windows: the same, with neither file there yet, named with a trailing dot or space, which the
+  // system drops.
+  { id: 'result-on-gcode-trailing-dot', out: 'gcode', progress: 'progress', alias: { of: 'out', how: 'trailing-dot' }, code: 'invalid-params', mentions: 'output.gcode', resultAt: 'gcode', intact: ['job', 'model'] },
+  { id: 'result-on-gcode-trailing-space', out: 'gcode', progress: 'progress', alias: { of: 'out', how: 'trailing-space' }, code: 'invalid-params', mentions: 'output.gcode', resultAt: 'gcode', intact: ['job', 'model'] },
+  // Windows: the model behind \\?\.
+  { id: 'result-on-model-device-prefix', out: 'model', progress: 'progress', alias: { of: 'out', how: 'device-prefix' }, intact: ['job', 'model'] },
+  // Windows: the model's own data as a stream, which the progress file would empty, and a stream of
+  // its own on the model, which it would add.
+  { id: 'progress-on-model-default-stream', out: 'result', progress: 'model', alias: { of: 'progress', how: 'default-stream' }, code: 'invalid-params', mentions: 'model.path', resultAt: 'result', intact: ['job', 'model'] },
+  { id: 'progress-on-model-named-stream', out: 'result', progress: 'model', alias: { of: 'progress', how: 'named-stream' }, code: 'invalid-params', mentions: 'model.path', resultAt: 'result', intact: ['job', 'model'] },
 ]
 
 export const SMOKE_CASES: SmokeCase[] = [
@@ -1744,7 +1885,7 @@ export const SMOKE_CASES: SmokeCase[] = [
   },
   {
     id: 'flush-volumes',
-    title: `the flushing volumes between filaments: a nozzle_volume of ${FLUSH.outOfRange} mm³, in the preset or as an override, is refused (config-invalid), not converted past an int; filament_is_support given as an override counts`,
+    title: `the flushing volumes between filaments: a nozzle_volume of ${FLUSH.outOfRange} or ${FLUSH.aboveInt} mm³, in the preset or as an override, is refused (config-invalid), not converted past an int; each of the H2D's nozzles flushes with the volume of the variant it prints with; filament_is_support given as an override counts`,
     async run(env) {
       const { problems, warnings } = await runSettingsJobs(env, FLUSH_JOBS)
       return { problems, warnings }
@@ -1752,7 +1893,7 @@ export const SMOKE_CASES: SmokeCase[] = [
   },
   {
     id: 'prime-tower',
-    title: `the prime tower: an object that sets only raft_layers keeps the print's support, whose filament puts a tower on the plate; on a bed moved by ${BED_SHIFT.join(', ')} the tower moves with it; it prints on a diamond bed and off an excluded half, a place set off the bed is refused, and a tower wider than the bed fits nowhere`,
+    title: `the prime tower: an object that sets only raft_layers keeps the print's support, whose filament puts a tower on the plate; on a bed moved by ${BED_SHIFT.join(', ')} the tower moves with it; it prints on a diamond bed, off an excluded half and in a corridor with a fraction of a millimetre to spare, a place set off the bed is refused, not moved, and a tower wider than the bed fits nowhere`,
     async run(env) {
       const { problems, warnings, scans } = await runSettingsJobs(env, PRIME_TOWER_JOBS)
       const at = (id: string) => {
@@ -1787,7 +1928,7 @@ export const SMOKE_CASES: SmokeCase[] = [
         if (towerPlacementProblems(plain, { bed: diamond, tolerance: TOWER_TOLERANCE }).length === 0) problems.push('the expectation itself is off: on the full bed the tower already prints inside the diamond')
         if (towerPlacementProblems(plain, { excluded, tolerance: TOWER_TOLERANCE }).length === 0) problems.push('the expectation itself is off: on the full bed the tower already prints off the back half')
       }
-      for (const [id, o] of [['bed-diamond', { bed: diamond }], ['bed-excluded', { bed: outline, excluded }]] as const) {
+      for (const [id, o] of [['bed-diamond', { bed: diamond }], ['bed-excluded', { bed: outline, excluded }], ['bed-corridor', { bed: CORRIDOR_BED }]] as const) {
         const m = moves(id)
         if (m) problems.push(...towerPlacementProblems(m, { ...o, tolerance: TOWER_TOLERANCE }).map((s) => `${id}: ${s}`))
       }
@@ -1850,6 +1991,8 @@ export const SMOKE_CASES: SmokeCase[] = [
       const problems: string[] = []
       const warnings: string[] = []
       for (const c of COLLISIONS) {
+        // Elsewhere those names are files of their own.
+        if (c.alias && WINDOWS_ALIASES.includes(c.alias.how) && currentPlatform() !== 'win32') continue
         const dir = join(env.dir, c.id)
         rmSync(dir, { recursive: true, force: true })
         mkdirSync(dir, { recursive: true })
@@ -1876,8 +2019,8 @@ export const SMOKE_CASES: SmokeCase[] = [
             paths[c.alias.of] = join(dir, `link-${basename(target)}`)
             linkSync(target, paths[c.alias.of])
           } else {
-            mkdirSync(join(dir, 'sub'), { recursive: true })
-            paths[c.alias.of] = [dirname(target), 'sub', '..', basename(target)].join(sep)
+            if (c.alias.how === 'dot-dot') mkdirSync(join(dir, 'sub'), { recursive: true })
+            paths[c.alias.of] = aliasPath(target, c.alias.how)
           }
         }
         const before = new Map(c.intact.map((f) => [f, readFileSync(files[f])] as const))
@@ -1889,6 +2032,7 @@ export const SMOKE_CASES: SmokeCase[] = [
           continue
         }
         for (const [f, bytes] of before) if (!existsSync(files[f]) || !readFileSync(files[f]).equals(bytes)) problems.push(named(`the ${f} file ${files[f]} was changed`))
+        if (c.alias?.how === 'named-stream' && existsSync(paths[c.alias.of])) problems.push(named(`the stream ${paths[c.alias.of]} was made`))
         if (run.code === null || exitByte(run.code) !== exitByte(-2)) problems.push(named(`the engine exited with ${run.code}, expected -2`))
         if (c.code === undefined) {
           for (const f of ['result', 'progress', 'gcode'] as const) if (existsSync(files[f])) problems.push(named(`${files[f]} was written; nothing should be`))
@@ -1989,7 +2133,7 @@ export type SmokePresetSets = Record<keyof typeof SMOKE_PRESETS, PresetSet>
 /** The presets the cases slice with (SMOKE_PRESETS), flattened from a resources folder's profiles and checked. */
 export function smokePresetSets(profilesDir: string): SmokePresetSets {
   const tree = loadProfileTree(profilesDir, { vendors: [...new Set(Object.values(SMOKE_PRESETS).map((p) => p.vendor))] })
-  const sets = { generic: presetSet(tree, SMOKE_PRESETS.generic), generic2: presetSet(tree, SMOKE_PRESETS.generic2), bambu: presetSet(tree, SMOKE_PRESETS.bambu) }
+  const sets = { generic: presetSet(tree, SMOKE_PRESETS.generic), generic2: presetSet(tree, SMOKE_PRESETS.generic2), bambu: presetSet(tree, SMOKE_PRESETS.bambu), h2d: presetSet(tree, SMOKE_PRESETS.h2d) }
   for (const s of Object.values(sets)) checkPresetSet(s)
   return sets
 }
@@ -2024,8 +2168,9 @@ export async function runCases(cases: SmokeCase[], o: CaseRunOptions, log: Log, 
     generic: writePresetSet(join(o.root, 'presets', 'generic'), o.sets.generic),
     generic2: writePresetSet(join(o.root, 'presets', 'generic2'), o.sets.generic2),
     bambu: writePresetSet(join(o.root, 'presets', 'bambu'), o.sets.bambu),
+    h2d: writePresetSet(join(o.root, 'presets', 'h2d'), o.sets.h2d),
   }
-  for (const note of [...files.generic.notes, ...files.generic2.notes, ...files.bambu.notes]) log.line(`${label}: (preset note) ${note}`)
+  for (const note of Object.values(files).flatMap((f) => f.notes)) log.line(`${label}: (preset note) ${note}`)
   const out: CaseReport[] = []
   for (const c of cases) {
     const dir = join(o.root, c.id)

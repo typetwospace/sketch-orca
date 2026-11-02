@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { scanGcode } from '../scripts/lib/gcode.ts'
 import { isEngineAbsolute, RESULT_FORMAT, validateJob, type JobResult } from '../scripts/lib/job.ts'
 import type { OrcaLock } from '../scripts/lib/lock.ts'
@@ -13,12 +13,15 @@ import {
   CAPITAL_KEY,
   CONFIG_DEF_EXPECT,
   COLLISIONS,
+  CORRIDOR_BED,
+  CORRIDOR_TOWER,
   CUBE,
   PAUSE_LAYER_INDEX,
   POCKET,
   BED_SHIFT,
   FLUSH,
   FLUSH_JOBS,
+  H2D_FLUSH,
   INVALID_COMMAND,
   PRIME_TOWER_JOBS,
   REFUSALS,
@@ -27,9 +30,13 @@ import {
   SMOKE_CASES,
   SMOKE_PRESETS,
   SMOKE_VERSION,
+  TOWER_OFF_BED,
   TOWER_TOO_WIDE,
   VALUE_RENAME,
+  WINDOWS_ALIASES,
   Z_OFFSETS,
+  aliasPath,
+  nozzleFlushProblems,
   backHalf,
   bedOutline,
   diamondOutline,
@@ -74,6 +81,7 @@ import {
   smokeFingerprint,
   smokePassedFor,
   smokeTimeoutMs,
+  type AliasKind,
   type RunFile,
 } from '../scripts/lib/smoke.ts'
 import type { RuntimeIo } from '../scripts/lib/pe.ts'
@@ -590,8 +598,11 @@ describe('jobs and the engine environment', () => {
     // the drive-rooted work folder refusal; version 7 file-collisions' runs with both files on
     // inputs, invalid jobs, wrong command lines, presets, other names for a file and the result's
     // temporary file; version 8 flush-volumes' support filament read with a flush_multiplier of 1,
-    // since the G-code's config block gives the matrix times the multiplier.
-    expect(SMOKE_VERSION).toBe(8)
+    // since the G-code's config block gives the matrix times the multiplier; version 9 the H2D's
+    // per-variant nozzle volumes and a volume past an int that Orca's own check takes
+    // (flush-volumes), a corridor bed and a place set past the bed (prime-tower), and file-collisions'
+    // Windows names for a file (a trailing dot or space, \\?\, ::$DATA, a named stream).
+    expect(SMOKE_VERSION).toBe(9)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
     expect(CAPITAL_KEY.key).not.toBe(CAPITAL_KEY.key.toLowerCase())
@@ -604,6 +615,9 @@ describe('jobs and the engine environment', () => {
     expect(SMOKE_CASES.find((c) => c.id === 'override-keys')!.title).toContain(`${VALUE_RENAME.key} ${VALUE_RENAME.renamed}, read as ${VALUE_RENAME.to} = ${VALUE_RENAME.as}`)
     expect(SMOKE_PRESETS.generic2.filaments).toEqual(['Generic PLA @System', 'Generic PLA @System'])
     expect(SMOKE_PRESETS.generic2.machine).toBe(SMOKE_PRESETS.generic.machine)
+    // The H2D: two nozzles, two filaments of its own.
+    expect(SMOKE_PRESETS.h2d.filaments).toHaveLength(2)
+    expect(SMOKE_PRESETS.h2d.machine).toContain('H2D')
   })
 
   test('the flush-volumes and prime-tower jobs: each is refused or slices, and changes only its copy of the presets', () => {
@@ -618,7 +632,9 @@ describe('jobs and the engine environment', () => {
         expect(() => validateJob(smokeJob({ command: 'slice', dir: scratch, resources: scratch, presets, overrides: j.overrides ?? {}, objects: j.objects, customGcodes }))).not.toThrow()
       }
     }
-    for (const j of FLUSH_JOBS) expect((j.refused === undefined) !== (j.config === undefined)).toBe(true)
+    // Each job is refused or checks what it sliced, not both.
+    for (const jobs of [FLUSH_JOBS, PRIME_TOWER_JOBS]) for (const j of jobs) expect(j.refused !== undefined && j.check !== undefined).toBe(false)
+    for (const j of FLUSH_JOBS) expect({ id: j.id, checked: (j.refused === undefined) !== (j.config === undefined && j.check === undefined) }).toEqual({ id: j.id, checked: true })
     // The tower job changes to filament 2 inside the cube; the raft job's object sets raft_layers only.
     const changes = PRIME_TOWER_JOBS.find((j) => j.id === 'tower')!.customGcodes!(expectedFixedLayers(CUBE.size, CUBE.firstLayer, CUBE.layerHeight, 0.08))
     expect(changes).toEqual([{ printZ: expect.any(Number), type: 'filament', extruder: 2 }])
@@ -657,14 +673,56 @@ describe('jobs and the engine environment', () => {
     expect(Number((job('tower-too-wide').overrides as Record<string, string>).prime_tower_width)).toBe(TOWER_TOO_WIDE)
     expect(TOWER_TOO_WIDE).toBeGreaterThan(300)
     expect(job('tower-too-wide').refused).toMatchObject({ code: 'arrange-failed', exitCode: -21 })
-    // Past Orca's largest flushing volume (g_max_flush_volume, 20000) and past what an int holds.
+    // A place set past the bed's bounding box, on the full bed.
+    const { wipe_tower_x: rx, wipe_tower_y: ry } = job('tower-set-off-rect').overrides as Record<string, string>
+    expect([Number(rx), Number(ry)]).toEqual([TOWER_OFF_BED, TOWER_OFF_BED])
+    expect(TOWER_OFF_BED).toBeGreaterThan(300)
+    expect(job('tower-set-off-rect').presets).toBeUndefined()
+    expect(job('tower-set-off-rect').refused).toMatchObject({ code: 'config-invalid', mentions: 'wipe_tower_x' })
+    // The corridor: the bed given as its outline, a tower 6 mm wider with its 3 mm brim that fits
+    // across the corridor with less than a millimetre to spare, and nowhere on the strip.
+    const corridor = structuredClone(bed)
+    job('bed-corridor').presets!(corridor)
+    expect(bedOutline(corridor.machine)).toEqual(CORRIDOR_BED)
+    expect(Number((job('bed-corridor').overrides as Record<string, string>).prime_tower_width)).toBe(CORRIDOR_TOWER)
+    const across = CORRIDOR_BED[4]![0] - CORRIDOR_BED[5]![0]
+    expect(across - (CORRIDOR_TOWER + 6)).toBeGreaterThan(0)
+    expect(across - (CORRIDOR_TOWER + 6)).toBeLessThan(1)
+    expect(CORRIDOR_BED[5]![0] % 1).not.toBe(0)
+    expect(CORRIDOR_BED[2]![1]).toBeLessThan(CORRIDOR_TOWER / 2)
+    // Past Orca's largest flushing volume (g_max_flush_volume, 20000) and past what an int holds;
+    // aboveInt also below a float's largest, as Orca's own check takes it.
     expect(Number(FLUSH.outOfRange)).toBeGreaterThan(2 ** 31)
+    expect(Number(FLUSH.aboveInt)).toBeGreaterThan(2 ** 31)
+    expect(Number(FLUSH.aboveInt)).toBeLessThan(3.4e38)
     const machine: FlatPreset = { name: 'm', type: 'machine', from: 'system' }
     const set: PresetSet = { machine, process: { name: 'p', type: 'process', from: 'system' }, filaments: [{ name: 'f', type: 'filament', from: 'system' }] }
     const copy = structuredClone(set)
     FLUSH_JOBS.find((j) => j.id === 'nozzle-volume-out-of-range')!.presets!(copy)
     expect(copy.machine.nozzle_volume).toEqual([FLUSH.outOfRange])
     expect(set.machine.nozzle_volume).toBeUndefined()
+    for (const id of ['nozzle-volume-out-of-range', 'nozzle-volume-override', 'nozzle-volume-above-int'])
+      expect(FLUSH_JOBS.find((j) => j.id === id)!.refused).toEqual({ code: 'config-invalid', exitCode: -18, mentions: FLUSH.refusal })
+    // The H2D: one volume per variant, the job's Standard nozzles picking the first and the third.
+    const h2d = FLUSH_JOBS.find((j) => j.id === 'h2d-nozzle-variants')!
+    expect(h2d.set).toBe('h2d')
+    const h2dCopy = structuredClone(set)
+    h2d.presets!(h2dCopy)
+    expect(h2dCopy.machine.nozzle_volume).toEqual([...H2D_FLUSH.variantVolumes])
+    expect(h2d.overrides).toMatchObject({ nozzle_volume_type: H2D_FLUSH.volumeTypes, flush_multiplier: '1,1' })
+    expect([...H2D_FLUSH.picked] as number[]).toEqual([Number(H2D_FLUSH.variantVolumes[0]), Number(H2D_FLUSH.variantVolumes[2])])
+  })
+
+  test('nozzleFlushProblems: each nozzle flushes its own picked volume plus one colour flush', () => {
+    const picked = [100, 400]
+    // As sketch-orca computes it, and as Orca did from the variants as given (nozzle 1's High Flow 200).
+    expect(nozzleFlushProblems('0,160,160,0,0,460,460,0', '100,400', picked)).toEqual([])
+    expect(nozzleFlushProblems('0,160,160,0,0,260,260,0', '100,400', picked)[0]).toContain('100 + 60 and 400 + -140')
+    expect(nozzleFlushProblems('0,160,160,0,0,560,560,0', '100,400', picked)[0]).toContain('400 + 160')
+    expect(nozzleFlushProblems('0,160,160,0,0,460,460,0', '100,200', picked)[0]).toContain('nozzle_volume = 100,200')
+    expect(nozzleFlushProblems('0,160,170,0,0,460,460,0', '100,400', picked)[0]).toContain('differ')
+    expect(nozzleFlushProblems('0,160,160', '100,400', picked)[0]).toContain('blocks')
+    expect(nozzleFlushProblems(undefined, '100,400', picked)).toHaveLength(1)
   })
 
   test('the crash handler (crash-result): it names every progress stage, and builds its message without snprintf or shared text', () => {
@@ -699,15 +757,26 @@ describe('jobs and the engine environment', () => {
       // Every input the case names twice keeps its bytes, and so does the job.
       expect(c.intact).toContain('job')
       for (const f of [c.out, c.progress]) if (RUN_INPUTS.includes(f)) expect({ id: c.id, f, intact: c.intact.includes(f) }).toEqual({ id: c.id, f, intact: true })
-      // Another name is given for an input only.
-      if (c.alias) expect(RUN_INPUTS).toContain(c[c.alias.of])
+      // Another name is given for an input or the G-code only.
+      if (c.alias) expect([...RUN_INPUTS, 'gcode']).toContain(c[c.alias.of])
     }
     // Both files on inputs at once, invalid jobs, wrong command lines, presets, other names and the temporary file.
     expect(COLLISIONS.some((c) => RUN_INPUTS.includes(c.out) && RUN_INPUTS.includes(c.progress))).toBe(true)
     expect(COLLISIONS.filter((c) => c.invalidJob).map((c) => c.code === undefined).sort()).toEqual([false, true])
     expect(COLLISIONS.filter((c) => c.args).map((c) => c.code === undefined).sort()).toEqual([false, true])
     expect(new Set(COLLISIONS.flatMap((c) => [c.out, c.progress]))).toEqual(new Set<RunFile>(['job', 'result', 'progress', 'model', 'gcode', 'machine', 'process']))
-    expect(new Set(COLLISIONS.flatMap((c) => (c.alias ? [c.alias.how] : [])))).toEqual(new Set(['hard-link', 'dot-dot']))
+    expect(new Set(COLLISIONS.flatMap((c) => (c.alias ? [c.alias.how] : [])))).toEqual(new Set<AliasKind>(['hard-link', 'dot-dot', ...WINDOWS_ALIASES]))
+    // On Windows, the G-code named with a trailing dot while neither file is there yet (sketch-orca,
+    // 2026-11-01): the result would have replaced the G-code.
+    expect(COLLISIONS.find((c) => c.alias?.how === 'trailing-dot')).toMatchObject({ out: 'gcode', code: 'invalid-params', resultAt: 'gcode' })
+    // The names, each the same file on Windows alone.
+    const file = join(scratch, 'model.stl')
+    expect(aliasPath(file, 'trailing-dot')).toBe(`${file}.`)
+    expect(aliasPath(file, 'trailing-space')).toBe(`${file} `)
+    expect(aliasPath(file, 'default-stream')).toBe(`${file}::$DATA`)
+    expect(aliasPath(file, 'named-stream')).toBe(`${file}:progress`)
+    expect(aliasPath(file, 'device-prefix')).toBe(`\\\\?\\${resolve(file)}`)
+    expect(aliasPath(file, 'dot-dot')).toBe([dirname(file), 'sub', '..', 'model.stl'].join(sep))
     // An invalid job is one by its command alone: the job format refuses it.
     expect(() => validateJob({ ...smokeJob({ command: 'slice', dir: scratch, resources: scratch, presets: { machine: join(scratch, 'm.json'), process: join(scratch, 'p.json'), filaments: [join(scratch, 'f.json')] } }), command: INVALID_COMMAND })).toThrow(/command/)
   })

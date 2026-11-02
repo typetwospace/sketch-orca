@@ -69,7 +69,9 @@ fatal to 5 trace; 1, errors, by default).
   the progress file, `output.gcode` and `output.bambu3mf`, with the files they are written through
   (the file's name plus `.tmp`; also `<result>.crash.tmp`, `<gcode>.tmp.postprocess` and
   `<bambu3mf>.rels.tmp`). Paths are compared as files: two existing paths to one file (a link, a
-  short name) are one file, and on Windows letter case does not matter. The files a job names are
+  short name) are one file, and on Windows a path is read as the system opens it, also when the
+  file is not there yet: letter case, a trailing dot or space on a name, a `\\?\`-style prefix and
+  a stream name (`:name`, `::$DATA`) do not matter. The files a job names are
   every absolute path in its JSON, wherever it is (any setting's too), also when the job is not
   valid; all but `output.gcode` and `output.bambu3mf` count as its inputs. Outputs of the job that
   overlap each other or an input are `job-invalid`; a `--progress` or `--out` that overlaps another

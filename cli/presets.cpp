@@ -534,9 +534,27 @@ void compute_flush_volumes(DynamicPrintConfig &cfg, bool matrix_given, size_t ex
         }
     }
 
+    // The settings each nozzle and filament prints with. Orca keeps a printer's per-nozzle settings
+    // (nozzle_volume, the retractions when cut) once per extruder variant (printer_extruder_variant),
+    // and a filament's once per filament and variant, and Print::apply picks each nozzle's by its
+    // extruder_type and nozzle_volume_type and each filament's by the nozzle filament_map gives it.
+    // The minimum flushing volumes are computed from the same picks (Orca's own functions, on a copy
+    // with every setting), as the GUI computes them from its full configuration; indexing the
+    // settings as given would take another variant's volume for the second nozzle of an H2D, say
+    // (sketch-orca, 2026-11-01).
+    DynamicPrintConfig picked;
+    {
+        const FullPrintConfig defaults;
+        picked.apply(defaults, true);
+    }
+    picked.apply(cfg, true);
+    picked.update_values_to_printer_extruders(picked, printer_options_with_variant_1, "printer_extruder_id", "printer_extruder_variant");
+    picked.update_values_to_printer_extruders(picked, printer_options_with_variant_2, "printer_extruder_id", "printer_extruder_variant", 2);
+    picked.update_values_to_printer_extruders_for_multiple_filaments(picked, filament_options_with_variant, "filament_self_index", "filament_extruder_variant");
+
     for (size_t nozzle = 0; nozzle < extruder_count; ++nozzle) {
-        // Each nozzle's own volume and retraction (the stock loop asks for nozzle_id; 2026-11-01).
-        const std::vector<int> min_volumes = min_flush_volumes(cfg, nozzle);
+        // Each nozzle's own volume and retraction, as picked (the stock loop asks for nozzle 0; 2026-11-01).
+        const std::vector<int> min_volumes = min_flush_volumes(picked, nozzle);
         std::vector<double>    m(n * n, 0.);
         for (size_t from = 0; from < n; ++from) {
             unsigned char from_rgb[4];

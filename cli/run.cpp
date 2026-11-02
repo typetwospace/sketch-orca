@@ -695,27 +695,105 @@ std::string tower_misfit(const Polygon &foot, const Polygon &printable, const st
     return std::string();
 }
 
-// The shortest move, in whole millimetres along x and y, after which `foot` fits (tower_misfit)
-// within the bounding box of the printable area; none when no such move exists or the printer gives
-// no printable area.
+// Where the first corner of the convex footprint `foot` may go so that the footprint lies on
+// `printable` and clear of `obstacles`, as a region (sketch-orca, 2026-11-01). With F the footprint
+// seen from that corner, a place p is taken by F + p, so the places a polygon O blocks are O grown by
+// -F, O + (-F), which is O together with -F swept along O's edges (Clipper's Minkowski sum; -F holds
+// the origin, F being convex with the corner on it). The printable area blocks the places where
+// the footprint would cross its edges: those edges swept by -F. The region is what of the printable
+// area no obstacle and no edge blocks. A swept closed outline is a band: Clipper gives its outer
+// edge counter-clockwise and the edge of the hole it leaves clockwise, which the union (non-zero)
+// keeps open, so the orientations stay as given.
+ExPolygons tower_places(const Polygon &foot, const Polygon &printable, const Polygons &obstacles)
+{
+    const Point      corner = foot.points.front();
+    ClipperLib::Path back;
+    for (const Point &q : foot.points)
+        back.emplace_back(corner - q);
+    Polygons   blocked;
+    const auto sweep = [&](const Polygon &edges) {
+        ClipperLib::Paths swept;
+        ClipperLib::MinkowskiSum(back, edges.points, swept, true);
+        for (ClipperLib::Path &path : swept)
+            blocked.emplace_back(std::move(path));
+    };
+    sweep(printable);
+    for (const Polygon &o : obstacles) {
+        if (o.points.size() < 3)
+            continue;
+        Polygon solid = o;
+        solid.make_counter_clockwise();
+        blocked.push_back(solid);
+        sweep(solid);
+    }
+    return diff_ex(Polygons{printable}, union_(blocked));
+}
+
+// The point of `region` nearest to `p`: `p` itself when it is in the region, else the nearest point of
+// an edge; none for an empty region.
+std::optional<Point> nearest_point_in(const ExPolygons &region, const Point &p)
+{
+    for (const ExPolygon &e : region)
+        if (e.contains(p))
+            return p;
+    std::optional<Point> best;
+    double               best_d2 = std::numeric_limits<double>::max();
+    const Vec2d          q       = p.cast<double>();
+    for (const ExPolygon &e : region)
+        for (const Polygon *poly : [&e] {
+                 std::vector<const Polygon *> all{&e.contour};
+                 for (const Polygon &h : e.holes)
+                     all.push_back(&h);
+                 return all;
+             }())
+            for (size_t i = 0; i < poly->points.size(); ++i) {
+                const Vec2d  a  = poly->points[i].cast<double>();
+                const Vec2d  b  = poly->points[(i + 1) % poly->points.size()].cast<double>();
+                const Vec2d  ab = b - a;
+                const double l2 = ab.squaredNorm();
+                const double t  = l2 > 0. ? std::clamp((q - a).dot(ab) / l2, 0., 1.) : 0.;
+                const Vec2d  c  = a + t * ab;
+                if (const double d2 = (c - q).squaredNorm(); d2 < best_d2) {
+                    best_d2 = d2;
+                    best    = Point(coord_t(std::llround(c.x())), coord_t(std::llround(c.y())));
+                }
+            }
+    return best;
+}
+
+// The shortest move, in mm, after which the convex footprint `foot` fits (tower_misfit): on the
+// printable area and clear of the excluded areas and of `objects`. It is found in the region of the
+// places where the footprint fits (tower_places), kept 5 micrometres inside so that the footprint
+// clears every edge, not a grid of moves, so no place that fits is missed (sketch-orca, 2026-11-01).
+// None when there is no such place or the printer gives no printable area.
 std::optional<Vec2d> nearest_tower_move(const Polygon &foot, const Polygon &printable, const std::vector<std::pair<std::string, Polygon>> &excluded,
                                         const Polygons &objects)
 {
-    if (printable.empty())
+    if (printable.empty() || foot.points.size() < 3)
         return std::nullopt;
-    const BoundingBox bed = printable.bounding_box(), fb = foot.bounding_box();
-    const double      x0 = std::ceil(unscale<double>(bed.min.x() - fb.min.x())), x1 = unscale<double>(bed.max.x() - fb.max.x());
-    const double      y0 = std::ceil(unscale<double>(bed.min.y() - fb.min.y())), y1 = unscale<double>(bed.max.y() - fb.max.y());
-    std::vector<Vec2d> moves;
-    for (double dx = x0; dx <= x1; dx += 1.)
-        for (double dy = y0; dy <= y1; dy += 1.)
-            moves.emplace_back(dx, dy);
-    std::stable_sort(moves.begin(), moves.end(), [](const Vec2d &a, const Vec2d &b) { return a.squaredNorm() < b.squaredNorm(); });
-    for (const Vec2d &d : moves) {
+    Polygons obstacles = objects;
+    for (const auto &named : excluded)
+        obstacles.push_back(named.second);
+    const ExPolygons places = offset_ex(tower_places(foot, printable, obstacles), -float(scale_(0.005)));
+    const Point      from   = foot.points.front();
+    // The nearest place, then, should rounding put that one on an edge, the corners of the region by
+    // their distance.
+    Points candidates;
+    if (const std::optional<Point> nearest = nearest_point_in(places, from))
+        candidates.push_back(*nearest);
+    Points corners;
+    for (const ExPolygon &e : places) {
+        append(corners, e.contour.points);
+        for (const Polygon &h : e.holes)
+            append(corners, h.points);
+    }
+    std::stable_sort(corners.begin(), corners.end(), [&from](const Point &a, const Point &b) { return (a - from).cast<double>().squaredNorm() < (b - from).cast<double>().squaredNorm(); });
+    append(candidates, corners);
+    for (const Point &to : candidates) {
         Polygon moved = foot;
-        moved.translate(Point(scaled(d.x()), scaled(d.y())));
+        moved.translate(to - from);
         if (tower_misfit(moved, printable, excluded, objects).empty())
-            return d;
+            return Vec2d(unscale<double>(to.x() - from.x()), unscale<double>(to.y() - from.y()));
     }
     return std::nullopt;
 }
@@ -782,11 +860,15 @@ std::optional<arrangement::ArrangePolygon> place_prime_tower(DynamicPrintConfig 
     float       brim        = tower_brim_width;
     if (brim < 0)
         brim = WipeTower::get_auto_brim_by_height(float(size.z()));
-    const auto clamp = [](float value, float lo, float hi) { return hi < lo ? lo : std::clamp(value, lo, hi); };
-    const float lo_x = bed_x + margin, hi_x = bed_x + plate_width - w - margin - brim;
-    const float lo_y = bed_y + margin, hi_y = bed_y + plate_depth - depth - margin - brim;
-    x = clamp(x, lo_x, hi_x);
-    y = clamp(y, lo_y, hi_y);
+    // The engine's own place is kept between the bed's edges, as PartPlate::estimate_wipe_tower_polygon
+    // keeps it; a place the job sets is checked as it is, not moved (sketch-orca, 2026-11-01).
+    if (!overridden) {
+        const auto  clamp = [](float value, float lo, float hi) { return hi < lo ? lo : std::clamp(value, lo, hi); };
+        const float lo_x = bed_x + margin, hi_x = bed_x + plate_width - w - margin - brim;
+        const float lo_y = bed_y + margin, hi_y = bed_y + plate_depth - depth - margin - brim;
+        x = clamp(x, lo_x, hi_x);
+        y = clamp(y, lo_y, hi_y);
+    }
     // Between the bed's edges is not on the bed when the printable area is not a rectangle, nor clear
     // of its excluded areas. The tower, its brim included, must be on the printable area and off
     // every excluded area (sketch-orca, 2026-11-01): from the default corner it moves to the nearest

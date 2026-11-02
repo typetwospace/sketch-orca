@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <iterator>
 #include <sstream>
 
@@ -240,37 +241,177 @@ bool is_absolute_path(const std::string &path)
     return boost::filesystem::path(path).is_absolute();
 }
 
+namespace {
+
+#ifdef _WIN32
+// The full path Windows' file functions open for `p`: GetFullPathNameW, the conversion CreateFileW
+// makes of a path before it opens it: . and .. resolved, / read as \, a name's single trailing dot
+// dropped, and the last name's trailing dots and spaces dropped ("out.gcode." and "out.gcode " open
+// out.gcode). A path it does not convert is kept as it is.
+std::wstring win32_full_path(const std::wstring &p)
+{
+    DWORD size = GetFullPathNameW(p.c_str(), 0, nullptr, nullptr);
+    for (int tries = 0; size > 0 && tries < 4; ++tries) {
+        std::wstring out(size, L'\0');
+        const DWORD got = GetFullPathNameW(p.c_str(), size, out.data(), nullptr);
+        if (got == 0)
+            break;
+        if (got < size) {
+            out.resize(got);
+            return out;
+        }
+        size = got;
+    }
+    return p;
+}
+
+bool starts_with_ci(const std::wstring &s, const std::wstring &prefix)
+{
+    return s.size() >= prefix.size() && CompareStringOrdinal(s.c_str(), int(prefix.size()), prefix.c_str(), int(prefix.size()), TRUE) == CSTR_EQUAL;
+}
+
+// `p` without the prefixes that hand a path to the system as it is (\\?\ and \??\) or as a device
+// path (\\.\): \\?\C:\x is C:\x, and \\?\UNC\server\share is \\server\share. What is left is
+// converted as a plain path is, so a name given literally through \\?\ ("out.gcode.") counts as the
+// name a plain path would open; it may be another file, which only refuses more.
+std::wstring without_device_prefix(std::wstring p)
+{
+    for (int round = 0; round < 4; ++round) {
+        bool stripped = false;
+        for (const wchar_t *prefix : {L"\\\\?\\", L"\\\\.\\", L"\\??\\"}) {
+            if (!starts_with_ci(p, prefix))
+                continue;
+            p = p.substr(std::wcslen(prefix));
+            if (starts_with_ci(p, L"UNC\\"))
+                p = L"\\\\" + p.substr(4);
+            stripped = true;
+            break;
+        }
+        if (!stripped)
+            break;
+        p = win32_full_path(p);
+    }
+    return p;
+}
+
+// `p` without NTFS stream names: a name's ":stream", ":stream:$DATA" and "::$DATA" (the file's own
+// data) are the file, and "folder::$INDEX_ALLOCATION" is the folder. The drive's colon stays.
+std::wstring without_streams(const std::wstring &p)
+{
+    std::wstring out;
+    out.reserve(p.size());
+    size_t start = 0;
+    // A drive letter's colon (C:) and a UNC path's server and share are not names with streams.
+    if (p.size() >= 2 && p[1] == L':') {
+        out.append(p, 0, 2);
+        start = 2;
+    }
+    bool in_stream = false;
+    for (size_t i = start; i < p.size(); ++i) {
+        const wchar_t c = p[i];
+        if (c == L'\\' || c == L'/') {
+            in_stream = false;
+            out.push_back(L'\\');
+        } else if (c == L':') {
+            in_stream = true;
+        } else if (!in_stream) {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+// The final path of an existing file or folder, as the file system resolves it (links, junctions,
+// short names, letter case): GetFinalPathNameByHandleW, without its \\?\ prefix; "" when it cannot
+// be opened.
+std::wstring final_path(const std::wstring &p)
+{
+    const HANDLE h = CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                 FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return std::wstring();
+    std::wstring out;
+    DWORD        size = GetFinalPathNameByHandleW(h, nullptr, 0, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    for (int tries = 0; size > 0 && tries < 4; ++tries) {
+        std::wstring buf(size, L'\0');
+        const DWORD  got = GetFinalPathNameByHandleW(h, buf.data(), size, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        if (got == 0)
+            break;
+        if (got < size) {
+            buf.resize(got);
+            out = buf;
+            break;
+        }
+        size = got;
+    }
+    CloseHandle(h);
+    return out.empty() ? out : without_device_prefix(out);
+}
+
+// What a Windows path names, as Windows opens it, for comparing paths without letter case: the full
+// path (win32_full_path) without device prefixes and stream names, and its longest part that exists
+// replaced by the file system's own path for it (final_path), so a junction, a symbolic link or a
+// short name in it reads as the folder it is.
+std::wstring win32_file_key(const std::string &path)
+{
+    std::wstring p = without_streams(without_device_prefix(win32_full_path(boost::nowide::widen(path))));
+    while (p.size() > 3 && p.back() == L'\\')
+        p.pop_back();
+    // The longest part of p that exists, from p itself up to the root.
+    for (size_t end = p.size(); end > 0;) {
+        const std::wstring head = p.substr(0, end);
+        if (const std::wstring real = final_path(head.size() == 2 && head[1] == L':' ? head + L"\\" : head); !real.empty()) {
+            std::wstring key = real;
+            if (end < p.size()) {
+                if (key.empty() || key.back() != L'\\')
+                    key.push_back(L'\\');
+                key += p.substr(end + 1);
+            }
+            return key;
+        }
+        const size_t slash = head.find_last_of(L'\\');
+        if (slash == std::wstring::npos || slash < 2)
+            break;
+        end = slash;
+    }
+    return p;
+}
+#endif
+
+} // namespace
+
 bool same_file(const std::string &a, const std::string &b)
 {
     namespace fs = boost::filesystem;
     if (a.empty() || b.empty())
         return false;
-    const fs::path            pa(a), pb(b);
-    boost::system::error_code ea, eb;
-    const bool                a_exists = fs::exists(pa, ea), b_exists = fs::exists(pb, eb);
-    if (a_exists && b_exists) {
-        // Links, short names and letter case: the file system says.
-        boost::system::error_code ec;
-        const bool                same = fs::equivalent(pa, pb, ec);
-        if (!ec)
-            return same;
-    }
-    // A path to an existing file and one to no file cannot be the same file.
-    if (!ea && !eb && a_exists != b_exists)
-        return false;
+#ifdef _WIN32
+    // The paths as Windows opens them, compared as NTFS compares names: without letter case, by the
+    // same upper-case table as this. Two names of a file that does not exist yet (the G-code a run
+    // will write, as "out.gcode" and "out.gcode.") are one file only this way (sketch-orca,
+    // 2026-11-01).
+    const std::wstring ka = win32_file_key(a), kb = win32_file_key(b);
+    if (CompareStringOrdinal(ka.c_str(), int(ka.size()), kb.c_str(), int(kb.size()), TRUE) == CSTR_EQUAL)
+        return true;
+#else
     const auto normal = [](const fs::path &p) {
         boost::system::error_code ec;
         const fs::path            full = fs::absolute(p);
         const fs::path            real = fs::weakly_canonical(full, ec);
         return (ec ? full : real).lexically_normal();
     };
-#ifdef _WIN32
-    // NTFS compares names without letter case, by the same upper-case table as this.
-    const std::wstring wa = normal(pa).make_preferred().wstring(), wb = normal(pb).make_preferred().wstring();
-    return CompareStringOrdinal(wa.c_str(), int(wa.size()), wb.c_str(), int(wb.size()), TRUE) == CSTR_EQUAL;
-#else
-    return normal(pa) == normal(pb);
+    if (normal(fs::path(a)) == normal(fs::path(b)))
+        return true;
 #endif
+    // Two existing names of one file that the paths do not show (a hard link): the file system says.
+    const fs::path            pa(a), pb(b);
+    boost::system::error_code ea, eb, ec;
+    if (fs::exists(pa, ea) && fs::exists(pb, eb)) {
+        const bool same = fs::equivalent(pa, pb, ec);
+        if (!ec)
+            return same;
+    }
+    return false;
 }
 
 double round_um(double v)
