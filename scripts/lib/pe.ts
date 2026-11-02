@@ -133,10 +133,12 @@ export function isApiSet(name: string): boolean {
  * The Visual C++ runtime DLLs (the redistributable's), which are never taken from the system: those
  * of Visual Studio 2015 and later (vcruntime140, msvcp140 and their _1, _2, _atomic_wait... parts),
  * the older msvcr<version> and msvcp<version>, and the debug builds of each (a d after the version
- * or the part: vcruntime140d, msvcp140d_atomic_wait, vcruntime140_1d, msvcr120d).
+ * or the part: vcruntime140d, msvcp140d_atomic_wait, vcruntime140_1d, msvcr120d), and msvcrtd.dll,
+ * the debug build of the Visual C++ 6 runtime, which Visual Studio redistributes: unlike msvcrt.dll,
+ * Windows does not carry it.
  */
 export function isMsvcRuntime(name: string): boolean {
-  return /^(vcruntime\d+d?(_\w+)?|msvcp\d+d?(_\w+)?|msvcr\d+d?|concrt\d+d?|vcomp\d+d?|vccorlib\d+d?|vcamp\d+d?|mfc\d+\w*)\.dll$/i.test(name)
+  return /^(vcruntime\d+d?(_\w+)?|msvcp\d+d?(_\w+)?|msvcr\d+d?|msvcrtd|concrt\d+d?|vcomp\d+d?|vccorlib\d+d?|vcamp\d+d?|mfc\d+\w*)\.dll$/i.test(name)
 }
 
 /**

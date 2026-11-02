@@ -223,6 +223,9 @@ describe('runtime closure', () => {
       'msvcp120.dll',
       'concrt140d.dll',
       'vcomp140d.dll',
+      // The Visual C++ 6 runtime's debug build: Windows carries msvcrt.dll, not this.
+      'msvcrtd.dll',
+      'MSVCRTD.DLL',
     ]
     for (const n of debugAndLegacy) expect({ n, crt: isDynamicCrt(n) }).toEqual({ n, crt: true })
     // Windows' own C runtime and names that only start like one are not.
