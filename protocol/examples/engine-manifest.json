@@ -1,6 +1,6 @@
 {
   "format": "sketch-orca-engine/1",
-  "stageVersion": 2,
+  "stageVersion": 3,
   "engine": { "name": "sketch-orca", "version": "0.1.0", "exe": "bin/sketch-orca.exe", "resources": "resources", "libraryPath": "bin" },
   "orca": {
     "repo": "OrcaSlicer/OrcaSlicer",
@@ -20,6 +20,7 @@
   "runtime": ["libgmp-10.dll", "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"],
   "system": ["KERNEL32.dll", "USER32.dll"],
   "smoke": { "passed": true, "smokeVersion": 12 },
+  "deps": { "inputs": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mingw": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
   "inputs": "4444444444444444444444444444444444444444444444444444444444444444",
   "stagedAt": "2026-10-30T18:00:00.000Z",
   "files": [
