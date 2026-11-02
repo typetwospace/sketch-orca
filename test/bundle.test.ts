@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gzipSync } from 'node:zlib'
 import {
   buildingText,
   BUILT_WITH,
@@ -12,6 +13,8 @@ import {
   archivedPrivacyProblems,
   bundleFixtureFile,
   bundleName,
+  BINARIES_NOTICE,
+  BINARY_LICENSES,
   commitFileSha256,
   excludePathspecs,
   isBinaryPath,
@@ -22,6 +25,7 @@ import {
   orcaArchiveExcludes,
   orcaArchiveName,
   ownBundleFiles,
+  packageBinaries,
   parsePinnedSources,
   pinnedSources,
   planDependencies,
@@ -40,7 +44,11 @@ import { firstExisting, gitCandidates } from '../scripts/lib/env.ts'
 import { currentPlatform } from '../scripts/lib/toolchain.ts'
 import { listFiles, nativePath, sha256Bytes, sha256Sums, treeEntries, writeText } from '../scripts/lib/files.ts'
 import { LOCK_FORMAT, type OrcaLock } from '../scripts/lib/lock.ts'
+import { PACKAGE_BINARIES, type KnownPackageBinary } from '../scripts/lib/packagebins.ts'
 import { buildManifest, findPersonalPaths, personalPathNeedles, PRIVACY_FIXTURE_MARK, privacyProblems, privacyProblemsIn, withoutFixtures, type EngineManifest } from '../scripts/lib/stage.ts'
+import { makePe } from './support/pe-writer.ts'
+import { writeTar } from './support/tar-writer.ts'
+import { writeZip } from './support/zip-writer.ts'
 
 const LOCK: OrcaLock = {
   format: LOCK_FORMAT,
@@ -384,9 +392,54 @@ describe('the bundle', () => {
       "the engine ships binaries of OrcaSlicer's tree, whose source the bundle does not have: bin/libgmp-10.dll (deps/GMP/gmp/lib/win-x64/libgmp-10.dll); build them from their source packages (GMP and MPFR on Windows: -DDEP_MINGW_ROOT, patch 0007)",
       'the Orca archive keeps binaries whose source the bundle does not have: tools/new.exe; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts)',
     ])
-    // source works both out from Orca's tree at the locked commit and the staged engine's files.
+    // A binary of a package that PACKAGE_BINARIES does not name.
+    expect(sourceGaps({ plan, withDeps: true, packageBinaries: ['dependencies/X/x.zip: x/a.jar (SHA-256 aa; Java class)'] }).missing).toEqual([
+      'the dependency packages hold binaries the bundle does not account for: dependencies/X/x.zip: x/a.jar (SHA-256 aa; Java class); name each in PACKAGE_BINARIES (scripts/lib/packagebins.ts) with its licence and where its source is',
+    ])
+    // source works both out from Orca's tree at the locked commit and the staged engine's files,
+    // reads every package for binaries, and the Orca archive it writes too.
     const run = readFileSync(join(import.meta.dir, '..', 'scripts', 'lib', 'bundle.ts'), 'utf8').split('export async function runSource(')[1]!
-    expect(run).toMatch(/sourceGaps\(\{[^}]*\barchivedBinaries: kept\b[^}]*\bshippedTreeBinaries: shipped\b[^}]*\}\)/)
+    expect(run).toMatch(/sourceGaps\(\{[^}]*\barchivedBinaries: kept\b[^}]*\bshippedTreeBinaries: shipped\b[^}]*\bpackageBinaries: binaries\?\.unknown\b[^}]*\}\)/)
+    expect(run).toMatch(/packageBinaries\(plan\.archives, /)
+    expect(run).toMatch(/inventoryPackage\(archive, needles, platform\)/)
+  })
+
+  test("packageBinaries: every binary of every package, known by PACKAGE_BINARIES or not; the builder's needles and unnamed folders apart", async () => {
+    const putBytes = (rel: string, data: Buffer) => {
+      mkdirSync(join(dir, rel, '..'), { recursive: true })
+      writeFileSync(join(dir, rel), data)
+    }
+    const wasm = Buffer.concat([Buffer.from('\0asm'), Buffer.from([1, 0, 0, 0]), Buffer.alloc(64)])
+    const pe = (text: string) => Buffer.concat([makePe({ is64: true, imports: [] }), Buffer.from(`\0${text}\0`, 'latin1')])
+    putBytes('dl/Draco/1.5.7.zip', writeZip([{ name: 'draco/README.md', data: 'text' }, { name: 'draco/js/decoder.wasm', data: wasm }, { name: 'draco/js/other.wasm', data: Buffer.concat([wasm, Buffer.from('x')]) }]))
+    putBytes('dl/Tool/tool-1.0.tar.gz', gzipSync(writeTar([{ name: 'tool/bin/t.dll', data: pe('C:/Users/Builder/tool/t.cpp') }, { name: 'tool/bin/u.dll', data: pe('D:\\agent\\_work\\1\\s\\u.cpp') }])))
+    putBytes('dl/Plain/plain-1.0.tar.gz', gzipSync(writeTar([{ name: 'plain/src/a.c', data: 'int a;' }])))
+    const archive = (name: string, file: string): DependencyArchive => ({ name, file, path: join(dir, 'dl', name, file), url: `https://example.invalid/${file}`, sha256: sha256Bytes(readFileSync(join(dir, 'dl', name, file))), size: 1 })
+    const archives = [archive('Draco', '1.5.7.zip'), archive('Tool', 'tool-1.0.tar.gz'), archive('Plain', 'plain-1.0.tar.gz')]
+    const known: KnownPackageBinary[] = [
+      { dependency: 'Draco', file: '1.5.7.zip', path: 'draco/js/decoder.wasm', sha256: sha256Bytes(wasm), what: 'a decoder', license: 'Apache-2.0', licenseText: 'LICENSE', source: 'src/' },
+    ]
+    const cache = join(dir, 'state', 'package-binaries.json')
+    const needles = personalPathNeedles('C:\\Users\\Builder', 'Builder')
+    const r = await packageBinaries(archives, cache, needles, 'win32', undefined, known)
+    expect(r.known).toEqual(known)
+    expect(r.unknown).toEqual([
+      `dependencies/Draco/1.5.7.zip: draco/js/other.wasm (SHA-256 ${sha256Bytes(Buffer.concat([wasm, Buffer.from('x')]))}; WebAssembly module)`,
+      expect.stringMatching(/^dependencies\/Tool\/tool-1\.0\.tar\.gz: tool\/bin\/t\.dll \(SHA-256 [0-9a-f]{64}; PE program or library\)$/),
+      expect.stringMatching(/^dependencies\/Tool\/tool-1\.0\.tar\.gz: tool\/bin\/u\.dll /),
+    ])
+    expect(r.personal).toEqual(['dependencies/Tool/tool-1.0.tar.gz: tool/bin/t.dll (/users/builder)', 'dependencies/Tool/tool-1.0.tar.gz: tool/bin/t.dll (c:/users/builder)'])
+    expect(r.recorded).toEqual([
+      'dependencies/Tool/tool-1.0.tar.gz: tool/bin/t.dll (build path C:/Users/Builder/tool/t.cpp)',
+      'dependencies/Tool/tool-1.0.tar.gz: tool/bin/u.dll (build path D:\\agent\\_work\\1\\s\\u.cpp)',
+    ])
+    expect(existsSync(cache)).toBe(true)
+    // The real table, for these packages: nothing of them is known.
+    expect((await packageBinaries(archives, cache, needles, 'win32')).known).toEqual([])
+    expect(PACKAGE_BINARIES.length).toBeGreaterThan(0)
+    // A package that cannot be read stops source.
+    putBytes('dl/Bad/bad.tar.gz', gzipSync(Buffer.alloc(1024, 0x41)))
+    await expect(packageBinaries([archive('Bad', 'bad.tar.gz')], cache, needles, 'win32')).rejects.toThrow(/cannot read dependencies\/Bad\/bad\.tar\.gz for its binaries: tar: bad header checksum/)
   })
 
   test('verifySums: changed, missing and unlisted files', () => {
@@ -412,9 +465,11 @@ describe('the bundle', () => {
     put('b/LICENSES/NOTICE.txt', 'text')
     put('b/orca/OrcaSlicer-v2.4.2.tar.gz', 'D:\\build-cache\\orca')
     put('b/dependencies/Boost/boost.tar.gz', 'D:\\build-cache\\orca')
+    put(`b/${BINARIES_NOTICE}`, 'list')
+    put(`b/${BINARY_LICENSES}/CPL-1.0.txt`, 'text')
     const b = join(dir, 'b')
     const own = ownBundleFiles(listFiles(b))
-    expect(own).toEqual(['BUILDING.md', 'LICENSES/NOTICE.txt', 'bundle.json', 'engine/cli/run.cpp'])
+    expect(own).toEqual(['BUILDING.md', 'LICENSES/NOTICE.txt', 'bundle.json', 'dependencies/BINARIES.txt', 'dependencies/LICENSES/CPL-1.0.txt', 'engine/cli/run.cpp'])
     expect(privacyProblems(b, own, personalPathNeedles('C:\\Users\\Builder', 'Builder', ['D:\\build-cache\\orca']))).toEqual([
       'BUILDING.md (d:\\build-cache\\orca)',
       'engine/cli/run.cpp (/users/builder, c:/users/builder)',
@@ -471,8 +526,8 @@ describe("the binaries of Orca's tree", () => {
     expect(mingwToolchain('win32').map((p) => p.file)).toEqual([MSYS2_BASE, ...MINGW_PACKAGES].map((p) => p.file))
     expect(mingwToolchain('win32')[0]).toEqual(MSYS2_BASE)
     expect(mingwToolchain('linux')).toEqual([])
-    // No prebuilt/ folder and the toolchain in bundle.json: a bundle of version 5 is made again.
-    expect(SOURCE_VERSION).toBe(6)
+    // dependencies/BINARIES.txt and dependencies/LICENSES/: a bundle of version 6 is made again.
+    expect(SOURCE_VERSION).toBe(7)
   })
 
   test.skipIf(firstExisting(gitCandidates(currentPlatform(), process.env)) === undefined)('excludePathspecs: git archive leaves out what orcaArchiveExcludes names', () => {

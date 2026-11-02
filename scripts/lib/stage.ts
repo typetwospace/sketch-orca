@@ -528,29 +528,67 @@ export function isBinaryProgram(bytes: Uint8Array): boolean {
  */
 export const ALLOWED_BUILD_PATHS: readonly { path: string; why: string }[] = []
 
-// A drive path is one only where no letter or digit comes before its drive letter (not the p:// of http://).
-const RECORDED_PATH = /[A-Za-z]:[\\/]+(?:[A-Za-z0-9_.$~ -]+[\\/]+)+[A-Za-z0-9_.$~-]*|\\\\[A-Za-z0-9_.-]+\\[A-Za-z0-9_.$-]+|\/(?:home|Users)\/[A-Za-z0-9_.-]+|\/root\//g
+/**
+ * The recorded paths' patterns, for a text whose letters beyond ASCII are `letter` (one character
+ * of a name: in narrow text a UTF-8 sequence read as Latin-1, in UTF-16 text a letter's code unit):
+ * a path on a drive through at least one folder (D:\agent\_work\1\s), a UNC share
+ * (\\server\share), a home folder (/home/<name>, /Users/<name>, /root/), and any other absolute
+ * POSIX path to a source file (/opt/vendor/build/engine.cpp, as __FILE__ records one) outside the
+ * system's and the compilers' own folders. A drive path is one only where no letter or digit comes
+ * before its drive letter (not the p:// of http://), and a POSIX path only where no character of a
+ * name, no colon and no slash does (not a URL's path).
+ */
+function recordedPathPattern(letter: string): RegExp {
+  const c = `(?:[A-Za-z0-9_.$~+ -]|${letter})`
+  const n = `(?:[A-Za-z0-9_.$~+-]|${letter})`
+  const system = '(?!usr/include/|usr/lib/|usr/lib64/|usr/local/include/|usr/local/lib/|usr/share/|opt/homebrew/|Library/Developer/|Applications/Xcode)'
+  const source = '\\.(?:c|cc|cpp|cxx|c\\+\\+|h|hh|hpp|hxx|inl|ipp|tcc|m|mm|s|asm|f|f90|rs|go|java|py)(?![A-Za-z0-9_])'
+  return new RegExp(
+    [
+      `[A-Za-z]:[\\\\/]+(?:${c}+[\\\\/]+)+${n}*`,
+      `\\\\\\\\[A-Za-z0-9_.-]+\\\\${n}+`,
+      `\\/(?:home|Users)\\/${n}+`,
+      '\\/root\\/',
+      `(?<![A-Za-z0-9_.$~+:/-]|${letter})\\/${system}(?:${n}+\\/)+${n}+?${source}`,
+    ].join('|'),
+    'g',
+  )
+}
+
+// A UTF-8 sequence of two to four bytes, read as Latin-1.
+const RECORDED_PATH_NARROW = recordedPathPattern('[\\xc2-\\xdf][\\x80-\\xbf]|[\\xe0-\\xef][\\x80-\\xbf]{2}|[\\xf0-\\xf4][\\x80-\\xbf]{3}')
+// The code units of the alphabets and scripts beyond ASCII that names are written in.
+const WIDE_LETTERS = '[\\u00c0-\\u024f\\u0370-\\u1fff\\u3040-\\u9fff\\uac00-\\ud7a3]'
+const RECORDED_PATH_WIDE = recordedPathPattern(WIDE_LETTERS)
+
+function isWideLetter(u: number): boolean {
+  return (u >= 0xc0 && u <= 0x24f) || (u >= 0x370 && u <= 0x1fff) || (u >= 0x3040 && u <= 0x9fff) || (u >= 0xac00 && u <= 0xd7a3)
+}
 
 /**
- * The folders of some machine that a program or library records, as narrow or UTF-16LE text: a
- * path on a drive through at least one folder (D:\agent\_work\1\s), a UNC share (\\server\share),
- * a home folder (/home/<name>, /Users/<name>, /root/). __FILE__, assertion texts and debug records
- * put the folder a binary was built in there, the builder's or a prior builder's, which the
- * needles of this build do not know. ALLOWED_BUILD_PATHS are left out.
+ * The folders of some machine that a program or library records, as narrow (ASCII or UTF-8) or
+ * UTF-16LE text, by name in any script: a path on a drive through at least one folder, a UNC
+ * share, a home folder, or another absolute POSIX path to a source file (recordedPathPattern).
+ * __FILE__, assertion texts and debug records put the folder a binary was built in there, the
+ * builder's or a prior builder's, which the needles of this build do not know. ALLOWED_BUILD_PATHS
+ * are left out. A path is given as text (UTF-8 decoded).
  */
 export function recordedBuildPaths(bytes: Uint8Array, allowed: readonly { path: string }[] = ALLOWED_BUILD_PATHS): string[] {
-  const texts = [Buffer.from(bytes).toString('latin1')]
+  const texts: [string, RegExp, (s: string) => string][] = [[Buffer.from(bytes).toString('latin1'), RECORDED_PATH_NARROW, (s) => Buffer.from(s, 'latin1').toString('utf8')]]
   for (const start of [0, 1]) {
-    // The code units of plain ASCII, one byte each; any other unit breaks a path.
-    const units = Buffer.alloc(Math.max(0, Math.floor((bytes.length - start) / 2)), 1)
-    for (let j = 0, i = start; j < units.length; j++, i += 2) if (bytes[i + 1] === 0 && bytes[i]! >= 0x20 && bytes[i]! < 0x7f) units[j] = bytes[i]!
-    texts.push(units.toString('latin1'))
+    // The code units of printable ASCII and of letters; any other unit breaks a path.
+    const units = new Uint16Array(Math.max(0, Math.floor((bytes.length - start) / 2)))
+    for (let j = 0, i = start; j < units.length; j++, i += 2) {
+      const u = bytes[i]! | (bytes[i + 1]! << 8)
+      units[j] = (u >= 0x20 && u < 0x7f) || isWideLetter(u) ? u : 1
+    }
+    texts.push([Buffer.from(units.buffer, units.byteOffset, units.byteLength).toString('utf16le'), RECORDED_PATH_WIDE, (s) => s])
   }
   const found = new Set<string>()
-  for (const text of texts) {
-    for (const m of text.matchAll(RECORDED_PATH)) {
+  for (const [text, pattern, decode] of texts) {
+    for (const m of text.matchAll(pattern)) {
       if (/^[A-Za-z]:/.test(m[0]) && (m[0].length < 8 || /[A-Za-z0-9]/.test(text[m.index - 1] ?? ''))) continue
-      found.add(m[0])
+      found.add(decode(m[0]))
     }
   }
   const fold = (p: string) => p.replace(/\\/g, '/').toLowerCase()

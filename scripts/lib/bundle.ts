@@ -13,6 +13,9 @@
 //   dependencies/<Name>/<file>      the source packages Orca's dependency build downloaded, each one
 //                                   checked against the SHA-256 that Orca's recipe pins (GMP and MPFR
 //                                   too: on Windows patch 0007 builds them from these with MinGW-w64)
+//   dependencies/BINARIES.txt       the binaries in those packages, found by their bytes at any depth,
+//                                   each with its licence and source (packagebins.ts)
+//   dependencies/LICENSES/          licence texts those binaries need that their packages lack
 //   LICENSES/                       the licence texts shipped with the engine
 //   BUILDING.md                     how to build the engine from this folder, with the pinned
 //                                   MinGW-w64 toolchain on Windows
@@ -23,9 +26,11 @@
 // Run again, it skips when its inputs are unchanged and every file matches SHA256SUMS.
 // --no-deps leaves the dependency packages out (they stay listed in bundle.json, with their URLs),
 // and the bundle then says it is not complete. A built dependency whose source is not pinned, a file
-// of the engine that is a binary of Orca's tree (its prebuilt GMP, say), and a binary the Orca
-// archive keeps stop the step, unless --allow-missing; bundle.json and BUILDING.md then say the
-// bundle is not complete.
+// of the engine that is a binary of Orca's tree (its prebuilt GMP, say), a binary the Orca archive
+// keeps (by its name or its bytes) and a binary of a package that PACKAGE_BINARIES does not name
+// stop the step, unless --allow-missing; bundle.json and BUILDING.md then say the bundle is not
+// complete. A package binary holding the builder's needles, or recording a folder its entry does
+// not name, stops it in any case.
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
@@ -38,6 +43,7 @@ import { firstExisting, gitCandidates, type Platform } from './env.ts'
 import { copyFile, hashTree, listFiles, nativePath, parseSha256Sums, sha256Bytes, sha256Sums, treeEntries, writeText } from './files.ts'
 import type { OrcaLock } from './lock.ts'
 import { MINGW_PACKAGES, MSYS2_BASE, type MingwPackage } from './mingw.ts'
+import { binariesNotice, binaryLicenseTexts, cachedInventory, checkPackageBinaries, describeUnit, INVENTORY_VERSION, inventoryPackage, PACKAGE_BINARIES, type KnownPackageBinary } from './packagebins.ts'
 import { sha256File, sha256Text, writeStamp } from './paths.ts'
 import { capture, Log, runLogged, StepError } from './run.ts'
 import { builderNeedles, builtDependencies, dependencySourceDir, privacyProblems, privacyProblemsIn, privacyRefusal, readManifest, USER_FOLDER_NEEDLES, verifyStaged, type EngineManifest, type StageCopy } from './stage.ts'
@@ -45,7 +51,7 @@ import { currentPlatform, findDepsTools } from './toolchain.ts'
 
 export const SOURCE_FORMAT = 'sketch-orca-source/1'
 /** Bump when the bundle's layout changes: a bundle of an older version is made again. */
-export const SOURCE_VERSION = 6
+export const SOURCE_VERSION = 7
 
 /**
  * The toolchain the engine has been built with, on Windows x64 (2026-10-30, 2026-11-01), as BUILDING.md (the
@@ -351,6 +357,8 @@ export interface BundleInfo {
     archives: { name: string; file: string; url: string; sha256: string; size: number }[]
     inTree: string[]
     missing: string[]
+    /** The binaries in the packages, each known (PACKAGE_BINARIES); dependencies/BINARIES.txt says what each is. Empty without the packages. */
+    binaries: { dependency: string; file: string; path: string; sha256: string; license: string; source: string }[]
   }
   /**
    * Build tools the pipeline fetches itself, pinned: on Windows the MSYS2 packages of the MinGW-w64
@@ -367,14 +375,18 @@ export interface BundleInfo {
  * the Orca archive keeps); `source` stops for them unless --allow-missing. `omitted`: the packages
  * --no-deps leaves out by choice; the bundle is then not complete either.
  */
-export function sourceGaps(o: { plan: DependencyPlan; withDeps: boolean; archivedBinaries?: string[]; shippedTreeBinaries?: string[] }): { missing: string[]; omitted: string[] } {
+export function sourceGaps(o: { plan: DependencyPlan; withDeps: boolean; archivedBinaries?: string[]; shippedTreeBinaries?: string[]; packageBinaries?: string[] }): { missing: string[]; omitted: string[] } {
   const { plan } = o
   const kept = o.archivedBinaries ?? []
   const shipped = o.shippedTreeBinaries ?? []
+  const unknown = o.packageBinaries ?? []
   const missing = [
     ...(plan.missing.length > 0 ? [`no pinned source package for the built dependencies ${plan.missing.join(', ')}; fetch them with build`] : []),
     ...(shipped.length > 0 ? [`the engine ships binaries of OrcaSlicer's tree, whose source the bundle does not have: ${shipped.join(', ')}; build them from their source packages (GMP and MPFR on Windows: -DDEP_MINGW_ROOT, patch 0007)`] : []),
     ...(kept.length > 0 ? [`the Orca archive keeps binaries whose source the bundle does not have: ${kept.join(', ')}; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts)`] : []),
+    ...(unknown.length > 0
+      ? [`the dependency packages hold binaries the bundle does not account for: ${unknown.join(', ')}; name each in PACKAGE_BINARIES (scripts/lib/packagebins.ts) with its licence and where its source is`]
+      : []),
   ]
   const leftOut = o.withDeps ? [] : [...new Set(plan.archives.map((a) => a.name))].sort()
   const omitted = leftOut.length > 0 ? [`the source packages of ${leftOut.join(', ')} are left out (--no-deps); bundle.json lists each one with its URL and SHA-256`] : []
@@ -422,6 +434,15 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
     ...((o.orcaExcluded ?? []).length > 0
       ? [
           `The OrcaSlicer archive leaves out binaries of its tree that this build does not use: ${(o.orcaExcluded ?? []).join(', ')}.`,
+          '',
+        ]
+      : []),
+    ...(o.withDeps
+      ? [
+          'The packages in dependencies/ are as their projects publish them. Some carry binaries beside',
+          'their source; the engine is built from none of them. dependencies/BINARIES.txt lists each one',
+          'with its licence and where its source is, and dependencies/LICENSES/ holds the licence texts',
+          'they need that their packages lack.',
           '',
         ]
       : []),
@@ -543,13 +564,21 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
 
 /**
  * The bundle's files that privacyProblems reads: all but the packages of others (Orca's archive and
- * dependencies/), which are as their projects publish them, each pinned (the locked commit, the
- * SHA-256 of each package), so that nothing of this build can be in them. The binaries the Orca
- * archive keeps, if any, are read apart (archivedPrivacyProblems).
+ * the packages in dependencies/), which are as their projects publish them, each pinned (the locked
+ * commit, the SHA-256 of each package), so that nothing of this build can be in them. The
+ * binaries the Orca archive keeps, if any, are read apart (archivedPrivacyProblems), and so are the
+ * binaries in the packages (packagebins.ts). dependencies/BINARIES.txt and dependencies/LICENSES/
+ * are the bundle's own.
  */
 export function ownBundleFiles(rels: string[]): string[] {
-  return rels.filter((rel) => !/^(orca|dependencies)\//.test(rel))
+  return rels.filter((rel) => !rel.startsWith('orca/') && (!rel.startsWith('dependencies/') || rel === BINARIES_NOTICE || rel.startsWith(`${BINARY_LICENSES}/`)))
 }
+
+/** The bundle's list of the binaries in its packages (packagebins.ts binariesNotice). */
+export const BINARIES_NOTICE = 'dependencies/BINARIES.txt'
+
+/** Where the bundle puts the licence texts the packages' binaries need and the packages lack. */
+export const BINARY_LICENSES = 'dependencies/LICENSES'
 
 /** The bundle's files whose lines marked PRIVACY_FIXTURE_MARK privacyProblems leaves out: the repository's own tests. */
 export function bundleFixtureFile(rel: string): boolean {
@@ -585,6 +614,47 @@ export function verifySums(dir: string): string[] {
     else if (sha256File(nativePath(dir, p)) !== hash) problems.push(`changed ${p}`)
   }
   return problems
+}
+
+/** What the binaries of the bundled packages come to (packagebins.ts), over every package. */
+export interface PackagesBinaries {
+  known: KnownPackageBinary[]
+  /** The units no entry names, described (describeUnit). */
+  unknown: string[]
+  personal: string[]
+  recorded: string[]
+}
+
+/**
+ * Every binary in `archives`, at any depth, against PACKAGE_BINARIES. Each package is read once
+ * and its inventory kept in `cacheFile` (cachedInventory). The needles are the builder's own: a
+ * package is upstream's, so the folders of other machines it records are its entries' to allow.
+ */
+export async function packageBinaries(
+  archives: DependencyArchive[],
+  cacheFile: string,
+  needles: string[],
+  platform: Platform,
+  log?: Log,
+  known: readonly KnownPackageBinary[] = PACKAGE_BINARIES,
+): Promise<PackagesBinaries> {
+  const out: PackagesBinaries = { known: [], unknown: [], personal: [], recorded: [] }
+  for (const a of archives) {
+    const started = Date.now()
+    let units
+    try {
+      units = await cachedInventory(cacheFile, a.path, a.sha256, needles, platform)
+    } catch (err) {
+      throw new StepError(`cannot read dependencies/${a.name}/${a.file} for its binaries: ${(err as Error).message}`)
+    }
+    const report = checkPackageBinaries(a.name, a.file, units, known)
+    out.known.push(...report.known.map((k) => k.entry))
+    out.unknown.push(...report.unknown.map((u) => `dependencies/${a.name}/${a.file}: ${describeUnit(u)}`))
+    out.personal.push(...report.personal)
+    out.recorded.push(...report.recorded)
+    if (units.length > 0) log?.line(`source: ${a.name}/${a.file} holds ${units.length} binaries or archives of them (${report.known.length} known; ${((Date.now() - started) / 1000).toFixed(1)} s)`)
+  }
+  return out
 }
 
 function findGit(platform: Platform): string {
@@ -644,7 +714,24 @@ export async function runSource(ctx: Context, log: Log): Promise<number> {
   const repository = repositoryFiles(git, ctx.engine.engine)
   const engineFiles = repository.files
   if (repository.commit === null) log.line(`source: ${ctx.engine.engine} is not a git checkout: every file in it but the local work folders goes in`)
-  const gaps = sourceGaps({ plan, withDeps, archivedBinaries: kept, shippedTreeBinaries: shipped })
+  // Every binary in the dependency packages, at any depth, by its bytes (packagebins.ts): known, with
+  // its licence and source, and recording none of this build's needles nor any folder its entry does
+  // not name.
+  const binaries = withDeps ? await packageBinaries(plan.archives, join(w.state, 'package-binaries.json'), needles, platform, log) : undefined
+  if (binaries && binaries.personal.length > 0) {
+    throw new StepError(
+      `binaries in the dependency packages hold what names the builder or the build machine, or cannot be read: ${binaries.personal.slice(0, 8).join('; ')}${binaries.personal.length > 8 ? `; and ${binaries.personal.length - 8} more` : ''}. Each package is pinned by its SHA-256, so the text is its project's: see which needle it is (a short user name, say), or leave the packages out (--no-deps)`,
+    )
+  }
+  if (binaries && binaries.recorded.length > 0) {
+    throw new StepError(
+      `binaries in the dependency packages record a machine's folder their entry does not name: ${binaries.recorded.slice(0, 8).join('; ')}${binaries.recorded.length > 8 ? `; and ${binaries.recorded.length - 8} more` : ''}. They ship as their projects publish them: name the folder in their entry in PACKAGE_BINARIES (scripts/lib/packagebins.ts), saying why, or leave the packages out (--no-deps)`,
+    )
+  }
+  const knownBinaries = binaries?.known ?? []
+  const binaryTexts = binaryLicenseTexts(knownBinaries)
+  for (const t of binaryTexts) if (!existsSync(join(ctx.engine.licenses, t))) throw new StepError(`PACKAGE_BINARIES names the licence text ${t}, which licenses/ does not have`)
+  const gaps = sourceGaps({ plan, withDeps, archivedBinaries: kept, shippedTreeBinaries: shipped, packageBinaries: binaries?.unknown })
   const { missing } = gaps
   // What the bundle lacks of complete corresponding source, also what --no-deps leaves out by choice.
   const incomplete = [...gaps.missing, ...gaps.omitted]
@@ -666,6 +753,9 @@ export async function runSource(ctx: Context, log: Log): Promise<number> {
       orcaExcluded,
       toolchain,
       incomplete,
+      inventory: INVENTORY_VERSION,
+      binaries: knownBinaries,
+      binaryTexts: binaryTexts.map((t) => [t, sha256File(join(ctx.engine.licenses, t))]),
     }),
   )
   const name = bundleName(m)
@@ -695,8 +785,19 @@ export async function runSource(ctx: Context, log: Log): Promise<number> {
   mkdirSync(join(tmp, 'orca'), { recursive: true })
   log.line(`source: archiving OrcaSlicer ${ctx.lock.tag} at ${ctx.lock.commit}`)
   await runLogged(git, ['-C', w.src, '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'archive', '--format=tar.gz', `--prefix=OrcaSlicer-${ctx.lock.tag}/`, '-o', archive, ctx.lock.commit, '--', ...excludePathspecs(orcaExcluded)], { log })
+  // The archive as written holds no binary by its bytes either, whatever its name (archivedBinaries goes by names).
+  const orcaUnits = await inventoryPackage(archive, needles, platform)
+  if (orcaUnits.length > 0) {
+    const kept = `the Orca archive keeps binaries whose source the bundle does not have: ${orcaUnits.map(describeUnit).join(', ')}; leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts)`
+    if (!allowMissing) throw new StepError(`${kept}; or pass --allow-missing`)
+    incomplete.push(kept)
+  }
   log.line(`source: copying ${copies.length} files${withDeps ? ` (${plan.archives.length} dependency packages, linked where the volume allows)` : ''}`)
   for (const c of copies) copyFile(c.from, nativePath(tmp, c.to), { link: c.to.startsWith('dependencies/') })
+  if (withDeps) {
+    writeText(join(tmp, BINARIES_NOTICE), binariesNotice(knownBinaries))
+    for (const t of binaryTexts) copyFile(join(ctx.engine.licenses, t), nativePath(tmp, `${BINARY_LICENSES}/${t}`))
+  }
   const patches = listPatches(ctx.engine.patches)
   writeText(join(tmp, 'BUILDING.md'), buildingText({ lock: ctx.lock, manifest: m, patches: patches.map((p) => p.name), plan, withDeps, orcaExcluded, incomplete }))
   const info: BundleInfo = {
@@ -716,6 +817,7 @@ export async function runSource(ctx: Context, log: Log): Promise<number> {
       archives: plan.archives.map((a) => ({ name: a.name, file: a.file, url: a.url, sha256: a.sha256, size: a.size })),
       inTree: plan.inTree,
       missing: plan.missing,
+      binaries: knownBinaries.map((e) => ({ dependency: e.dependency, file: e.file, path: e.path, sha256: e.sha256, license: e.license, source: e.source })),
     },
     toolchain,
     inputs,

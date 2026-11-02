@@ -73,7 +73,7 @@ bun run typecheck                      # tsc: type-check the scripts and tests
 | `build [--step deps\|orca] [--fresh]` | Applies `patches/`, builds Orca's dependencies without the GUI ones, then libslic3r and `sketch-orca` (Release, `SLIC3R_GUI=OFF`; on Windows with MSVC's static runtime, `/MT`). Fetches first when the checkout is missing or at another commit. The dependency build starts from an empty `deps/`, so each dependency is unpacked from its downloaded package, unless it resumes a stopped build of the same inputs (`state/deps-run.json`), which then does not count as fresh for `stage`; `--fresh` starts it over. It records its commit, the patches of `deps/` and a digest of the prefix it installed (`state/deps.json`). The engine is built only on such a build of the inputs there are now (also with `--step orca`), and the prefix must hash the same before and after Ninja. |
 | `smoke [--case <id,...>]` | Slices the test models with the built engine and checks the results (see Smoke). |
 | `stage [--without-smoke]` | The engine as it ships, in `<work>/dist/engine`, with a manifest. Only an engine that passed smoke is staged; `--without-smoke` stages a dev build and the manifest says so. |
-| `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. It takes the staged engine only when its manifest's `deps` are the dependency inputs `build` works out now, so the MinGW-w64 toolchain `bundle.json` names is the one that built GMP and MPFR. `--no-deps` leaves the dependency packages out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency has no pinned source, the Orca archive keeps a binary, or the engine ships a binary of Orca's tree (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
+| `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. It takes the staged engine only when its manifest's `deps` are the dependency inputs `build` works out now, so the MinGW-w64 toolchain `bundle.json` names is the one that built GMP and MPFR. `--no-deps` leaves the dependency packages out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency has no pinned source, the Orca archive keeps a binary, a dependency package holds a binary `PACKAGE_BINARIES` does not name, or the engine ships a binary of Orca's tree (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
 | `release [--offline] [--no-deps] [--allow-missing]` | `check`, `update` (only to a newer stable release), `fetch`, `build`, `smoke`, `stage` and `source`, in order, stopping at the first failure. `--offline` leaves out `check` and `update`. |
 | `env` | Prints the toolchain found and the cleaned build PATH. |
 
@@ -109,7 +109,7 @@ patches/         our changes to Orca's build (no GUI dependencies; the front end
                  applied in order with git apply
 cli/             the front end, sketch-orca (C++), built inside Orca's tree
 protocol/        the engine's command line and files: specification, JSON Schemas, examples (MIT)
-licenses/        licence texts we supply for dependencies whose packages lack them
+licenses/        licence texts we supply for dependencies and package binaries whose packages lack them
 scripts/         orca.ts and its modules in lib/
 test/            unit tests and their fixtures
 package.json     the scripts above and the development dependencies; bun.lock pins them
@@ -208,12 +208,18 @@ engine/                        this repository: lock, patches, cli, protocol, li
 dependencies/<Name>/<file>     the source packages Orca's dependency build downloaded, each
                                matched against the SHA-256 its recipe pins (GMP's and MPFR's
                                too, which patch 0007 builds on Windows)
+dependencies/BINARIES.txt      every binary in those packages (found by its bytes, in jars and
+                               archives inside them too), what it is, its licence and where its
+                               source is (PACKAGE_BINARIES, scripts/lib/packagebins.ts)
+dependencies/LICENSES/         licence texts those binaries need that their packages lack
+                               (CPL-1.0 for the JUnit jar in OpenCV's package)
 LICENSES/                      the staged engine's licences
 BUILDING.md                    how to build the engine from the bundle alone
 bundle.json                    sketch-orca-source/1: the engine it belongs to (its manifest's
                                SHA-256), this repository's commit, the lock, the patches, each package with URL and
-                               SHA-256, the libraries built from Orca's tree, and on
-                               Windows the pinned MinGW-w64 toolchain packages
+                               SHA-256, the binaries in the packages, the libraries built
+                               from Orca's tree, and on Windows the pinned MinGW-w64
+                               toolchain packages
 SHA256SUMS                     every other file (check with sha256sum -c SHA256SUMS)
 ```
 
@@ -260,7 +266,10 @@ it. Linux and macOS get no such flags (passing CFLAGS changes what GMP's configu
 release engines there with `SKETCH_ORCA_HOME` outside your home folder. Either way `stage` refuses
 an engine that still names your home folder or user name, and `source` a bundle whose own files
 (all but the packages of Orca and the dependencies) do, or whose binaries kept from Orca's archive
-record a person's or a machine's folder. This repository's tests hold made-up paths and addresses
+record a person's or a machine's folder. The binaries in the dependency packages (and in the jars
+and archives inside them) are read too: none may hold this build's needles, and the folders of
+other machines they record (a program database, an IDE's file) pass only when their entry in
+`PACKAGE_BINARIES` names them, pinned by the file's SHA-256. This repository's tests hold made-up paths and addresses
 on purpose; each declares them on its first line (`// privacy-fixtures:` and the strings), and
 only those strings, only in that file, are left out of the check, so a builder whose name or
 e-mail a test happens to use still gets a bundle.
