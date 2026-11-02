@@ -176,11 +176,25 @@ export function unpackArgs(archive: string, dir: string): string[] {
 }
 
 /**
+ * What MSYS2 writes into etc/ itself: its first login shell runs /etc/profile, whose post-install
+ * scripts (etc/post-install) make etc/mtab (03-mtab), copy Windows' hosts, protocols, services and
+ * networks (06-windows-files) and make pacman's keyring, etc/pacman.d/gnupg (07-pacman-key). The
+ * build runs bash with --noprofile --norc, so it makes none of them and reads none of them.
+ */
+export const MINGW_ETC_WRITTEN = ['etc/mtab', 'etc/hosts', 'etc/protocols', 'etc/services', 'etc/networks', 'etc/pacman.d/gnupg'] as const
+
+/**
  * The toolchain's files whose digest the stamp keeps: its programs and libraries (usr/ and
- * mingw64/), not what the MSYS2 runtime may write as it runs (tmp/, var/, dev/, etc/, home/).
+ * mingw64/) and its configuration (etc/), which the MSYS2 runtime reads as it starts: the mount
+ * table (etc/fstab and etc/fstab.d/, which could put another folder at /mingw64 or /usr/bin) and
+ * the user and group database (etc/nsswitch.conf, etc/passwd, etc/group). Not what MSYS2 writes
+ * itself (MINGW_ETC_WRITTEN), nor what it writes as it runs (tmp/, var/, dev/, home/) (sketch-orca,
+ * 2026-11-01).
  */
 export function mingwTreeFile(rel: string): boolean {
-  return rel === 'usr' || rel.startsWith('usr/') || rel === 'mingw64' || rel.startsWith('mingw64/')
+  const under = (dir: string) => rel === dir || rel.startsWith(`${dir}/`)
+  if (MINGW_ETC_WRITTEN.some(under)) return false
+  return under('usr') || under('mingw64') || under('etc')
 }
 
 /**

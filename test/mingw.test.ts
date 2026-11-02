@@ -12,6 +12,7 @@ import {
   MINGW_TOOLS,
   mingwPinProblems,
   mingwPinsDigest,
+  MINGW_ETC_WRITTEN,
   mingwRoot,
   mingwTreeFile,
   MSYS2_BASE,
@@ -81,9 +82,14 @@ describe('the pinned MinGW-w64 toolchain', () => {
     expect(windowsTar({ SystemRoot: 'S' })).toBe(join('S', 'System32', 'tar.exe'))
   })
 
-  test('mingwTreeFile: usr/ and mingw64/, not what MSYS2 writes as it runs', () => {
+  test('mingwTreeFile: usr/, mingw64/ and the configuration MSYS2 reads as it starts, not what it writes', () => {
     for (const rel of ['usr', 'usr/bin/bash.exe', 'mingw64', 'mingw64/bin/gcc.exe']) expect(mingwTreeFile(rel)).toBe(true)
-    for (const rel of ['tmp', 'tmp/x', 'var/lib/pacman', 'etc/fstab', 'home/u/.bash_history', 'dev', 'usrx', 'mingw64x/a']) expect(mingwTreeFile(rel)).toBe(false)
+    // The mount table (one in fstab.d could put another folder at /mingw64) and the user database.
+    for (const rel of ['etc', 'etc/fstab', 'etc/fstab.d', 'etc/fstab.d/builder', 'etc/nsswitch.conf', 'etc/passwd', 'etc/group', 'etc/profile', 'etc/pacman.d/mirrorlist.msys']) expect(mingwTreeFile(rel)).toBe(true)
+    for (const rel of ['tmp', 'tmp/x', 'var/lib/pacman', 'home/u/.bash_history', 'dev', 'usrx', 'mingw64x/a', 'etcx/fstab']) expect(mingwTreeFile(rel)).toBe(false)
+    // What MSYS2's first login shell writes into etc/, which the build's bash (--noprofile) neither writes nor reads.
+    for (const rel of [...MINGW_ETC_WRITTEN, 'etc/pacman.d/gnupg/pubring.gpg']) expect(mingwTreeFile(rel)).toBe(false)
+    expect(MINGW_ETC_WRITTEN).not.toContain('etc/fstab')
   })
 
   test('the tools and licences it names are in the packages it pins', () => {
@@ -161,6 +167,22 @@ describe('ensureMingw', () => {
     put(join(root, 'home', 'u', '.bash_history'), 'ls')
     expect(await ensureMingw(w, log, noFetch, join(dir, 'no-tar.exe'))).toBe(root)
     expect(readFileSync(log.path, 'utf8')).toContain('is the pinned toolchain; keeping it')
+  })
+
+  test('a mount added in etc/fstab.d since the unpack is a changed tree; what MSYS2 writes into etc/ itself is not', async () => {
+    const w = workPaths(join(dir, 'work'))
+    const root = mingwRoot(w)
+    tree(root)
+    put(join(root, 'etc', 'fstab'), 'none / cygdrive binary,posix=0,noacl,user 0 0\n')
+    writeStamp(w.state, 'mingw', mingwPinsDigest(), { root, treeDigest: hashTree(root, (rel) => mingwTreeFile(rel)) })
+    const log = new Log(join(dir, 'build.log'), true)
+    const noTar = join(dir, 'no-tar.exe')
+    put(join(root, 'etc', 'hosts'), '127.0.0.1 localhost\n')
+    put(join(root, 'etc', 'pacman.d', 'gnupg', 'pubring.gpg'), 'k')
+    expect(await ensureMingw(w, log, noFetch, noTar)).toBe(root)
+    put(join(root, 'etc', 'fstab.d', 'builder'), 'C:/elsewhere /mingw64 ntfs binary 0 0\n')
+    await expect(ensureMingw(w, log, noFetch, noTar)).rejects.toThrow(/not found/)
+    expect(readFileSync(log.path, 'utf8')).toContain('changed since it was unpacked; unpacking it again')
   })
 
   test('a changed tree, other pins or a missing tool: unpacked again, which needs tar', async () => {
