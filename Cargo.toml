@@ -1,0 +1,46 @@
+# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The Rust translation of sketch-orca: one Cargo workspace, built by `bun scripts/rust.ts` with
+# Rust 1.94.1 inside the pinned MSVC environment (BUILDING.md). Its program is crates/orca-cli's
+# sketch-orca-rs, a separate program from the C++ sketch-orca of cli/, under the same licence.
+# Every dependency is pinned exactly and declared here once; a crate takes it with
+# `workspace = true`. Changing a pin is a task of its own (CONTRIBUTING.md).
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+# Equal to package.json's version and cli/CMakeLists.txt's SKETCH_ORCA_VERSION (test/repo.test.ts).
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "AGPL-3.0-only"
+publish = false
+
+[workspace.dependencies]
+rayon = "=1.12.0"
+sha2 = "=0.11.1"
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_ErrorReporting",
+    "Win32_System_Threading",
+    "Win32_System_SystemInformation",
+] }
+
+orca-cli = { path = "crates/orca-cli" }
+orca-config = { path = "crates/orca-config" }
+orca-crt = { path = "crates/orca-crt" }
+orca-fmt = { path = "crates/orca-fmt" }
+orca-json = { path = "crates/orca-json" }
+orca-probe = { path = "crates/orca-probe" }
+orca-stl = { path = "crates/orca-stl" }
+orca-tbb = { path = "crates/orca-tbb" }
+
+# No target-cpu: the program runs on any x64 machine and must give the same bytes on all of them.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1

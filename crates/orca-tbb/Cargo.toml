@@ -1,0 +1,15 @@
+# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "orca-tbb"
+description = "oneTBB 2021.5.0's concurrency and partitioners as fixed split trees, run on rayon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rayon = { workspace = true }
+windows-sys = { workspace = true }

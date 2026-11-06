@@ -19,6 +19,8 @@ The engine has been built on Windows x64 with these; other versions may work, th
 - MSYS2 (base system of 2026-09-27) with the GCC 16.2.0 of its mingw64 environment (mingw-w64 14.0.0, binutils 2.47),
   which builds GMP and MPFR on Windows (patch 0007). You do not install it: `build` fetches its
   pinned packages and unpacks them into the work folder (see "GMP and MPFR on Windows").
+- Rust 1.94.1, for the Rust translation in `crates/` only (see "The Rust translation" below); the
+  engine does not need it.
 - Linux and macOS: a C and C++ compiler (gcc or clang), make, autoconf, automake, libtool, m4 and
   perl. The scripts have code paths for them, but they have not been tried yet.
 
@@ -67,6 +69,36 @@ the dependencies with `-DDEP_MSVC_STATIC_RUNTIME=ON` (patch 0005) and Orca with
 `-DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`, so neither the
 engine nor the DLLs it loads import a Visual C++ runtime DLL, and none is shipped. `stage` refuses
 an engine that does.
+
+## The Rust translation
+
+`crates/` (one Cargo workspace at the root, described in `README.md`) is built and tested apart
+from the engine, with Rust and the same Visual Studio environment:
+
+- Rust 1.94.1 (`rust-toolchain.toml`), target `x86_64-pc-windows-msvc`, with rustfmt and clippy,
+  installed by [rustup](https://rustup.rs) at user level (`rustup toolchain install 1.94.1
+  --profile minimal -c rustfmt -c clippy`). cargo and the rustup proxies are found in
+  `%CARGO_HOME%\bin` or `%USERPROFILE%\.cargo\bin`.
+- The environment of the Visual Studio above, pinned further than the engine's build pins it:
+  `vcvars64.bat 10.0.22000.0 -vcvars_ver=14.42.34433`, that is MSVC 14.42.34433 and Windows SDK
+  10.0.22000.0 of Visual Studio 17.12. The Rust program links the static C runtime (`+crt-static`,
+  `.cargo/config.toml`), so `link.exe` takes the same `libucrt.lib` the C++ engine links, and the
+  program imports no Visual C++ runtime DLL.
+- Dependencies from crates.io only, each pinned exactly in `Cargo.toml` (rayon, windows-sys, sha2)
+  and fixed by the committed `Cargo.lock`; every build is `--locked`.
+
+```
+bun run rs:build            # cargo build --locked, in the pinned environment
+bun run rs:test             # cargo test --locked
+bun run rs:clippy -- -D warnings
+bun run rs:fmt:check
+```
+
+`scripts/rust.ts` runs them and stops (exit 3) when the Visual Studio, MSVC, Windows SDK or rustc
+found is not the pinned one, naming which. A first build of a new dependency set fetches the crates
+from crates.io once: run `cargo generate-lockfile` (or `cargo update -p <crate>`) when a
+dependency pin changes, which is a task of its own (`CONTRIBUTING.md`), and commit `Cargo.lock`.
+Builds go to `target/`.
 
 ## OpenSSL
 

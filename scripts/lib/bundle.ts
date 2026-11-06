@@ -271,7 +271,7 @@ export function orcaArchiveName(lock: OrcaLock): string {
 }
 
 /** Top-level folders of the repository that hold local work, never source (.gitignore). */
-export const LOCAL_WORK_FOLDERS = ['work', 'dist', 'logs'] as const
+export const LOCAL_WORK_FOLDERS = ['work', 'dist', 'logs', 'target'] as const
 
 /**
  * Files of this repository that belong in the bundle (as engine/): all of it, apart from git's own

@@ -61,6 +61,7 @@ From the repository root, after `bun install`:
 bun run engine <command> [options]     # bun scripts/orca.ts <command>
 bun run test                           # bun test ./test: unit tests, no network, no builds
 bun run typecheck                      # tsc: type-check the scripts and tests
+bun run rs:build | rs:test | rs:clippy | rs:fmt:check   # the Rust translation (below)
 ```
 
 `BUILDING.md` lists the tools and versions the engine is built with.
@@ -94,6 +95,52 @@ system must make hard links). A record that cannot be read is never taken over, 
 `<work>/run.lock.d` by hand when no run is going. A run of an earlier pipeline that holds
 `<work>/run.lock` holds the folder too.
 
+## The Rust translation
+
+`crates/` is a translation of the front end and the parts of Orca's slicing library it reaches
+into Rust, built to give the same bytes as the C++ engine. It is a separate program from the same
+repository, under the same licence (AGPL-3.0-only): `sketch-orca-rs`, the binary of
+`crates/orca-cli`, which speaks the same command line and files (`protocol/`) as the C++
+`sketch-orca` of `cli/` and runs beside it. The C++ engine is unchanged and stays what ships until
+the translation covers the whole protocol. Today `sketch-orca-rs` is the scaffold: it prints the
+usage, with the message "no command", and exits with -2, as `cli/main.cpp` does with no command.
+
+One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
+`.cargo/config.toml`, `rustfmt.toml`, `clippy.toml`). Its crates, each with a README of its own:
+
+| Crate | What it is |
+| --- | --- |
+| `orca-crt` | The static UCRT's maths functions, float-to-integer conversions and `rand`, called as the C++ engine calls them. |
+| `orca-fmt` | `printf`, `to_chars`, `iostream` double output and number parsing, with the C++ engine's digits. |
+| `orca-stl` | The C++ standard library's sorts, selections, heaps, `min` and `max`, hash containers and `mt19937`, in Microsoft's order of operations. |
+| `orca-tbb` | oneTBB's concurrency and partitioners as fixed split trees, run on rayon. |
+| `orca-probe` | Reads the probe files (SOP1) the oracle records, for the gate that holds the crates above to the C++ engine. |
+| `orca-json` | JSON with `nlohmann::json`'s semantics. |
+| `orca-config` | Orca's configuration: the definition of every setting, legacy keys, serialisation. |
+| `orca-cli` | The program, `sketch-orca-rs`. |
+
+The Rust scripts run cargo with `--locked`, inside the environment of the same Visual Studio the
+C++ engine is built in, so `link.exe` takes the same static `libucrt` (`BUILDING.md`):
+
+```
+bun run rs:build                       # bun scripts/rust.ts build: cargo build --locked
+bun run rs:test                        # cargo test --locked
+bun run rs:clippy -- -D warnings       # cargo clippy --locked --all-targets -- -D warnings
+bun run rs:fmt:check                   # cargo fmt --all --check
+bun scripts/rust.ts <build|test|clippy|fmt> [args]   # the same with other arguments
+```
+
+`scripts/rust.ts` refuses a Visual Studio, MSVC or Windows SDK other than the pinned ones, any
+rustc other than 1.94.1, `+toolchain`, another `--target`, `--manifest-path`, and drops the
+caller's `RUSTFLAGS` and the other variables that steer cargo (exit 3 or 64). Bun can hand a
+script its arguments without the `--` that separated them; the runner puts it back before clippy's
+lint flags (`-D`, `-W`, `-A`) and test's libtest options (`--nocapture` and the rest). Builds go to
+`target/`, which `.gitignore` and the source bundle leave out, and a cargo run is stopped after 45
+minutes (`SKETCH_ORCA_RUST_TIMEOUT_MS`).
+`bun run test` checks the runner's argument handling and refusals without running cargo.
+
+The rules for Rust code, `clippy.toml` among them, are in `CONTRIBUTING.md`.
+
 ## Where things go
 
 The repository:
@@ -108,9 +155,11 @@ orca.lock.json   the OrcaSlicer release we build: repo, tag, commit, version, pu
 patches/         our changes to Orca's build (no GUI dependencies; the front end in Orca's tree),
                  applied in order with git apply
 cli/             the front end, sketch-orca (C++), built inside Orca's tree
+crates/          the Rust translation: the crates of one Cargo workspace (Cargo.toml, Cargo.lock,
+                 rust-toolchain.toml, .cargo/, rustfmt.toml and clippy.toml are in the root)
 protocol/        the engine's command line and files: specification, JSON Schemas, examples (MIT)
 licenses/        licence texts we supply for dependencies and package binaries whose packages lack them
-scripts/         orca.ts and its modules in lib/
+scripts/         orca.ts and its modules in lib/; rust.ts, the cargo runner, and lib/rust.ts
 test/            unit tests and their fixtures
 package.json     the scripts above and the development dependencies; bun.lock pins them
 ```

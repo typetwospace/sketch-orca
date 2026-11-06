@@ -1,0 +1,13 @@
+# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "orca-probe"
+description = "Reads the SOP1 probe files the oracle records, for the probe gate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

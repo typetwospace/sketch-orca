@@ -9,7 +9,11 @@
   "scripts": {
     "engine": "bun scripts/orca.ts",
     "test": "bun test ./test",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "rs:build": "bun scripts/rust.ts build",
+    "rs:test": "bun scripts/rust.ts test",
+    "rs:clippy": "bun scripts/rust.ts clippy",
+    "rs:fmt:check": "bun scripts/rust.ts fmt --check"
   },
   "devDependencies": {
     "@types/bun": "1.2.15",

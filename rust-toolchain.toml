@@ -1,0 +1,5 @@
+# Rust 1.94.1, the version sketch-native pins. scripts/rust.ts refuses any other rustc.
+[toolchain]
+channel = "1.94.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

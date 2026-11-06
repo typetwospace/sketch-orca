@@ -35,6 +35,29 @@ const HEADER = [
   '// (LICENSE) for more details.',
 ]
 
+/**
+ * What is wrong with the "Carries <project> code" blocks of a source file of the Rust translation
+ * (crates/) or of the oracle (parity/oracle/): each must be dated, name the source files the code
+ * is from, say whose copyright it is, and name its licence. A file that says it translates,
+ * ports, copies, derives or adapts "from" something and has no block at all is a problem too.
+ */
+export function carriesProblems(file: string, text: string): string[] {
+  const problems: string[] = []
+  const blocks = [...text.matchAll(/Carries ([A-Z][A-Za-z0-9+.\-]*(?: [A-Za-z0-9+.\-]+)*?) code/g)]
+  for (const m of blocks) {
+    const project = m[1]!
+    const block = text.slice(m.index, m.index! + 1500).replace(/\n(\/\/[/!]?|#|\*) ?/g, ' ')
+    const sentence = block.slice(0, block.indexOf('\n') >= 0 ? block.indexOf('\n') : block.length)
+    if (!/20\d\d-\d\d-\d\d/.test(sentence)) problems.push(`${file}: the "Carries ${project} code" block has no date`)
+    // A file name (parser.cpp) or a path in the source tree (stl/inc/algorithm; MSVC's STL headers have no extension).
+    if (!/[\w.\-]+\.(cpp|hpp|h|c|cc|cxx|inl|ipp)\b|[\w.\-]+(\/[\w.\-]+)+/.test(sentence)) problems.push(`${file}: the "Carries ${project} code" block names no source file`)
+    if (!/\b(copyright|copyrights|holders?)\b/i.test(sentence)) problems.push(`${file}: the "Carries ${project} code" block does not say whose copyright it is`)
+    if (!/\b(AGPL|LGPL|GPL|Apache|BSL-1\.0|Boost Software|MPL|Mozilla|MIT|BSD|zlib|Qhull|Unlicense)/.test(sentence)) problems.push(`${file}: the "Carries ${project} code" block does not name the licence`)
+  }
+  if (blocks.length === 0 && /\b(translated|ported|copied|derived|adapted) from\b/i.test(text)) problems.push(`${file}: says it is from other code and has no "Carries <project> code" block`)
+  return problems
+}
+
 describe('the repository', () => {
   test("LICENSE is OrcaSlicer's LICENSE.txt, byte for byte (the GNU AGPL, version 3)", () => {
     const bytes = readFileSync(join(ROOT, 'LICENSE'))
@@ -42,13 +65,56 @@ describe('the repository', () => {
     expect(bytes.toString('utf8')).toStartWith('                    GNU AFFERO GENERAL PUBLIC LICENSE\n                       Version 3, 19 November 2007\n')
   })
 
-  test('package.json: sketch-orca under AGPL-3.0-only, its three scripts, pinned tools', () => {
+  test('package.json: sketch-orca under AGPL-3.0-only, its seven scripts, pinned tools', () => {
     const pkg = JSON.parse(read('package.json'))
     expect(pkg).toMatchObject({ name: 'sketch-orca', license: 'AGPL-3.0-only', private: true, type: 'module', packageManager: `bun@${BUILT_WITH.bun}` })
-    expect(pkg.scripts).toEqual({ engine: 'bun scripts/orca.ts', test: 'bun test ./test', typecheck: 'tsc -p tsconfig.json' })
+    expect(pkg.scripts).toEqual({
+      engine: 'bun scripts/orca.ts',
+      test: 'bun test ./test',
+      typecheck: 'tsc -p tsconfig.json',
+      'rs:build': 'bun scripts/rust.ts build',
+      'rs:test': 'bun scripts/rust.ts test',
+      'rs:clippy': 'bun scripts/rust.ts clippy',
+      'rs:fmt:check': 'bun scripts/rust.ts fmt --check',
+    })
     for (const [name, version] of Object.entries(pkg.devDependencies as Record<string, string>)) expect({ name, version }).toEqual({ name, version: expect.stringMatching(/^\d+\.\d+\.\d+$/) })
     expect(read('cli/CMakeLists.txt')).toContain(`set(SKETCH_ORCA_VERSION "${pkg.version}")`)
     expect(read('bun.lock')).toContain('"name": "sketch-orca"')
+  })
+
+  test("Cargo.toml's workspace version is package.json's, as cli/CMakeLists.txt's is", () => {
+    const cargo = read('Cargo.toml')
+    const section = cargo.slice(cargo.indexOf('[workspace.package]')).split(/\n\[/)[0]!
+    expect(/^version = "([^"]+)"$/m.exec(section)?.[1]).toBe(JSON.parse(read('package.json')).version)
+    // Every crate takes the workspace's version, edition, licence and publish setting.
+    for (const toml of repoFiles().filter((f) => /^crates\/[^/]+\/Cargo\.toml$/.test(f)))
+      for (const key of ['version', 'edition', 'rust-version', 'license', 'publish']) expect({ toml, key, found: read(toml).includes(`${key}.workspace = true`) }).toEqual({ toml, key, found: true })
+  })
+
+  test('every Rust file of crates/ and every C++ file of parity/oracle/ starts with the copyright and licence header', () => {
+    const rust = repoFiles().filter((f) => f.startsWith('crates/') && f.endsWith('.rs'))
+    expect(rust.length).toBeGreaterThanOrEqual(8)
+    const oracle = repoFiles().filter((f) => f.startsWith('parity/oracle/') && /\.(cpp|hpp)$/.test(f))
+    for (const f of [...rust, ...oracle]) expect({ f, head: read(f).split('\n').slice(0, HEADER.length) }).toEqual({ f, head: HEADER })
+  })
+
+  test('every file of the Rust translation and the oracle that carries third-party code has a dated "Carries <project> code" block', () => {
+    const files = repoFiles().filter((f) => (f.startsWith('crates/') && f.endsWith('.rs')) || (f.startsWith('parity/') && /\.(cpp|hpp|h|rs)$/.test(f)))
+    expect(files.length).toBeGreaterThan(0)
+    expect(files.flatMap((f) => carriesProblems(f, read(f)))).toEqual([])
+  })
+
+  test('the Carries check finds a block without a date, a source file, the holders or the licence, and a file that is from other code without one', () => {
+    const good =
+      '// Carries Microsoft STL code: sort is translated from stl/inc/algorithm (the introsort loop), copied\n// as is, so its copyright is Microsoft Corporation\'s, under Apache-2.0 WITH LLVM-exception. Added\n// 2026-11-06.\n'
+    expect(carriesProblems('a.rs', good)).toEqual([])
+    expect(carriesProblems('a.rs', good.replace('2026-11-06', 'today'))).toEqual(['a.rs: the "Carries Microsoft STL code" block has no date'])
+    expect(carriesProblems('a.rs', good.replace('stl/inc/algorithm', 'the introsort'))).toEqual(['a.rs: the "Carries Microsoft STL code" block names no source file'])
+    expect(carriesProblems('a.rs', good.replace("so its copyright is Microsoft Corporation's, under", 'under'))).toEqual(['a.rs: the "Carries Microsoft STL code" block does not say whose copyright it is'])
+    expect(carriesProblems('a.rs', good.replace('Apache-2.0 WITH LLVM-exception', 'its own terms'))).toEqual(['a.rs: the "Carries Microsoft STL code" block does not name the licence'])
+    expect(carriesProblems('a.rs', '// ported from oneTBB\nfn x() {}\n')).toEqual(['a.rs: says it is from other code and has no "Carries <project> code" block'])
+    expect(carriesProblems('a.rs', 'fn x() {}\n')).toEqual([])
+    expect(carriesProblems('a.rs', '// Carries Eigen code: nothing\n')).toHaveLength(4)
   })
 
   test('.gitattributes keeps every file as committed', () => {

@@ -1,0 +1,26 @@
+# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "orca-cli"
+description = "The Rust program, sketch-orca-rs: sketch-orca's commands, intake, declines and crash result"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "sketch-orca-rs"
+path = "src/main.rs"
+
+[dependencies]
+orca-crt = { workspace = true }
+orca-fmt = { workspace = true }
+orca-stl = { workspace = true }
+orca-tbb = { workspace = true }
+orca-probe = { workspace = true }
+orca-json = { workspace = true }
+orca-config = { workspace = true }
+sha2 = { workspace = true }
+windows-sys = { workspace = true }

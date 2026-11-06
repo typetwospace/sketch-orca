@@ -1,0 +1,4 @@
+# The C runtime is linked statically, as the C++ engine links it (/MT): the program imports no
+# Visual C++ runtime DLL, and its libucrt is the one the C++ engine's maths comes from.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

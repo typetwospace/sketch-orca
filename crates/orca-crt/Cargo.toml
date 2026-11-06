@@ -1,0 +1,13 @@
+# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "orca-crt"
+description = "The C runtime the C++ engine links, called as it is: maths, float-to-integer conversions, rand"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]

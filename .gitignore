@@ -6,6 +6,7 @@ node_modules/
 /work/
 /dist/
 /logs/
+/target/
 *.log
 
 # Editor and system litter
