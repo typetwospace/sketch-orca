@@ -10,17 +10,35 @@
 
 //! The C runtime the C++ engine links, called as it is: maths, float-to-integer conversions, rand.
 //!
-//! The home of every call into the static UCRT that the C++ engine makes: one `#[inline(never)]`
-//! wrapper per maths function (`sin`, `cos`, `pow`, `exp`, and the rest, for `double` and for
-//! `float`), MSVC's float-to-integer conversions, and `rand` and `srand` with the UCRT's per-thread
-//! state.
+//! The home of every call into the static UCRT that the C++ engine makes:
+//!
+//! - [`math`]: one `#[inline(never)]` wrapper per maths function (`sin`, `cos`, `pow`, `exp`, and
+//!   the rest, for `double` and for `float`), re-exported here, so engine code calls
+//!   `orca_crt::sin(x)` where the C++ calls `std::sin(x)`. `sqrt`, `fabs` and `copysignf` stay the
+//!   IEEE operations MSVC compiles them to.
+//! - [`convert`]: MSVC 14.42's float-to-integer conversions for every integer width, with
+//!   `cvttsd2si`'s indefinite value for NaN and out-of-range input and the unsigned sequences.
+//! - [`rand`]: `rand` and `srand`, the UCRT's generator with its per-thread state.
 //!
 //! The crate is `#![no_builtins]`, so the compiler cannot replace a call with its own
 //! implementation or fold it into a constant: the answer is the one the C++ program gets from the
 //! same `libucrt.lib`. The maths itself is never translated, because the UCRT's source is not open;
 //! the wrappers call into the library the Rust program links statically (`.cargo/config.toml`).
+//! The conversions and the generator are written here from what MSVC's code and the UCRT do,
+//! and `tests/crt.rs` holds them to it.
 
 #![no_builtins]
+
+pub mod convert;
+pub mod math;
+pub mod rand;
+
+pub use convert::{
+    f32_to_i8, f32_to_i16, f32_to_i32, f32_to_i64, f32_to_u8, f32_to_u16, f32_to_u32, f32_to_u64,
+    f64_to_i8, f64_to_i16, f64_to_i32, f64_to_i64, f64_to_u8, f64_to_u16, f64_to_u32, f64_to_u64,
+};
+pub use math::*;
+pub use rand::{RAND_MAX, rand, srand};
 
 /// The crate's name, as Cargo has it.
 pub const NAME: &str = "orca-crt";

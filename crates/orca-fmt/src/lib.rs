@@ -8,14 +8,41 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
 // (LICENSE) for more details.
 
-//! printf, to_chars, iostream double output and strtod, stod and from_chars parsing, as the C++ engine gets them.
+//! Number formatting and parsing with the bytes the C++ engine's runtime gives: MSVC 14.42's
+//! standard library and the static UCRT, in the "C" locale the engine runs in.
 //!
-//! Number formatting and parsing that gives the digits the C++ engine's runtime gives: `printf`
-//! written from the C standard, the standard library's shortest round-trip `to_chars` (Ryu), the
-//! default and fixed `iostream` double output, and `strtod`, `stod` and `from_chars` parsing.
+//! - [`printf`]: `sprintf`, `snprintf` and `sprintf_s`, written from the C standard with the
+//!   UCRT's choices, compared byte for byte with the UCRT in `tests/fmt.rs`.
+//! - [`to_chars`]: microsoft/STL's `std::to_chars` (Ryu for the shortest form, Ryu printf for the
+//!   precision forms).
+//! - [`ostream`]: microsoft/STL's `std::ostream << double` (`num_put`), and
+//!   `std::to_string(double)`.
+//! - [`parse`]: microsoft/STL's `std::from_chars`; `strtod`, `strtof`, `strtol` and their family,
+//!   written from the C standard around it with the UCRT's choices; and the STL's `std::stod`,
+//!   `stof`, `stoi` and the rest.
 //!
-//! Each function is tested against the C++ oracle through the probes (`orca-probe`) and against the
-//! UCRT itself.
+//! The modules that carry the STL's code say what they carry, and from where, in their `Carries`
+//! blocks.
+//!
+//! Engine crates format and parse numbers only through this crate: Rust's `format!("{}")` and
+//! `str::parse` are not the C++ runtime's.
+
+mod charconv_tables;
+pub mod ostream;
+pub mod parse;
+pub mod printf;
+pub mod to_chars;
+
+/// The `std::errc` values that `to_chars` and `from_chars` report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Errc {
+    /// `errc::invalid_argument`: no number at the start of the input.
+    InvalidArgument,
+    /// `errc::result_out_of_range`: the number does not fit the type.
+    ResultOutOfRange,
+    /// `errc::value_too_large`: the output buffer is too short.
+    ValueTooLarge,
+}
 
 /// The crate's name, as Cargo has it.
 pub const NAME: &str = "orca-fmt";
