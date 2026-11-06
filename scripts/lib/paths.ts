@@ -28,6 +28,9 @@ export function workHome(env: NodeJS.ProcessEnv, platform: Platform, home = home
  */
 export const WINDOWS_WORK_PATH_MAX = 259 - 1 - 183 - 10
 
+/** How deep below the work folder `build` writes, which WINDOWS_WORK_PATH_MAX keeps free: 183 characters. */
+export const WINDOWS_WORK_DEPTH = 259 - 1 - 10 - WINDOWS_WORK_PATH_MAX
+
 /** Why `build` cannot work in the work folder `home` (WINDOWS_WORK_PATH_MAX), or undefined. */
 export function workPathProblem(home: string, platform: Platform): string | undefined {
   if (platform !== 'win32' || home.length <= WINDOWS_WORK_PATH_MAX) return undefined
@@ -73,6 +76,75 @@ export function workPaths(home: string): WorkPaths {
     state: join(home, 'state'),
     smoke: join(home, 'smoke'),
   }
+}
+
+/**
+ * The folders of the parity harness (scripts/lib/parity/, parity/README.md) in the work folder:
+ * parity/ holds what the harness downloads, records and compares, oracle/ the oracle's checkout,
+ * build and staged copy (a separate C++ build that never ships).
+ */
+export interface ParityPaths {
+  /** <work>/parity */
+  parity: string
+  /** Published engines unpacked, one folder per version (parity reference). */
+  reference: string
+  corpus: string
+  goldens: string
+  /** One folder per comparison run (parity same: runs/same). */
+  runs: string
+  probes: string
+  /** The shipped engine's own run-to-run variance. */
+  envelope: string
+  /** <work>/oracle */
+  oracle: string
+  oracleSrc: string
+  oracleBuild: string
+  oracleDist: string
+}
+
+export function parityPaths(work: Pick<WorkPaths, 'home'>): ParityPaths {
+  const parity = join(work.home, 'parity')
+  const oracle = join(work.home, 'oracle')
+  return {
+    parity,
+    reference: join(parity, 'reference'),
+    corpus: join(parity, 'corpus'),
+    goldens: join(parity, 'goldens'),
+    runs: join(parity, 'runs'),
+    probes: join(parity, 'probes'),
+    envelope: join(parity, 'envelope'),
+    oracle,
+    oracleSrc: join(oracle, 'src'),
+    oracleBuild: join(oracle, 'build'),
+    oracleDist: join(oracle, 'dist'),
+  }
+}
+
+/**
+ * How deep the harness writes below each folder of parityPaths: an unpacked engine's deepest file
+ * at OrcaSlicer 2.4.2 is 113 characters below its folder (resources/profiles/iQ/process/...), the
+ * deepest file of Orca's own build 100 below build/, and Orca's temporary files in a smoke run 81
+ * below the run's folder; 150 leaves room for a version folder or a run's name above them.
+ */
+export const PARITY_FOLDER_DEPTH = 150
+
+/**
+ * Each parity folder counts against WINDOWS_WORK_PATH_MAX: its place below the work folder plus
+ * PARITY_FOLDER_DEPTH must fit in the WINDOWS_WORK_DEPTH that `build` already keeps free below it,
+ * so a work folder `build` takes is one the harness can work in. Returns why not (Windows only),
+ * or undefined. The work folder's own length is workPathProblem's to check.
+ */
+export function parityPathProblem(paths: ParityPaths, home: string, platform: Platform): string | undefined {
+  if (platform !== 'win32') return undefined
+  const long = workPathProblem(home, platform)
+  if (long) return long
+  for (const [name, folder] of Object.entries(paths) as [keyof ParityPaths, string][]) {
+    const below = folder.length - home.length
+    if (!folder.startsWith(home) || below + 1 + PARITY_FOLDER_DEPTH > WINDOWS_WORK_DEPTH) {
+      return `the parity folder ${name} (${folder}) leaves no room for files ${PARITY_FOLDER_DEPTH} characters below it within the ${WINDOWS_WORK_DEPTH} characters the work folder keeps free`
+    }
+  }
+  return undefined
 }
 
 /** Repository paths, from this file's location (`scripts/lib/paths.ts`): `engineDir` is the repository root. */

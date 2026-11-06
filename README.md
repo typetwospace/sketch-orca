@@ -71,17 +71,21 @@ bun run rs:build | rs:test | rs:clippy | rs:fmt:check   # the Rust translation (
 | `check` | Asks GitHub for the latest stable OrcaSlicer release and compares it with `orca.lock.json`. Exit 0: nothing to do (the lock is the latest release, or newer); 1: a newer stable release is out; 2: the locked tag now points at another commit; 3: the check failed. |
 | `update [--write]` | Moves the lock to a newer stable release; without `--write` it prints the new lock. It never moves the lock back, or onto a moved tag (exit 2). |
 | `fetch` | Shallow clone of the locked tag into `<work>/src`; the commit must be the lock's. |
-| `build [--step deps\|orca] [--fresh]` | Applies `patches/`, builds Orca's dependencies without the GUI ones, then libslic3r and `sketch-orca` (Release, `SLIC3R_GUI=OFF`; on Windows with MSVC's static runtime, `/MT`). Fetches first when the checkout is missing or at another commit. The dependency build starts from an empty `deps/`, so each dependency is unpacked from its downloaded package, unless it resumes a stopped build of the same inputs (`state/deps-run.json`), which then does not count as fresh for `stage`; `--fresh` starts it over. It records its commit, the patches of `deps/` and a digest of the prefix it installed (`state/deps.json`). The engine is built only on such a build of the inputs there are now (also with `--step orca`), and the prefix must hash the same before and after Ninja. |
+| `build [--step deps\|orca] [--fresh]` | Applies `patches/`, builds Orca's dependencies without the GUI ones, then libslic3r and `sketch-orca` (Release, `SLIC3R_GUI=OFF`; on Windows with MSVC's static runtime, `/MT`). Fetches first when the checkout is missing or at another commit. The dependency build starts from an empty `deps/`, so each dependency is unpacked from its downloaded package, unless it resumes a stopped build of the same inputs (`state/deps-run.json`), which then does not count as fresh for `stage`; `--fresh` starts it over. It records its commit, the patches of `deps/` and a digest of the prefix it installed (`state/deps.json`). The engine is built only on such a build of the inputs there are now (also with `--step orca`), and the prefix must hash the same before and after Ninja. A `build/` configured against another dependency build is started over (`state/orca-deps.json`), since CMake's cache would keep the libraries the earlier prefix had. |
 | `smoke [--case <id,...>]` | Slices the test models with the built engine and checks the results (see Smoke). |
 | `stage [--without-smoke]` | The engine as it ships, in `<work>/dist/engine`, with a manifest. Only an engine that passed smoke is staged; `--without-smoke` stages a dev build and the manifest says so. |
 | `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. It takes the staged engine only when its manifest's `deps` are the dependency inputs `build` works out now, so the MinGW-w64 toolchain `bundle.json` names is the one that built GMP and MPFR. `--no-deps` leaves the dependency packages out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency has no pinned source, the Orca archive keeps a binary, a dependency package holds a binary `PACKAGE_BINARIES` does not name, or the engine ships a binary of Orca's tree (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
 | `release [--offline] [--no-deps] [--allow-missing]` | `check`, `update` (only to a newer stable release), `fetch`, `build`, `smoke`, `stage` and `source`, in order, stopping at the first failure. `--offline` leaves out `check` and `update`. |
 | `env` | Prints the toolchain found and the cleaned build PATH. |
+| `parity <command> [options]` | The parity harness, which holds the Rust translation to the C++ engine (`parity/README.md`). Each command is a module, `scripts/lib/parity/cmd-<name>.ts`; `parity --help` lists them. So far: `parity reference` downloads the published 0.1.0 engine zip (never the source zip), checks it against the release's `SHA256SUMS` and unpacks it to `<work>/parity/reference/0.1.0`; `parity same` runs that reference and the engine staged from this checkout on every smoke case's jobs, in the environment a client gives the engine, and writes `<work>/parity/same.json`, with each output identical, identical after `parity/masks.json`, or different. Both hold the run lock and log to `<work>/logs/parity-<name>.log`. |
 
 `release` is the workflow for a new engine. After a failure, fix the cause and run it again: the
 finished steps skip. When a newer release is out it rewrites `orca.lock.json` in the repository;
 committing that change is up to you. Nothing is committed, pushed or uploaded by these commands.
-Every command but `env` logs to `<work>/logs/<command>.log`.
+Every command but `env` logs to `<work>/logs/<command>.log`. No command opens a window or starts
+Visual Studio's IDE: on Windows `build` configures every dependency so that no CMake check runs
+`devenv.exe`, and fails when a Fortran project for Visual Studio appears in its build folders
+(`BUILDING.md`, "No window, no IDE").
 
 Exit codes (`EXIT` in `scripts/lib/run.ts`): 0 when the command did its work; `check` also exits 1
 (a newer stable release is out) and 2 (the locked tag moved), and `update` and `release` stop with
@@ -159,7 +163,9 @@ crates/          the Rust translation: the crates of one Cargo workspace (Cargo.
                  rust-toolchain.toml, .cargo/, rustfmt.toml and clippy.toml are in the root)
 protocol/        the engine's command line and files: specification, JSON Schemas, examples (MIT)
 licenses/        licence texts we supply for dependencies and package binaries whose packages lack them
-scripts/         orca.ts and its modules in lib/; rust.ts, the cargo runner, and lib/rust.ts
+parity/          the parity harness's committed data (masks.json) and its README
+scripts/         orca.ts and its modules in lib/ (the parity harness in lib/parity/); rust.ts, the
+                 cargo runner, and lib/rust.ts
 test/            unit tests and their fixtures
 package.json     the scripts above and the development dependencies; bun.lock pins them
 ```
@@ -181,6 +187,9 @@ build/          Orca's build; the engine is build/sketch-orca/sketch-orca(.exe)
 smoke/          the smoke run: presets, one folder per case, report.json
 dist/engine/    the staged engine
 dist/source/    the source bundle
+parity/         the parity harness: published references, corpus, goldens, runs, probes, the
+                envelope and same.json (parity/README.md lists them)
+oracle/         the parity oracle's checkout, build and staged copy (a C++ build that never ships)
 logs/           one log per command
 state/          what each step last did, and from which inputs
 run.lock.d/     the lock; its newest record: the command that writes, its process id and start time

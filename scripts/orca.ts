@@ -21,15 +21,19 @@
 //                    check, update (only to a newer stable release), fetch, build, smoke, stage
 //                    and source, stopping at the first failure
 //   env              prints the toolchain and the cleaned build PATH
+//   parity <name> [options]
+//                    the parity harness (scripts/lib/parity/, parity/README.md): runs
+//                    scripts/lib/parity/cmd-<name>.ts; `parity --help` lists the commands there are
 //
 // Exit codes: 0 done; check also 1 (a newer stable release is out) and 2 (the locked tag moved),
 // and update and release stop with 2 when the tag moved; 3 the command failed; 64 a command line
 // the pipeline does not take (run.ts, EXIT).
 //
 // Work folder: %LOCALAPPDATA%\SketchDev\orca-engine (SKETCH_ORCA_HOME overrides). Every command
-// but env logs to <work>/logs/<command>.log, and each skips what is already done and verified. The
-// commands that write there hold <work>/run.lock.d, so only one of them runs at a time. It runs
-// locally; there is no CI job.
+// but env logs to <work>/logs/<command>.log (a parity command to logs/parity-<name>.log), and each
+// skips what is already done and verified. The commands that write there hold <work>/run.lock.d, so
+// only one of them runs at a time; a parity command holds it when its module says it is locked. It
+// runs locally; there is no CI job.
 
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -42,6 +46,8 @@ import { hashTree } from './lib/files.ts'
 import { githubGetter, resolveLatestRelease } from './lib/github.ts'
 import { compareLock, lockForRelease, readLock, releaseDecision, serializeLock, writeLock, type OrcaLock, type ReleaseDecision } from './lib/lock.ts'
 import { ensureMingw } from './lib/mingw.ts'
+import { assertNoIdeProjects } from './lib/noide.ts'
+import { runParity } from './lib/parity/dispatch.ts'
 import { depsStampProblems, enginePaths, readStamp, sha256File, sha256Text, workHome, workPathProblem, workPaths, writeStamp, type DepsRecord, type WorkPaths } from './lib/paths.ts'
 import { runSteps, stepArgs, type ReleaseStep } from './lib/release.ts'
 import { EXIT, Log, runLogged, StepError, UsageError } from './lib/run.ts'
@@ -137,10 +143,13 @@ function compilerEnv(t: Toolchain, w: WorkPaths): Record<string, string> {
 /**
  * The environment of a build step. CMake runs inside the work folder, and git may not look above
  * it: Orca's deps decide how to apply their patches by asking git whether the current folder is
- * inside a repository (it must not find this repo, or a repo in a parent folder).
+ * inside a repository (it must not find this repo, or a repo in a parent folder). On Windows,
+ * MSBuild (which builds each dependency) starts no worker nodes that outlive the build
+ * (MSBUILDDISABLENODEREUSE): every process a build starts ends with it. Neither changes what is
+ * compiled, so neither is part of the build's inputs.
  */
 function stepEnv(t: Toolchain, w: WorkPaths): Record<string, string> {
-  return { ...t.env, ...compilerEnv(t, w), GIT_CEILING_DIRECTORIES: w.home }
+  return { ...t.env, ...compilerEnv(t, w), GIT_CEILING_DIRECTORIES: w.home, ...(t.platform === 'win32' ? { MSBUILDDISABLENODEREUSE: '1' } : {}) }
 }
 
 /**
@@ -213,14 +222,36 @@ async function buildDeps(ctx: Context, t: Toolchain, want: ReturnType<typeof dep
   const env = { ...stepEnv(t, w), ...depsParallelEnv(t.platform) }
   log.line(`deps: configuring ${w.deps}`)
   await runLogged(t.cmake, configure, { env, log, cwd: w.deps })
+  assertNoIdeProjects([w.deps], 'deps')
   const jobs = defaultDepsJobs()
   const cap = jobsCap()
   log.line(`deps: building (${jobs} ${jobs === 1 ? 'dependency' : 'dependencies'} at a time${cap === undefined ? '' : `, at most ${cap} compile jobs`}); this takes a while`)
   await runLogged(t.cmake, depsBuildArgs(w.deps, jobs), { env, log, cwd: w.deps })
+  // Each dependency is configured during the build: none may have made a Fortran project for
+  // Visual Studio (noide.ts). A build that did is not recorded as finished.
+  assertNoIdeProjects([w.deps], 'deps')
+  log.line('deps: no CompilerIdFortran folder or .vfproj file in the build folder: no configure step ran devenv.exe')
   const record: DepsRecord = { commit: want.commit, depsPatches: want.depsPatches, prefixDigest: hashTree(w.depsPrefix), fresh: !resume }
   writeStamp(w.state, 'deps', inputs, record)
   rmSync(join(w.state, 'deps-run.json'), { force: true })
   log.line(`deps: done${resume ? ' (resumed, so not fresh)' : ''}`)
+}
+
+/**
+ * Starts the engine's build folder over when it was configured against another dependency build
+ * than the finished one there is now (`depsInputs`, state/deps.json). CMake keeps what
+ * find_package and find_library found in CMakeCache.txt, so a folder configured against an earlier
+ * prefix would go on linking the libraries that prefix had: Orca's prebuilt libmpfr-4.lib, say,
+ * after patch 0007 built mpfr.lib instead (sketch-orca, 2026-11-06). state/orca-deps.json names
+ * the dependency build the folder is configured against; a folder without that record is started
+ * over too.
+ */
+export function matchDepsBuild(w: Pick<WorkPaths, 'build' | 'state'>, depsInputs: string, log: Pick<Log, 'line'>): void {
+  if (existsSync(w.build) && readStamp(w.state, 'orca-deps')?.inputs !== depsInputs) {
+    log.line(`orca: ${w.build} was configured against another dependency build; starting it over`)
+    rmSync(w.build, { recursive: true, force: true })
+  }
+  writeStamp(w.state, 'orca-deps', depsInputs)
 }
 
 /** Removes the record of a finished engine build (state/orca.json): stage and source take no engine without one. */
@@ -250,6 +281,7 @@ async function buildOrca(ctx: Context, t: Toolchain, patches: PatchInfo[], patch
   const cenv = compilerEnv(t, w)
   const inputs = sha256Text(JSON.stringify({ commit: ctx.lock.commit, patchesHash, configure, cmake: t.cmake, compilerEnv: cenv }))
   matchCompilerEnv(w, 'orca', w.build, cenv, log)
+  matchDepsBuild(w, depsStamp!.inputs, log)
   const stamp = readStamp(w.state, 'orca-configure')
   mkdirSync(w.build, { recursive: true })
   const env = stepEnv(t, w)
@@ -273,6 +305,8 @@ async function buildOrca(ctx: Context, t: Toolchain, patches: PatchInfo[], patch
   forgetEngineBuild(w)
   // Ninja itself skips what is up to date.
   await runLogged(t.cmake, orcaBuildArgs(w.build, jobs), { env, log, cwd: w.build })
+  // Ninja, not a Visual Studio generator, so no step can run devenv.exe; held to it all the same.
+  assertNoIdeProjects([w.build], 'orca')
   const exe = engineExe(w, t.platform)
   if (!existsSync(exe)) throw new StepError(`build finished but ${exe} is missing`)
   if (hashTree(E.cli) !== cliSha256) throw new StepError('cli/ changed while the engine was being built; run build again')
@@ -397,6 +431,8 @@ const COMMANDS: Record<string, (ctx: Context) => Promise<number>> = {
   source: cmdSource,
   release: cmdRelease,
   env: cmdEnv,
+  // Each parity command says itself whether it holds the run lock (dispatch.ts).
+  parity: (ctx) => runParity(ctx, ctx.args, { takeLock: takeRunLock }),
 }
 
 /** The commands that write in the work folder: they hold <work>/run.lock.d while they run. */

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { enginePaths, readStamp, sha256File, sha256Text, WINDOWS_WORK_PATH_MAX, workHome, workPathProblem, workPaths, writeStamp } from '../scripts/lib/paths.ts'
+import { enginePaths, PARITY_FOLDER_DEPTH, parityPathProblem, parityPaths, readStamp, sha256File, sha256Text, WINDOWS_WORK_DEPTH, WINDOWS_WORK_PATH_MAX, workHome, workPathProblem, workPaths, writeStamp } from '../scripts/lib/paths.ts'
 
 describe('paths', () => {
   test('workHome: SKETCH_ORCA_HOME first, then LOCALAPPDATA on Windows, XDG_DATA_HOME or ~/.local/share elsewhere', () => {
@@ -43,6 +43,43 @@ describe('paths', () => {
       state: join('W', 'state'),
       smoke: join('W', 'smoke'),
     })
+  })
+
+  test('parityPaths lays out the parity harness: parity/ and the oracle/ build', () => {
+    expect(parityPaths({ home: 'W' })).toEqual({
+      parity: join('W', 'parity'),
+      reference: join('W', 'parity', 'reference'),
+      corpus: join('W', 'parity', 'corpus'),
+      goldens: join('W', 'parity', 'goldens'),
+      runs: join('W', 'parity', 'runs'),
+      probes: join('W', 'parity', 'probes'),
+      envelope: join('W', 'parity', 'envelope'),
+      oracle: join('W', 'oracle'),
+      oracleSrc: join('W', 'oracle', 'src'),
+      oracleBuild: join('W', 'oracle', 'build'),
+      oracleDist: join('W', 'oracle', 'dist'),
+    })
+  })
+
+  test('parityPathProblem: every parity folder counts against WINDOWS_WORK_PATH_MAX, and fits in any work folder build takes', () => {
+    expect(WINDOWS_WORK_DEPTH).toBe(183)
+    expect(WINDOWS_WORK_PATH_MAX + WINDOWS_WORK_DEPTH + 1 + 10).toBe(259)
+    // The longest work folder build takes, and the default one of a 20-character user name.
+    const longest = 'C:\\' + 'w'.repeat(WINDOWS_WORK_PATH_MAX - 3)
+    const defaultHome = workHome({}, 'win32', `C:\\Users\\${'u'.repeat(20)}`)
+    for (const home of [longest, defaultHome]) {
+      const p = parityPaths({ home })
+      expect(parityPathProblem(p, home, 'win32')).toBeUndefined()
+      // Each folder leaves PARITY_FOLDER_DEPTH characters below it within 259.
+      for (const folder of Object.values(p)) expect(folder.length + 1 + PARITY_FOLDER_DEPTH + 10).toBeLessThanOrEqual(259)
+    }
+    // A work folder too long for build is too long for the harness.
+    expect(parityPathProblem(parityPaths({ home: `${longest}x` }), `${longest}x`, 'win32')).toContain('SKETCH_ORCA_HOME')
+    // A folder placed deeper than its depth allows is refused, by name.
+    const deep = { ...parityPaths({ home: longest }), runs: join(longest, 'parity', 'r'.repeat(40)) }
+    expect(parityPathProblem(deep, longest, 'win32')).toContain('parity folder runs')
+    // Elsewhere there is no such limit.
+    expect(parityPathProblem(parityPaths({ home: `/${'w'.repeat(300)}` }), `/${'w'.repeat(300)}`, 'linux')).toBeUndefined()
   })
 
   test('enginePaths: lock, patches, cli, scripts, licences, README, NOTICE and AUTHORS of the repository (no ci folder)', () => {

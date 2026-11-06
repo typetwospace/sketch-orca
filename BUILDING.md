@@ -70,6 +70,40 @@ the dependencies with `-DDEP_MSVC_STATIC_RUNTIME=ON` (patch 0005) and Orca with
 engine nor the DLLs it loads import a Visual C++ runtime DLL, and none is shipped. `stage` refuses
 an engine that does.
 
+## No window, no IDE
+
+No build step opens a window: every program the pipeline starts runs hidden, and none of them may
+start Visual Studio's IDE (`devenv.exe`). The engine is built with Ninja. Orca's dependency build
+configures each CMake dependency with a Visual Studio generator, though, and with one of those
+CMake looks for a Fortran compiler by writing a Fortran project
+(`CMakeFiles/<version>/CompilerIdFortran/CompilerIdFortran.vfproj`) and running `devenv.exe` on it.
+`check_language(Fortran)`, `enable_language(Fortran)` and a `project()` that names Fortran all do
+it. Eigen 5.0.1 runs `check_language(Fortran)` in `test/` and `lapack/`, and on 2026-11-06 that put
+Visual Studio on the screen. So on Windows `build` configures the dependencies with
+
+```
+-DDEP_CMAKE_OPTS:STRING=-DCMAKE_Fortran_COMPILER:STRING=NOTFOUND;-DBUILD_TESTING:BOOL=OFF;-DEIGEN_BUILD_TESTING:BOOL=OFF
+```
+
+(`WIN32_DEP_CMAKE_OPTS` in `scripts/lib/cmake.ts`). Orca's `deps/CMakeLists.txt` passes
+`DEP_CMAKE_OPTS` to every CMake dependency, ahead of the dependency's own arguments:
+
+- A defined `CMAKE_Fortran_COMPILER` makes `check_language` skip. `NOTFOUND` reads false, so
+  Eigen's `lapack/` goes on without Fortran, as it did when the check found no compiler. It is
+  typed STRING because CMake would turn a FILEPATH into an absolute path, which reads true.
+- Eigen is built without its tests (`BUILD_TESTING`, `EIGEN_BUILD_TESTING`), which also leaves out
+  its BLAS tests, which enable Fortran.
+
+No other dependency asks for Fortran. None of this is in the engine's code or its patches.
+
+`build` holds itself to it. After the dependency build's configure step, after the dependency
+build, and after the engine's build, a `CompilerIdFortran` folder or a `.vfproj` file anywhere in
+`<work>/deps` or `<work>/build` fails the build and names them (`scripts/lib/noide.ts`). A failed
+dependency build is not recorded as finished; remove the cause and run `build --fresh`. On Windows,
+MSBuild runs with `MSBUILDDISABLENODEREUSE=1`, so no MSBuild worker outlives the build. Any other
+C++ build made from this repository (an oracle, a second work folder) configures its dependencies
+the same way and runs the same check.
+
 ## The Rust translation
 
 `crates/` (one Cargo workspace at the root, described in `README.md`) is built and tested apart

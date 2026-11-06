@@ -1,6 +1,6 @@
 // privacy-fixtures: C:/Users/me
 import { describe, expect, test } from 'bun:test'
-import { cmakePath, defaultDepsJobs, defaultJobs, depsBuildArgs, depsConfigureArgs, depsParallelEnv, formatCommand, jobsCap, orcaBuildArgs, orcaConfigureArgs } from '../scripts/lib/cmake.ts'
+import { cmakePath, defaultDepsJobs, defaultJobs, depsBuildArgs, depsConfigureArgs, depsParallelEnv, formatCommand, jobsCap, orcaBuildArgs, orcaConfigureArgs, WIN32_DEP_CMAKE_OPTS } from '../scripts/lib/cmake.ts'
 
 const GIB = 1024 ** 3
 const COMMIT = '8500fcdccaa10b5099ac20d252af3a7c560046f1'
@@ -25,9 +25,26 @@ describe('CMake command lines', () => {
       '-DCMAKE_C_COMPILER=cl',
       '-DCMAKE_CXX_COMPILER=cl',
       '-DDEP_MSVC_STATIC_RUNTIME=ON',
+      '-DDEP_CMAKE_OPTS:STRING=-DCMAKE_Fortran_COMPILER:STRING=NOTFOUND;-DBUILD_TESTING:BOOL=OFF;-DEIGEN_BUILD_TESTING:BOOL=OFF',
       '-DDEP_MINGW_ROOT=W:/mingw/msys64',
       '-DCMAKE_IGNORE_PREFIX_PATH=C:/Strawberry/c',
     ])
+  })
+
+  test('deps on Windows: no configure step can run devenv.exe (no Fortran check, Eigen without its tests)', () => {
+    const args = depsConfigureArgs({ ninja: 'n', sourceDir: 's', buildDir: 'b', downloadDir: 'd', ignorePrefixes: [], platform: 'win32', mingwRoot: 'm' })
+    const opts = args.filter((a) => a.startsWith('-DDEP_CMAKE_OPTS'))
+    expect(opts).toHaveLength(1)
+    // Typed STRING, so CMake keeps the list as it is; each item one -D for every dependency.
+    expect(opts[0]!.slice('-DDEP_CMAKE_OPTS:STRING='.length).split(';')).toEqual(WIN32_DEP_CMAKE_OPTS)
+    // check_language skips a language whose compiler variable is defined; NOTFOUND reads false.
+    expect(WIN32_DEP_CMAKE_OPTS).toContain('-DCMAKE_Fortran_COMPILER:STRING=NOTFOUND')
+    expect(WIN32_DEP_CMAKE_OPTS).toContain('-DBUILD_TESTING:BOOL=OFF')
+    expect(WIN32_DEP_CMAKE_OPTS).toContain('-DEIGEN_BUILD_TESTING:BOOL=OFF')
+    // No item holds a space or a ';' of its own, and none is a FILEPATH (made absolute, so true).
+    for (const o of WIN32_DEP_CMAKE_OPTS) expect(o).toMatch(/^-D[A-Za-z_]+:(STRING|BOOL)=[^\s;]+$/)
+    // Linux and macOS set DEP_CMAKE_OPTS in their own deps-*.cmake, and run no IDE.
+    expect(depsConfigureArgs({ ninja: 'n', sourceDir: 's', buildDir: 'b', downloadDir: 'd', ignorePrefixes: [], platform: 'linux' }).some((a) => a.includes('DEP_CMAKE_OPTS'))).toBe(false)
   })
 
   test("deps on Windows need the MinGW-w64 toolchain: never the prebuilt GMP and MPFR of Orca's tree", () => {
@@ -121,5 +138,7 @@ describe('CMake command lines', () => {
 
   test('formatCommand quotes arguments with spaces or quotes', () => {
     expect(formatCommand('C:\\Program Files\\CMake\\bin\\cmake.exe', ['-S', 'a b', 'x"y', 'plain'])).toBe('"C:\\Program Files\\CMake\\bin\\cmake.exe" -S "a b" "x\\"y" plain')
+    // A CMake list's ';' would end the command in a POSIX shell.
+    expect(formatCommand('cmake', ['-DL:STRING=a;b'])).toBe('cmake "-DL:STRING=a;b"')
   })
 })

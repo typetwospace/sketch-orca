@@ -25,6 +25,23 @@ export interface DepsArgs {
   mingwRoot?: string
 }
 
+/**
+ * Windows: what every CMake dependency is configured with besides its own arguments, so that no
+ * configure step can start Visual Studio's IDE (sketch-orca, 2026-11-06). Orca's deps configure
+ * each dependency with a Visual Studio generator, and with one of those a check for a language
+ * CMake cannot find writes a Fortran project (.vfproj) and runs devenv.exe on it; Eigen 5.0.1 does
+ * that check (check_language(Fortran) in test/ and lapack/), which put Visual Studio on the
+ * screen. A defined CMAKE_Fortran_COMPILER makes check_language skip (CheckLanguage.cmake:
+ * `if(NOT DEFINED CMAKE_${lang}_COMPILER)`), and NOTFOUND reads false, so Eigen's lapack/ goes
+ * on without Fortran as it did when the check found none. STRING, not FILEPATH, which CMake would
+ * turn into an absolute path, and true. BUILD_TESTING and EIGEN_BUILD_TESTING off build Eigen
+ * without its tests (also its BLAS tests, which enable Fortran). No other dependency asks for
+ * Fortran. Orca's deps/CMakeLists.txt hands DEP_CMAKE_OPTS to every orcaslicer_add_cmake_project
+ * (on Windows, every CMake dependency), before the dependency's own arguments, which win.
+ * noide.ts checks after each build that no Fortran project was made.
+ */
+export const WIN32_DEP_CMAKE_OPTS = ['-DCMAKE_Fortran_COMPILER:STRING=NOTFOUND', '-DBUILD_TESTING:BOOL=OFF', '-DEIGEN_BUILD_TESTING:BOOL=OFF']
+
 export function depsConfigureArgs(a: DepsArgs): string[] {
   const args = [
     '-S', a.sourceDir,
@@ -40,6 +57,9 @@ export function depsConfigureArgs(a: DepsArgs): string[] {
   ]
   // Patch 0005: every dependency with MSVC's static runtime (/MT), as the engine (orcaConfigureArgs).
   if (a.platform === 'win32') args.push('-DCMAKE_C_COMPILER=cl', '-DCMAKE_CXX_COMPILER=cl', '-DDEP_MSVC_STATIC_RUNTIME=ON')
+  // No dependency's configure step may run devenv.exe (WIN32_DEP_CMAKE_OPTS). Elsewhere
+  // deps-linux.cmake and deps-macos.cmake set DEP_CMAKE_OPTS themselves, and no IDE is involved.
+  if (a.platform === 'win32') args.push(`-DDEP_CMAKE_OPTS:STRING=${WIN32_DEP_CMAKE_OPTS.join(';')}`)
   // Patch 0007: GMP and MPFR built from their source packages with MinGW-w64, never the prebuilt
   // DLLs of Orca's tree, whose build recipe is not published.
   if (a.platform === 'win32') {
@@ -150,8 +170,11 @@ export function depsParallelEnv(platform: Platform, env: NodeJS.ProcessEnv = pro
   return { CMAKE_BUILD_PARALLEL_LEVEL: String(jobs) }
 }
 
-/** For logs: a command line with quoted arguments where needed. */
+/**
+ * For logs and the source bundle's BUILDING.md: a command line with quoted arguments where needed
+ * (spaces, quotes, and the `;` of a CMake list, which a POSIX shell would take as the command's end).
+ */
 export function formatCommand(exe: string, args: string[]): string {
-  const q = (s: string) => (/[\s"]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s)
+  const q = (s: string) => (/[\s";]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s)
   return [exe, ...args].map(q).join(' ')
 }
