@@ -1,0 +1,16 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "output-failed",
+  "message": "cannot write the G-code <case>\\blocker\\out.gcode: cannot create the folder <case>\\blocker: Cannot create a file when that file already exists",
+  "exitCode": -13,
+  "warnings": [],
+  "command": "slice",
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.1.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

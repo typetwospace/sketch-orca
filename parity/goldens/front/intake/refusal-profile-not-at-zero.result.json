@@ -1,0 +1,16 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "layer-profile-invalid",
+  "message": "objects[0].layerHeights.profile must start at z 0, the bottom of the object",
+  "objectIndex": 0,
+  "exitCode": -2,
+  "warnings": [],
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.1.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

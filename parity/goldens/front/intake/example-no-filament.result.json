@@ -1,0 +1,15 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "job-invalid",
+  "message": "presets.filaments must list at least one filament preset",
+  "exitCode": -2,
+  "warnings": [],
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.1.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

@@ -1,0 +1,5356 @@
+{
+  "format": "sketch-orca-parity-corpus/1",
+  "smokeVersion": 9,
+  "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+  "stl": "binary STL as Sketch writes model.stl: 80-byte header \"Sketch\" padded with zero bytes, u32 triangle count, per triangle the unit normal of (b-a)x(c-a) computed in double from the corners (zero when degenerate), corners a, b, c, all little-endian float32, then u16 0; an OBJ face of n corners is the fan (1,k,k+1)",
+  "meshes": [
+    {
+      "id": "20mm-cube",
+      "source": "20mm_cube.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "15943d9ad0548b654199c4e8eecdfc937964eaac80aad0237bf70fac75725b80",
+      "sha256": "2ae6a378f042316401d56403d091005130aba3327cad39a574dba73308677d19",
+      "size": 684,
+      "triangles": 12
+    },
+    {
+      "id": "2x20x10",
+      "source": "2x20x10.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "948c25b1e5bb3b84f921a713d6250a44081c3d43ab5f9a1493106e58b6682b45",
+      "sha256": "8265c93a69aae9e0470cf86fbfde088f6907220cb7ae50867dd9108a77cf5a4f",
+      "size": 684,
+      "triangles": 12
+    },
+    {
+      "id": "a",
+      "source": "A.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "58b7d0dadc7ccfdc51500bc6cd51860ecd069be0995bd99e9474c66f7dfa81fb",
+      "sha256": "9d6090671fb5d72862e4088c709579669695ec6f74ae85d53ee9d28bbe6a75d8",
+      "size": 62384,
+      "triangles": 1246
+    },
+    {
+      "id": "a-upsidedown",
+      "source": "A_upsidedown.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "4798e1e854e2e3b23ac05dfdc76ae2997de37116077b71d725ac8cd135edc26b",
+      "sha256": "a18dee18a66d0e1f56e048b935771e78401958abd3f0461f49b71e35ba5868b8",
+      "size": 62384,
+      "triangles": 1246
+    },
+    {
+      "id": "v",
+      "source": "V.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "1d123afaf5a4b68a196a89f846980eed303e8b6dbc9a8555d1a9048bb8f540e5",
+      "sha256": "fb56c13e298783bb156bf0d8aa38f2b08d293a0d8be6a1040c9298ae752c7c66",
+      "size": 1284,
+      "triangles": 24
+    },
+    {
+      "id": "v-standing",
+      "source": "V_standing.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "77440dc5d49c5f84c5dcfca13fab430bd2651f868b44abb191cba137a2a0c65c",
+      "sha256": "953e9e598867e65ef12f152ea5c70bc9468f3d7ed13ca940b995eafeb7f73818",
+      "size": 1284,
+      "triangles": 24
+    },
+    {
+      "id": "bridge",
+      "source": "bridge.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "379e726104004fc5632d86c02b5242769162dc02057096899ee520f74ef8e8f3",
+      "sha256": "16b02a52e019f59367745e041f22dfdc5760aac63635cc1a0921adb012aa1219",
+      "size": 1484,
+      "triangles": 28
+    },
+    {
+      "id": "cube-with-concave-hole",
+      "source": "cube_with_concave_hole.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "c837612ab5b8828fe0c7fc7e4a76dec6ab8e79eb182e4f81ab68d2a74cc0801d",
+      "sha256": "79088f4e84d294c5ee012960a80aae3e4b4ae4920c71b9b7c3cb6386ef33e669",
+      "size": 2484,
+      "triangles": 48
+    },
+    {
+      "id": "cube-with-concave-hole-enlarged",
+      "source": "cube_with_concave_hole_enlarged.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "d827229d3c82e0d915c8e7ae189094a53ca55b4c06cd7ec60e9b1d1a1b22d36d",
+      "sha256": "7613cb7699294ed404f82ca78c535d45a9cf2c58eca32a0b10e22ede2c653a80",
+      "size": 2484,
+      "triangles": 48
+    },
+    {
+      "id": "cube-with-concave-hole-enlarged-standing",
+      "source": "cube_with_concave_hole_enlarged_standing.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "f83090f3a1515bc15e18ecfb6c13f13cb57aa57d50797649baabb32f74bb62bf",
+      "sha256": "e2443bff6b3182998d709a6a60c58f30c15a9498c4d666217cdc0e9b716997b1",
+      "size": 2484,
+      "triangles": 48
+    },
+    {
+      "id": "cube-with-hole",
+      "source": "cube_with_hole.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "a938b25260e5f52c8ead83ef95cce980f775453173593e96bae66b3b7178bd20",
+      "sha256": "e0e02ffcc1a6c5bb64f86f5eec5ff51069cae6b86b352300c2fad9e13f059567",
+      "size": 1684,
+      "triangles": 32
+    },
+    {
+      "id": "extruder-idler",
+      "source": "extruder_idler.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "3125e228058f0d217a0325d48069286b3e70855974614fe2b8d0f06ffcd7e59e",
+      "sha256": "e95da82f216c3813817769df2127bf0aad13f2a8b76af4b141085554880927e1",
+      "size": 179384,
+      "triangles": 3586
+    },
+    {
+      "id": "extruder-idler-quads",
+      "source": "extruder_idler_quads.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "1c4e374c0c392f9a512ba66abfc58e8e97ee8d139edbc79a2f538186eaffacaf",
+      "sha256": "e55206b3494a2468ea1090df6ffd866c9115eddf44ee2f4466c4001a5c62fa03",
+      "size": 367284,
+      "triangles": 7344
+    },
+    {
+      "id": "frog-legs",
+      "source": "frog_legs.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "6e499b45b182748c58fe2e52dcb066c0b3ebf4344da13e36d7800ffac0c0b63e",
+      "sha256": "7ad1d8e687dfe1ec701bcbc8c5adc3414a2bba7ddb15c96ae73180fa9d576d65",
+      "size": 916784,
+      "triangles": 18334
+    },
+    {
+      "id": "ipadstand",
+      "source": "ipadstand.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "25fe6c41414fce441a4f12800f3a296ca8ec16b0031366c78de08f107ed87538",
+      "sha256": "f70c51740610a96899397c2b91c4d2a7db6469f06be325b4b37e69990d7bc135",
+      "size": 2884,
+      "triangles": 56
+    },
+    {
+      "id": "overhang",
+      "source": "overhang.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "66b0b2409dc5479c603b12ffe451cbac8e8796580d2161ac336d9ec356652723",
+      "sha256": "5c404d3772e41582d13f6fa7203439e6db757de408bf8c5d9fbd4bd48ee76736",
+      "size": 5984,
+      "triangles": 118
+    },
+    {
+      "id": "pyramid",
+      "source": "pyramid.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "e2b18d583f010d74b7f15ec0c7cb707ad9a5e474b20321a1f7d98ab96a0ce849",
+      "sha256": "a8e5ed0ddd8f3c027ca538798def0822672634ceda4f99028988dc539add9a06",
+      "size": 384,
+      "triangles": 6
+    },
+    {
+      "id": "simplification",
+      "source": "simplification.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "26e17578feb11a45c3fbe53859a27bc5a9cade43efaafc58216a090a33deb7ef",
+      "sha256": "09aa064b1d4eb08fa3a6c2958600d9cad175348b7fa5f524d05c9cfbddd1b5a9",
+      "size": 1484,
+      "triangles": 28
+    },
+    {
+      "id": "sloping-hole",
+      "source": "sloping_hole.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "b0ca634610ce79d18606e2f6fae5d97e9eefa94ec8963cac5e0dc73a9b35105f",
+      "sha256": "d992739ab6c0aa82c2713ad6ea94833788af01cd7bd5edf19669e8b7c523044e",
+      "size": 6884,
+      "triangles": 136
+    },
+    {
+      "id": "small-dorito",
+      "source": "small_dorito.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "7fc7d625e0788b181c6fcd99ce8549a21db9e47523da25debdb5493e99e4f9f0",
+      "sha256": "d990c52c23368e2876538c8e75bbea52ed2cd9326c42bcbb935a5c85fce4b8cf",
+      "size": 484,
+      "triangles": 8
+    },
+    {
+      "id": "two-hollow-squares",
+      "source": "two_hollow_squares.obj",
+      "kind": "obj",
+      "file": "model.stl",
+      "sourceSha256": "e74581f49f9df30cb362019d9382ac1829d2636c4f03198c3145d1f388aeaa4f",
+      "sha256": "e261a230a5b8cdb676464676ebee48a4d655b8a749ee330a048eadfdb05d1e54",
+      "size": 4884,
+      "triangles": 96
+    },
+    {
+      "id": "prusa-stl",
+      "source": "test_3mf/Prusa.stl",
+      "kind": "stl",
+      "file": "Prusa.stl",
+      "sourceSha256": "8664c4f13706680ecf31e60d0d27fa5664742d0c7f93d774d2691662b44a7ea0",
+      "sha256": "8664c4f13706680ecf31e60d0d27fa5664742d0c7f93d774d2691662b44a7ea0",
+      "size": 30784
+    },
+    {
+      "id": "20mmbox-cr",
+      "source": "test_stl/ASCII/20mmbox-CR.stl",
+      "kind": "stl",
+      "file": "20mmbox-CR.stl",
+      "sourceSha256": "8ee2cc65d84a02846bf6cace1a388d261f76c6999ad9e206634614dc72c30fdb",
+      "sha256": "8ee2cc65d84a02846bf6cace1a388d261f76c6999ad9e206634614dc72c30fdb",
+      "size": 3200
+    },
+    {
+      "id": "20mmbox-crlf",
+      "source": "test_stl/ASCII/20mmbox-CRLF.stl",
+      "kind": "stl",
+      "file": "20mmbox-CRLF.stl",
+      "sourceSha256": "678883465c2a47a7e37c52f71e1ad84b2ccea00443c0633bab3bdb6cc78a98d3",
+      "sha256": "678883465c2a47a7e37c52f71e1ad84b2ccea00443c0633bab3bdb6cc78a98d3",
+      "size": 3200
+    },
+    {
+      "id": "20mmbox-lf",
+      "source": "test_stl/ASCII/20mmbox-LF.stl",
+      "kind": "stl",
+      "file": "20mmbox-LF.stl",
+      "sourceSha256": "619c2e8ec69d5f01385570aa2d95288bf33a84ad9b299284e4a4514d66929bc9",
+      "sha256": "619c2e8ec69d5f01385570aa2d95288bf33a84ad9b299284e4a4514d66929bc9",
+      "size": 3196
+    },
+    {
+      "id": "20mmbox-nonstandard",
+      "source": "test_stl/ASCII/20mmbox-nonstandard.stl",
+      "kind": "stl",
+      "file": "20mmbox-nonstandard.stl",
+      "sourceSha256": "c77c5c5b6c820ba12ada9c53f0af8d86c5df72fc89be587083a0640de3766823",
+      "sha256": "c77c5c5b6c820ba12ada9c53f0af8d86c5df72fc89be587083a0640de3766823",
+      "size": 3215
+    },
+    {
+      "id": "20mmbox-unicode",
+      "source": "test_stl/Geräte/20mmbox-čřšřěá.stl",
+      "kind": "stl",
+      "file": "20mmbox-čřšřěá.stl",
+      "sourceSha256": "5357b481ac109103d84437c714a281907fff671a857d51bd90b5f3f0d2fd0563",
+      "sha256": "5357b481ac109103d84437c714a281907fff671a857d51bd90b5f3f0d2fd0563",
+      "size": 684
+    },
+    {
+      "id": "buchse-3mf",
+      "source": "test_3mf/Geräte/Büchse.3mf",
+      "kind": "3mf",
+      "file": "Büchse.3mf",
+      "sourceSha256": "de20508dff06f8faf8ca992c00238d4affc916ba4b812e8ff9ec1571fec533a1",
+      "sha256": "de20508dff06f8faf8ca992c00238d4affc916ba4b812e8ff9ec1571fec533a1",
+      "size": 1416
+    }
+  ],
+  "families": [
+    {
+      "name": "version",
+      "step": "front end",
+      "what": "sketch-orca version"
+    },
+    {
+      "name": "config-def",
+      "step": "front end",
+      "what": "sketch-orca config-def"
+    },
+    {
+      "name": "intake",
+      "step": "front end",
+      "what": "reading and checking a job, and the refusals"
+    },
+    {
+      "name": "model-load",
+      "step": "load",
+      "what": "reading the model (STL, OBJ, 3MF) and Orca's mesh repairs"
+    },
+    {
+      "name": "placement",
+      "step": "arrange",
+      "what": "arranging the objects on the plate"
+    },
+    {
+      "name": "info",
+      "step": "info",
+      "what": "the info command"
+    },
+    {
+      "name": "slice-mesh",
+      "step": "posSlice",
+      "what": "layer heights and slicing the mesh into layers"
+    },
+    {
+      "name": "perimeters-classic",
+      "step": "posPerimeters",
+      "what": "walls, classic generator"
+    },
+    {
+      "name": "perimeters-arachne",
+      "step": "posPerimeters",
+      "what": "walls, Arachne generator"
+    },
+    {
+      "name": "infill-monotonic",
+      "step": "posInfill",
+      "what": "the monotonic infill pattern"
+    },
+    {
+      "name": "infill-monotonicline",
+      "step": "posInfill",
+      "what": "the monotonicline infill pattern"
+    },
+    {
+      "name": "infill-rectilinear",
+      "step": "posInfill",
+      "what": "the rectilinear infill pattern"
+    },
+    {
+      "name": "infill-alignedrectilinear",
+      "step": "posInfill",
+      "what": "the alignedrectilinear infill pattern"
+    },
+    {
+      "name": "infill-zigzag",
+      "step": "posInfill",
+      "what": "the zigzag infill pattern"
+    },
+    {
+      "name": "infill-crosszag",
+      "step": "posInfill",
+      "what": "the crosszag infill pattern"
+    },
+    {
+      "name": "infill-lockedzag",
+      "step": "posInfill",
+      "what": "the lockedzag infill pattern"
+    },
+    {
+      "name": "infill-line",
+      "step": "posInfill",
+      "what": "the line infill pattern"
+    },
+    {
+      "name": "infill-grid",
+      "step": "posInfill",
+      "what": "the grid infill pattern"
+    },
+    {
+      "name": "infill-triangles",
+      "step": "posInfill",
+      "what": "the triangles infill pattern"
+    },
+    {
+      "name": "infill-tri-hexagon",
+      "step": "posInfill",
+      "what": "the tri-hexagon infill pattern"
+    },
+    {
+      "name": "infill-cubic",
+      "step": "posInfill",
+      "what": "the cubic infill pattern"
+    },
+    {
+      "name": "infill-adaptivecubic",
+      "step": "posInfill",
+      "what": "the adaptivecubic infill pattern"
+    },
+    {
+      "name": "infill-quartercubic",
+      "step": "posInfill",
+      "what": "the quartercubic infill pattern"
+    },
+    {
+      "name": "infill-supportcubic",
+      "step": "posInfill",
+      "what": "the supportcubic infill pattern"
+    },
+    {
+      "name": "infill-lightning",
+      "step": "posInfill",
+      "what": "the lightning infill pattern"
+    },
+    {
+      "name": "infill-honeycomb",
+      "step": "posInfill",
+      "what": "the honeycomb infill pattern"
+    },
+    {
+      "name": "infill-3dhoneycomb",
+      "step": "posInfill",
+      "what": "the 3dhoneycomb infill pattern"
+    },
+    {
+      "name": "infill-lateral-honeycomb",
+      "step": "posInfill",
+      "what": "the lateral-honeycomb infill pattern"
+    },
+    {
+      "name": "infill-lateral-lattice",
+      "step": "posInfill",
+      "what": "the lateral-lattice infill pattern"
+    },
+    {
+      "name": "infill-crosshatch",
+      "step": "posInfill",
+      "what": "the crosshatch infill pattern"
+    },
+    {
+      "name": "infill-tpmsd",
+      "step": "posInfill",
+      "what": "the tpmsd infill pattern"
+    },
+    {
+      "name": "infill-tpmsfk",
+      "step": "posInfill",
+      "what": "the tpmsfk infill pattern"
+    },
+    {
+      "name": "infill-gyroid",
+      "step": "posInfill",
+      "what": "the gyroid infill pattern"
+    },
+    {
+      "name": "infill-concentric",
+      "step": "posInfill",
+      "what": "the concentric infill pattern"
+    },
+    {
+      "name": "infill-hilbertcurve",
+      "step": "posInfill",
+      "what": "the hilbertcurve infill pattern"
+    },
+    {
+      "name": "infill-archimedeanchords",
+      "step": "posInfill",
+      "what": "the archimedeanchords infill pattern"
+    },
+    {
+      "name": "infill-octagramspiral",
+      "step": "posInfill",
+      "what": "the octagramspiral infill pattern"
+    },
+    {
+      "name": "infill-supportbase",
+      "step": "posInfill",
+      "what": "the supportbase infill pattern"
+    },
+    {
+      "name": "infill-concentricinternal",
+      "step": "posInfill",
+      "what": "the concentricinternal infill pattern"
+    },
+    {
+      "name": "supports",
+      "step": "posSupportMaterial",
+      "what": "normal supports"
+    },
+    {
+      "name": "tree-supports",
+      "step": "posSupportMaterial",
+      "what": "tree supports"
+    },
+    {
+      "name": "raft",
+      "step": "posSupportMaterial",
+      "what": "rafts"
+    },
+    {
+      "name": "ironing",
+      "step": "posIroning",
+      "what": "ironing"
+    },
+    {
+      "name": "fuzzy-skin",
+      "step": "posPerimeters",
+      "what": "fuzzy skin"
+    },
+    {
+      "name": "wipe-tower",
+      "step": "psWipeTower",
+      "what": "the prime tower and tool ordering"
+    },
+    {
+      "name": "gcode-export",
+      "step": "psGCodeExport",
+      "what": "writing the G-code"
+    },
+    {
+      "name": "gcode-processor",
+      "step": "psGCodeExport",
+      "what": "the G-code processor's statistics and times"
+    },
+    {
+      "name": "step-estimate-curled-extrusions",
+      "step": "posEstimateCurledExtrusions",
+      "what": "curled extrusion estimates"
+    },
+    {
+      "name": "step-prepare-infill",
+      "step": "posPrepareInfill",
+      "what": "top, bottom and internal surfaces"
+    },
+    {
+      "name": "step-contouring",
+      "step": "posContouring",
+      "what": "Z contouring"
+    },
+    {
+      "name": "step-simplify-path",
+      "step": "posSimplifyPath",
+      "what": "path simplification"
+    },
+    {
+      "name": "step-simplify-support-path",
+      "step": "posSimplifySupportPath",
+      "what": "support path simplification"
+    },
+    {
+      "name": "step-detect-overhangs-for-lift",
+      "step": "posDetectOverhangsForLift",
+      "what": "overhangs for z hop"
+    },
+    {
+      "name": "step-simplify-wall",
+      "step": "posSimplifyWall",
+      "what": "wall simplification"
+    },
+    {
+      "name": "step-simplify-infill",
+      "step": "posSimplifyInfill",
+      "what": "infill simplification"
+    },
+    {
+      "name": "step-skirt-brim",
+      "step": "psSkirtBrim",
+      "what": "skirt and brim"
+    },
+    {
+      "name": "step-conflict-check",
+      "step": "psConflictCheck",
+      "what": "the conflict check between objects"
+    }
+  ],
+  "cases": [
+    {
+      "id": "smoke-version",
+      "kind": "smoke",
+      "title": "version names the locked Orca release",
+      "families": [
+        "version"
+      ],
+      "smoke": "version"
+    },
+    {
+      "id": "smoke-cube-fixed",
+      "kind": "smoke",
+      "title": "20 mm cube at 0.2 mm with a 0.25 mm first layer: exactly 100 layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "cube-fixed"
+    },
+    {
+      "id": "smoke-sphere-adaptive",
+      "kind": "smoke",
+      "title": "adaptive layer height on a sphere varies within the printer limits",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "smoke": "sphere-adaptive"
+    },
+    {
+      "id": "smoke-pause-at-layer",
+      "kind": "smoke",
+      "title": "a pause at a print Z appears once, before that layer, as the machine pause G-code",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "pause-at-layer"
+    },
+    {
+      "id": "smoke-layers-only",
+      "kind": "smoke",
+      "title": "\"layers\" returns the layer ranges and writes no G-code",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "smoke": "layers-only"
+    },
+    {
+      "id": "smoke-config-def",
+      "kind": "smoke",
+      "title": "config-def lists the settings with types and enum values, and the obsolete keys Orca drops or renames, none of them a setting",
+      "families": [
+        "config-def"
+      ],
+      "smoke": "config-def"
+    },
+    {
+      "id": "smoke-bambu-3mf",
+      "kind": "smoke",
+      "title": "an X1 Carbon job writes a .gcode.3mf holding Metadata/plate_1.gcode",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "bambu-3mf"
+    },
+    {
+      "id": "smoke-pocket-pause",
+      "kind": "smoke",
+      "title": "a box with a closed pocket: the pause goes before the first layer covering it (Z 6.2)",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "pocket-pause"
+    },
+    {
+      "id": "smoke-info",
+      "kind": "smoke",
+      "title": "\"info\" returns the objects, the bed and the preset names, and slices nothing",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "smoke": "info"
+    },
+    {
+      "id": "smoke-filaments",
+      "kind": "smoke",
+      "title": "two filaments: a filament change at 5.05 prints with T1; a change on the first layer and unused support filament slice too",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "wipe-tower",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "filaments"
+    },
+    {
+      "id": "smoke-z-offset",
+      "kind": "smoke",
+      "title": "the cube with a printer z_offset of 0.3 and of -0.2 mm: its layers and layer tags at print Z, every extrusion at print Z plus the offset",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "z-offset"
+    },
+    {
+      "id": "smoke-override-keys",
+      "kind": "smoke",
+      "title": "overrides with capital letters (required_nozzle_HRC, a filament setting) and with an old name Orca renames for its value (top_one_wall_type topmost, read as only_one_wall_top = 1) are applied: the cube slices and the G-code's config gives their values",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "override-keys"
+    },
+    {
+      "id": "smoke-preset-metadata",
+      "kind": "smoke",
+      "title": "presets that carry the lists the engine fills in itself (inherits_group, different_settings_to_system, compatible_machine_expression_group, compatible_process_expression_group, print_compatible_printers), as a project export may, and a process that gives a filament setting as an empty list, slice as without them",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "preset-metadata"
+    },
+    {
+      "id": "smoke-flush-volumes",
+      "kind": "smoke",
+      "title": "the flushing volumes between filaments: a nozzle_volume of 1e100 or 1e10 mm³, in the preset or as an override, is refused (config-invalid), not converted past an int; each of the H2D's nozzles flushes with the volume of the variant it prints with; filament_is_support given as an override counts",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "wipe-tower",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "flush-volumes"
+    },
+    {
+      "id": "smoke-prime-tower",
+      "kind": "smoke",
+      "title": "the prime tower: an object that sets only raft_layers keeps the print's support, whose filament puts a tower on the plate; on a bed moved by -150, -150 the tower moves with it; it prints on a diamond bed, off an excluded half and in a corridor with a fraction of a millimetre to spare, a place set off the bed is refused, not moved, and a tower wider than the bed fits nowhere",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "wipe-tower",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "prime-tower"
+    },
+    {
+      "id": "smoke-imported-settings",
+      "kind": "smoke",
+      "title": "a 3MF project whose object has wall_loops 6 slices, unlisted, with the plate's 2: its inner walls are the plain cube's",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "smoke": "imported-settings"
+    },
+    {
+      "id": "smoke-file-collisions",
+      "kind": "smoke",
+      "title": "a run whose files overlap (result-on-model-progress-on-job, invalid-job-result-on-model, invalid-job-progress-on-model, command-line-wrong, command-line-result-on-model, result-on-process, progress-on-machine, progress-on-model-link, result-on-model-dot-dot, result-tmp-on-job, progress-on-job, result-on-job, progress-on-model, result-on-model, result-on-gcode, result-on-gcode-trailing-dot, result-on-gcode-trailing-space, result-on-model-device-prefix, progress-on-model-default-stream, progress-on-model-named-stream) is refused before it writes over one: invalid-params, or nothing written when the result itself would replace an input",
+      "families": [
+        "intake"
+      ],
+      "smoke": "file-collisions"
+    },
+    {
+      "id": "smoke-crash-result",
+      "kind": "smoke",
+      "title": "a crash in Orca's code still writes the result: internal-error, exit code 255, no outputs",
+      "families": [
+        "intake"
+      ],
+      "smoke": "crash-result"
+    },
+    {
+      "id": "smoke-refusals",
+      "kind": "smoke",
+      "title": "refused jobs get their named error, exit code and object, and write no G-code",
+      "families": [
+        "intake"
+      ],
+      "smoke": "refusals"
+    },
+    {
+      "id": "mesh-20mm-cube-info",
+      "kind": "job",
+      "title": "20mm_cube.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mm-cube-layers",
+      "kind": "job",
+      "title": "20mm_cube.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mm-cube-slice",
+      "kind": "job",
+      "title": "20mm_cube.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-2x20x10-info",
+      "kind": "job",
+      "title": "2x20x10.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "2x20x10",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-2x20x10-layers",
+      "kind": "job",
+      "title": "2x20x10.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "2x20x10",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-2x20x10-slice",
+      "kind": "job",
+      "title": "2x20x10.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "2x20x10",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-a-info",
+      "kind": "job",
+      "title": "A.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "a",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-a-layers",
+      "kind": "job",
+      "title": "A.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "a",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-a-slice",
+      "kind": "job",
+      "title": "A.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "a",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-a-upsidedown-info",
+      "kind": "job",
+      "title": "A_upsidedown.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "a-upsidedown",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-a-upsidedown-layers",
+      "kind": "job",
+      "title": "A_upsidedown.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "a-upsidedown",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-a-upsidedown-slice",
+      "kind": "job",
+      "title": "A_upsidedown.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "a-upsidedown",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-v-info",
+      "kind": "job",
+      "title": "V.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "v",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-v-layers",
+      "kind": "job",
+      "title": "V.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "v",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-v-slice",
+      "kind": "job",
+      "title": "V.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "v",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-v-standing-info",
+      "kind": "job",
+      "title": "V_standing.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "v-standing",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-v-standing-layers",
+      "kind": "job",
+      "title": "V_standing.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "v-standing",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-v-standing-slice",
+      "kind": "job",
+      "title": "V_standing.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "v-standing",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-bridge-info",
+      "kind": "job",
+      "title": "bridge.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "bridge",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-bridge-layers",
+      "kind": "job",
+      "title": "bridge.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "bridge",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-bridge-slice",
+      "kind": "job",
+      "title": "bridge.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "bridge",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-concave-hole-info",
+      "kind": "job",
+      "title": "cube_with_concave_hole.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "cube-with-concave-hole",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-concave-hole-layers",
+      "kind": "job",
+      "title": "cube_with_concave_hole.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "cube-with-concave-hole",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-concave-hole-slice",
+      "kind": "job",
+      "title": "cube_with_concave_hole.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "cube-with-concave-hole",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-concave-hole-enlarged-info",
+      "kind": "job",
+      "title": "cube_with_concave_hole_enlarged.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "cube-with-concave-hole-enlarged",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-concave-hole-enlarged-layers",
+      "kind": "job",
+      "title": "cube_with_concave_hole_enlarged.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "cube-with-concave-hole-enlarged",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-concave-hole-enlarged-slice",
+      "kind": "job",
+      "title": "cube_with_concave_hole_enlarged.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "cube-with-concave-hole-enlarged",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-concave-hole-enlarged-standing-info",
+      "kind": "job",
+      "title": "cube_with_concave_hole_enlarged_standing.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "cube-with-concave-hole-enlarged-standing",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-concave-hole-enlarged-standing-layers",
+      "kind": "job",
+      "title": "cube_with_concave_hole_enlarged_standing.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "cube-with-concave-hole-enlarged-standing",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-concave-hole-enlarged-standing-slice",
+      "kind": "job",
+      "title": "cube_with_concave_hole_enlarged_standing.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "cube-with-concave-hole-enlarged-standing",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-hole-info",
+      "kind": "job",
+      "title": "cube_with_hole.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "cube-with-hole",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-hole-layers",
+      "kind": "job",
+      "title": "cube_with_hole.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "cube-with-hole",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-cube-with-hole-slice",
+      "kind": "job",
+      "title": "cube_with_hole.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "cube-with-hole",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-extruder-idler-info",
+      "kind": "job",
+      "title": "extruder_idler.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "extruder-idler",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-extruder-idler-layers",
+      "kind": "job",
+      "title": "extruder_idler.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "extruder-idler",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-extruder-idler-slice",
+      "kind": "job",
+      "title": "extruder_idler.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "extruder-idler",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-extruder-idler-quads-info",
+      "kind": "job",
+      "title": "extruder_idler_quads.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "extruder-idler-quads",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-extruder-idler-quads-layers",
+      "kind": "job",
+      "title": "extruder_idler_quads.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "extruder-idler-quads",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-extruder-idler-quads-slice",
+      "kind": "job",
+      "title": "extruder_idler_quads.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "extruder-idler-quads",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-frog-legs-info",
+      "kind": "job",
+      "title": "frog_legs.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "frog-legs",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-frog-legs-layers",
+      "kind": "job",
+      "title": "frog_legs.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "frog-legs",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-frog-legs-slice",
+      "kind": "job",
+      "title": "frog_legs.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "frog-legs",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-ipadstand-info",
+      "kind": "job",
+      "title": "ipadstand.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "ipadstand",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-ipadstand-layers",
+      "kind": "job",
+      "title": "ipadstand.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "ipadstand",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-ipadstand-slice",
+      "kind": "job",
+      "title": "ipadstand.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "ipadstand",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-overhang-info",
+      "kind": "job",
+      "title": "overhang.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "overhang",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-overhang-layers",
+      "kind": "job",
+      "title": "overhang.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "overhang",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-overhang-slice",
+      "kind": "job",
+      "title": "overhang.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "overhang",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-pyramid-info",
+      "kind": "job",
+      "title": "pyramid.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "pyramid",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-pyramid-layers",
+      "kind": "job",
+      "title": "pyramid.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "pyramid",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-pyramid-slice",
+      "kind": "job",
+      "title": "pyramid.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "pyramid",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-simplification-info",
+      "kind": "job",
+      "title": "simplification.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "simplification",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-simplification-layers",
+      "kind": "job",
+      "title": "simplification.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "simplification",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-simplification-slice",
+      "kind": "job",
+      "title": "simplification.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "simplification",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-sloping-hole-info",
+      "kind": "job",
+      "title": "sloping_hole.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "sloping-hole",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-sloping-hole-layers",
+      "kind": "job",
+      "title": "sloping_hole.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "sloping-hole",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-sloping-hole-slice",
+      "kind": "job",
+      "title": "sloping_hole.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "sloping-hole",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-small-dorito-info",
+      "kind": "job",
+      "title": "small_dorito.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "small-dorito",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-small-dorito-layers",
+      "kind": "job",
+      "title": "small_dorito.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "small-dorito",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-small-dorito-slice",
+      "kind": "job",
+      "title": "small_dorito.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "small-dorito",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-two-hollow-squares-info",
+      "kind": "job",
+      "title": "two_hollow_squares.obj, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "two-hollow-squares",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-two-hollow-squares-layers",
+      "kind": "job",
+      "title": "two_hollow_squares.obj, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "two-hollow-squares",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-two-hollow-squares-slice",
+      "kind": "job",
+      "title": "two_hollow_squares.obj, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "two-hollow-squares",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-prusa-stl-info",
+      "kind": "job",
+      "title": "test_3mf/Prusa.stl, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "prusa-stl",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "Prusa.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-prusa-stl-layers",
+      "kind": "job",
+      "title": "test_3mf/Prusa.stl, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "prusa-stl",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "Prusa.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-prusa-stl-slice",
+      "kind": "job",
+      "title": "test_3mf/Prusa.stl, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "prusa-stl",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "Prusa.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-cr-info",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-CR.stl, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "20mmbox-cr",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "20mmbox-CR.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-cr-layers",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-CR.stl, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "20mmbox-cr",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "20mmbox-CR.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-cr-slice",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-CR.stl, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mmbox-cr",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "20mmbox-CR.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-crlf-info",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-CRLF.stl, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "20mmbox-crlf",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "20mmbox-CRLF.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-crlf-layers",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-CRLF.stl, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "20mmbox-crlf",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "20mmbox-CRLF.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-crlf-slice",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-CRLF.stl, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mmbox-crlf",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "20mmbox-CRLF.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-lf-info",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-LF.stl, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "20mmbox-lf",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "20mmbox-LF.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-lf-layers",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-LF.stl, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "20mmbox-lf",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "20mmbox-LF.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-lf-slice",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-LF.stl, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mmbox-lf",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "20mmbox-LF.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-nonstandard-info",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-nonstandard.stl, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "20mmbox-nonstandard",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "20mmbox-nonstandard.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-nonstandard-layers",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-nonstandard.stl, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "20mmbox-nonstandard",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "20mmbox-nonstandard.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-nonstandard-slice",
+      "kind": "job",
+      "title": "test_stl/ASCII/20mmbox-nonstandard.stl, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mmbox-nonstandard",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "20mmbox-nonstandard.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-unicode-info",
+      "kind": "job",
+      "title": "test_stl/Geräte/20mmbox-čřšřěá.stl, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "20mmbox-unicode",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "20mmbox-čřšřěá.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-unicode-layers",
+      "kind": "job",
+      "title": "test_stl/Geräte/20mmbox-čřšřěá.stl, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "20mmbox-unicode",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "20mmbox-čřšřěá.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-20mmbox-unicode-slice",
+      "kind": "job",
+      "title": "test_stl/Geräte/20mmbox-čřšřěá.stl, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mmbox-unicode",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "20mmbox-čřšřěá.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-buchse-3mf-info",
+      "kind": "job",
+      "title": "test_3mf/Geräte/Büchse.3mf, info",
+      "families": [
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "buchse-3mf",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "Büchse.3mf",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-buchse-3mf-layers",
+      "kind": "job",
+      "title": "test_3mf/Geräte/Büchse.3mf, layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "buchse-3mf",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "Büchse.3mf",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "mesh-buchse-3mf-slice",
+      "kind": "job",
+      "title": "test_3mf/Geräte/Büchse.3mf, slice",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "buchse-3mf",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "Büchse.3mf",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "sketch-layers-fixed",
+      "kind": "job",
+      "title": "layers at fixed heights, no profile",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "brim_type": "no_brim",
+          "skirt_loops": "0",
+          "enable_support": "0",
+          "enable_arc_fitting": "0",
+          "precise_z_height": "0",
+          "layer_height": "0.2",
+          "initial_layer_print_height": "0.2"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "sketch-layers-profile",
+      "kind": "job",
+      "title": "layers from a boundary profile",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "layers",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "brim_type": "no_brim",
+          "skirt_loops": "0",
+          "enable_support": "0",
+          "enable_arc_fitting": "0",
+          "precise_z_height": "0",
+          "layer_height": "0.2",
+          "initial_layer_print_height": "0.2"
+        },
+        "objects": [
+          {
+            "index": 0,
+            "overrides": {},
+            "layerHeights": {
+              "mode": "profile",
+              "profile": [
+                0,
+                0.2,
+                5,
+                0.12,
+                12,
+                0.24,
+                20,
+                0.2
+              ]
+            },
+            "heightRanges": []
+          }
+        ],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "sketch-slice-pauses",
+      "kind": "job",
+      "title": "a slice with two pauses",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "brim_type": "no_brim",
+          "skirt_loops": "0",
+          "enable_support": "0",
+          "enable_arc_fitting": "0",
+          "precise_z_height": "0",
+          "layer_height": "0.2",
+          "initial_layer_print_height": "0.2"
+        },
+        "objects": [],
+        "customGcodes": [
+          {
+            "printZ": 2,
+            "type": "pause",
+            "note": "corpus: first pause"
+          },
+          {
+            "printZ": 4,
+            "type": "pause",
+            "note": "corpus: second pause"
+          }
+        ],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "sketch-slice-inserts",
+      "kind": "job",
+      "title": "a slice with a colour change inserted",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "brim_type": "no_brim",
+          "skirt_loops": "0",
+          "enable_support": "0",
+          "enable_arc_fitting": "0",
+          "precise_z_height": "0",
+          "layer_height": "0.2",
+          "initial_layer_print_height": "0.2"
+        },
+        "objects": [],
+        "customGcodes": [
+          {
+            "printZ": 3,
+            "type": "color",
+            "color": "#C03030"
+          }
+        ],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "sketch-slice-height-ranges",
+      "kind": "job",
+      "title": "a slice with a height range of its own settings",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "brim_type": "no_brim",
+          "skirt_loops": "0",
+          "enable_support": "0",
+          "enable_arc_fitting": "0",
+          "precise_z_height": "0",
+          "layer_height": "0.2",
+          "initial_layer_print_height": "0.2"
+        },
+        "objects": [
+          {
+            "index": 0,
+            "overrides": {},
+            "layerHeights": {
+              "mode": "fixed"
+            },
+            "heightRanges": [
+              {
+                "from": 2,
+                "to": 6,
+                "overrides": {
+                  "sparse_infill_density": "40%",
+                  "wall_loops": "4"
+                }
+              }
+            ]
+          }
+        ],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "sketch-slice-custom-gcode",
+      "kind": "job",
+      "title": "a slice with custom G-code at a layer",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "brim_type": "no_brim",
+          "skirt_loops": "0",
+          "enable_support": "0",
+          "enable_arc_fitting": "0",
+          "precise_z_height": "0",
+          "layer_height": "0.2",
+          "initial_layer_print_height": "0.2"
+        },
+        "objects": [],
+        "customGcodes": [
+          {
+            "printZ": 5,
+            "type": "custom",
+            "gcode": "M117 corpus custom"
+          }
+        ],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "sketch-slice-timelapse-tower",
+      "kind": "job",
+      "title": "one filament, a prime tower through smooth timelapse, written as a .gcode.3mf",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-classic",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "wipe-tower",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "bambu",
+        "model": "model.stl",
+        "overrides": {
+          "brim_type": "no_brim",
+          "skirt_loops": "0",
+          "enable_support": "0",
+          "enable_arc_fitting": "0",
+          "precise_z_height": "0",
+          "layer_height": "0.2",
+          "initial_layer_print_height": "0.2",
+          "enable_prime_tower": "1",
+          "timelapse_type": "1"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": true,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-rectilinear",
+      "kind": "job",
+      "title": "the 20 mm cube with rectilinear sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-rectilinear",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "rectilinear",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-alignedrectilinear",
+      "kind": "job",
+      "title": "the 20 mm cube with alignedrectilinear sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-alignedrectilinear",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "alignedrectilinear",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-zigzag",
+      "kind": "job",
+      "title": "the 20 mm cube with zigzag sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-zigzag",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "zigzag",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-crosszag",
+      "kind": "job",
+      "title": "the 20 mm cube with crosszag sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosszag",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "crosszag",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-lockedzag",
+      "kind": "job",
+      "title": "the 20 mm cube with lockedzag sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-lockedzag",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "lockedzag",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-line",
+      "kind": "job",
+      "title": "the 20 mm cube with line sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-line",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "line",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-grid",
+      "kind": "job",
+      "title": "the 20 mm cube with grid sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-grid",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "grid",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-triangles",
+      "kind": "job",
+      "title": "the 20 mm cube with triangles sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-triangles",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "triangles",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-tri-hexagon",
+      "kind": "job",
+      "title": "the 20 mm cube with tri-hexagon sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-tri-hexagon",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "tri-hexagon",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-cubic",
+      "kind": "job",
+      "title": "the 20 mm cube with cubic sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-cubic",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "cubic",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-adaptivecubic",
+      "kind": "job",
+      "title": "the 20 mm cube with adaptivecubic sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-adaptivecubic",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "adaptivecubic",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-quartercubic",
+      "kind": "job",
+      "title": "the 20 mm cube with quartercubic sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-quartercubic",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "quartercubic",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-supportcubic",
+      "kind": "job",
+      "title": "the 20 mm cube with supportcubic sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-supportcubic",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "supportcubic",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-lightning",
+      "kind": "job",
+      "title": "the 20 mm cube with lightning sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-lightning",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "lightning",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-honeycomb",
+      "kind": "job",
+      "title": "the 20 mm cube with honeycomb sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-honeycomb",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "honeycomb",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-3dhoneycomb",
+      "kind": "job",
+      "title": "the 20 mm cube with 3dhoneycomb sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-3dhoneycomb",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "3dhoneycomb",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-lateral-honeycomb",
+      "kind": "job",
+      "title": "the 20 mm cube with lateral-honeycomb sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-lateral-honeycomb",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "lateral-honeycomb",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-lateral-lattice",
+      "kind": "job",
+      "title": "the 20 mm cube with lateral-lattice sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-lateral-lattice",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "lateral-lattice",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-crosshatch",
+      "kind": "job",
+      "title": "the 20 mm cube with crosshatch sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "crosshatch",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-tpmsd",
+      "kind": "job",
+      "title": "the 20 mm cube with tpmsd sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-tpmsd",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "tpmsd",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-tpmsfk",
+      "kind": "job",
+      "title": "the 20 mm cube with tpmsfk sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-tpmsfk",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "tpmsfk",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-gyroid",
+      "kind": "job",
+      "title": "the 20 mm cube with gyroid sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-gyroid",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "gyroid",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-concentric",
+      "kind": "job",
+      "title": "the 20 mm cube with concentric sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-concentric",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "concentric",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-hilbertcurve",
+      "kind": "job",
+      "title": "the 20 mm cube with hilbertcurve sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-hilbertcurve",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "hilbertcurve",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-archimedeanchords",
+      "kind": "job",
+      "title": "the 20 mm cube with archimedeanchords sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-archimedeanchords",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "archimedeanchords",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-infill-octagramspiral",
+      "kind": "job",
+      "title": "the 20 mm cube with octagramspiral sparse infill",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-octagramspiral",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "sparse_infill_pattern": "octagramspiral",
+          "sparse_infill_density": "25%"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-perimeters-classic",
+      "kind": "job",
+      "title": "the 20 mm cube with the classic wall generator",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-classic",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "wall_generator": "classic"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-perimeters-arachne",
+      "kind": "job",
+      "title": "the 20 mm cube with the Arachne wall generator",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "wall_generator": "arachne"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-supports",
+      "kind": "job",
+      "title": "the overhang with normal supports",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-supportbase",
+        "infill-concentricinternal",
+        "supports",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-simplify-support-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "overhang",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "enable_support": "1",
+          "support_type": "normal(auto)"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-tree-supports",
+      "kind": "job",
+      "title": "the overhang with tree supports",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-supportbase",
+        "infill-concentricinternal",
+        "tree-supports",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-simplify-support-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "overhang",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "enable_support": "1",
+          "support_type": "tree(auto)"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-raft",
+      "kind": "job",
+      "title": "the overhang on a raft of 2 layers",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "raft",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "overhang",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "raft_layers": "2"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-ironing",
+      "kind": "job",
+      "title": "the 20 mm cube with its top ironed",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "ironing",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "ironing_type": "top"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-fuzzy-skin",
+      "kind": "job",
+      "title": "the 20 mm cube with fuzzy skin on its outer walls",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "fuzzy-skin",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "fuzzy_skin": "external"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "family-contouring",
+      "kind": "job",
+      "title": "the 20 mm cube with Z contouring (zaa_enabled)",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-contouring",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {
+          "zaa_enabled": "1"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true
+      }
+    },
+    {
+      "id": "example-filament-change-without-extruder",
+      "kind": "example",
+      "title": "protocol/examples/invalid/job-filament-change-without-extruder.json",
+      "families": [
+        "intake"
+      ],
+      "example": "job-filament-change-without-extruder.json"
+    },
+    {
+      "id": "example-no-filament",
+      "kind": "example",
+      "title": "protocol/examples/invalid/job-no-filament.json",
+      "families": [
+        "intake"
+      ],
+      "example": "job-no-filament.json"
+    },
+    {
+      "id": "example-preset-key-as-override",
+      "kind": "example",
+      "title": "protocol/examples/invalid/job-preset-key-as-override.json",
+      "families": [
+        "intake"
+      ],
+      "example": "job-preset-key-as-override.json"
+    },
+    {
+      "id": "example-profile-not-from-zero",
+      "kind": "example",
+      "title": "protocol/examples/invalid/job-profile-not-from-zero.json",
+      "families": [
+        "intake"
+      ],
+      "example": "job-profile-not-from-zero.json"
+    },
+    {
+      "id": "example-relative-model-path",
+      "kind": "example",
+      "title": "protocol/examples/invalid/job-relative-model-path.json",
+      "families": [
+        "intake"
+      ],
+      "example": "job-relative-model-path.json"
+    },
+    {
+      "id": "example-slice-without-output",
+      "kind": "example",
+      "title": "protocol/examples/invalid/job-slice-without-output.json",
+      "families": [
+        "intake"
+      ],
+      "example": "job-slice-without-output.json"
+    },
+    {
+      "id": "example-unknown-command",
+      "kind": "example",
+      "title": "protocol/examples/invalid/job-unknown-command.json",
+      "families": [
+        "intake"
+      ],
+      "example": "job-unknown-command.json"
+    },
+    {
+      "id": "refusal-missing-model",
+      "kind": "refusal",
+      "title": "the smoke refusal missing-model (file-not-found)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "missing-model"
+    },
+    {
+      "id": "refusal-unknown-setting",
+      "kind": "refusal",
+      "title": "the smoke refusal unknown-setting (setting-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "unknown-setting"
+    },
+    {
+      "id": "refusal-unknown-capitalised-setting",
+      "kind": "refusal",
+      "title": "the smoke refusal unknown-capitalised-setting (setting-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "unknown-capitalised-setting"
+    },
+    {
+      "id": "refusal-preset-file-key",
+      "kind": "refusal",
+      "title": "the smoke refusal preset-file-key (job-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "preset-file-key"
+    },
+    {
+      "id": "refusal-renamed-key-dropped-value",
+      "kind": "refusal",
+      "title": "the smoke refusal renamed-key-dropped-value (setting-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "renamed-key-dropped-value"
+    },
+    {
+      "id": "refusal-pause-below-first-layer",
+      "kind": "refusal",
+      "title": "the smoke refusal pause-below-first-layer (custom-gcode-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "pause-below-first-layer"
+    },
+    {
+      "id": "refusal-too-big-for-the-bed",
+      "kind": "refusal",
+      "title": "the smoke refusal too-big-for-the-bed (arrange-failed)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "too-big-for-the-bed"
+    },
+    {
+      "id": "refusal-two-at-one-print-z",
+      "kind": "refusal",
+      "title": "the smoke refusal two-at-one-print-z (custom-gcode-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "two-at-one-print-z"
+    },
+    {
+      "id": "refusal-flat-model",
+      "kind": "refusal",
+      "title": "the smoke refusal flat-model (model-unreadable)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "flat-model"
+    },
+    {
+      "id": "refusal-lone-triangle",
+      "kind": "refusal",
+      "title": "the smoke refusal lone-triangle (model-unreadable)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "lone-triangle"
+    },
+    {
+      "id": "refusal-profile-not-at-zero",
+      "kind": "refusal",
+      "title": "the smoke refusal profile-not-at-zero (layer-profile-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "profile-not-at-zero"
+    },
+    {
+      "id": "refusal-layers-above-the-nozzle",
+      "kind": "refusal",
+      "title": "the smoke refusal layers-above-the-nozzle (layer-profile-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "layers-above-the-nozzle"
+    },
+    {
+      "id": "refusal-gcode-folder-unmakeable",
+      "kind": "refusal",
+      "title": "the smoke refusal gcode-folder-unmakeable (output-failed)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "gcode-folder-unmakeable"
+    },
+    {
+      "id": "refusal-drive-rooted-path",
+      "kind": "refusal",
+      "title": "the smoke refusal drive-rooted-path (job-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "drive-rooted-path"
+    }
+  ]
+}

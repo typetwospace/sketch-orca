@@ -33,6 +33,10 @@ it does not take; a gate that ran and failed exits 1 (`parity neutral`, `parity 
 | `oracle` | Builds the oracle, the engine with the knobs of `oracle/patches` (`oracle/README.md`), and stages it in `<work>/oracle/dist`. It refuses to start with less than 40 GB free on the work folder's drive or in a work folder longer than `WINDOWS_WORK_PATH_MAX`, builds on the engine's dependency build (`<work>/deps`, shared, never rebuilt) with the engine's toolchain and `/MT`, writes the linker map beside the program, and stages `bin/sketch-orca-oracle.exe`, its map, the libraries it loads, the engine's resources and `oracle.json` (`oracle.ts`, `BUILDING.md`). The oracle never ships. |
 | `neutral` | The neutrality gate (`neutral.ts`), on every smoke case's jobs, run as `same` runs them: (a) with no knob set, the oracle's outputs equal those of `<work>/dist/engine` after `masks.json`; (b) with `SKETCH_ORCA_ORACLE_TIME` and `SKETCH_ORCA_ORACLE_SEED` set, two oracle runs are byte for byte the same, with no mask; (c) with `SKETCH_ORCA_ORACLE_THREADS=1` and `=8` (time and seed pinned, each run dumping SOP1 files, `SOP1.md`), every run finishes, and each output or dump that differs is recorded as a T candidate, with what the dumps' RUN records say TBB reported. It writes `<work>/parity/neutral.json` and exits 1 when (a) or (b) fails, 0 when both pass. It needs `parity oracle`, and `build`, `smoke` and `stage` of this checkout. |
 | `probe [--check]` | Builds the probe program (`oracle/probe/`, `probe.ts`) against the oracle's build tree, with the compile line of the engine's `cli/config_def.cpp` and the link line of `sketch-orca.exe` read from the oracle's `build.ninja`, with CMake, Ninja and `cl` into `<work>/oracle/probe-build` (no Fortran check; no `.vfproj` or `CompilerIdFortran` may appear there), and runs it hidden. It records what the engine's foundations do: the static UCRT's maths functions (each one the oracle's linker map lists, with FMA3 on and off), MSVC's casts, `printf`, `to_chars`, iostream output and parsers, the STL's sorts, heaps, searches, hashes, unordered containers and random numbers, oneTBB's split trees for P from 1 to 64, and Orca's ConfigDef (`SOP1.md`, "Probe files"). The full set goes to `<work>/parity/probes`, the committed subset to `probes/` (under 8 MB). `--check` runs it again into `<work>/parity/runs/probe-check` and exits 1 unless every file of both sets is the same bytes. It needs `parity oracle`. |
+| `corpus` | Builds the corpus (`CORPUS.md`, `corpus.ts`): converts Orca's 21 OBJ test meshes to binary STL as Sketch writes `model.stl`, and copies the 6 STL files and the 3MF as they are, from `<work>/src/tests/data` into `<work>/parity/corpus/meshes`. It works out the families each case exercises from its presets, overrides and Orca's defaults (`probes/configdef.json`), and writes `corpus.json`: 165 cases, namely the smoke cases, each mesh as info, layers and slice, the Sketch-shaped jobs, a slice per family the presets leave off, the invalid examples and the refusals. It needs `fetch` and `parity probe`. |
+| `record [--only <regex>]` | Runs every corpus case with the oracle (time and seed pinned) at 1, 2, 8 and the machine's thread count, and with `<work>/dist/engine` five times, all in one cases folder and in the environment a client gives the engine (`record.ts`). It gives each output a class (`classes.ts`: H, R, T, N, E, B). It keeps the oracle's one-thread outputs in `<work>/parity/goldens`, and writes the front end's goldens into `goldens/front/`, `parity.json`, and `<work>/parity/record.json`. A pass whose program, knobs and corpus are unchanged is kept, not run again. `--only` tries the matching cases in `runs/record-only` and writes nothing else. It needs `parity corpus`, `parity oracle`, and `build`, `smoke` and `stage`. |
+| `envelope` | For each output `record` classed R, records which lines of the shipped engine's five runs vary, and by how much each number on them (`envelope.ts`), in `<work>/parity/envelope/envelope.json`. |
+| `goldens --check <folder>` | Copies the oracle and the corpus to a second work folder and runs the oracle there as the goldens were run. It compares each output with the goldens, with each folder's paths written as `<case>`, `<cases>`, `<resources>` and `<work>` (`goldens.ts`). Every output that still differs is an H-site: it goes in `parity.json`'s `hSites` for an oracle H-patch, and its class in `record.json` becomes H. It writes `<work>/parity/goldens-check.json` and exits 0: an H-site is a finding. |
 
 ## Every engine runs as a client runs it
 
@@ -80,14 +84,19 @@ The harness writes only in the work folder (`%LOCALAPPDATA%\SketchDev\orca-engin
 parity/reference/<version>/   a published engine, unpacked and checked (reference)
 parity/reference/<version>.json   what it was unpacked from: tag, asset, size, SHA-256, address
 parity/reference/downloads/<version>/   the zip and SHA256SUMS as downloaded
-parity/corpus/                the jobs and meshes the families are certified on
-parity/goldens/               the C++ engine's outputs of the corpus
+parity/corpus/                the corpus's meshes (meshes/<mesh>/<file>) and a copy of corpus.json
+parity/goldens/               the oracle's one-thread outputs of the corpus (cases/<case>/<n>/) and
+                              goldens.json (what made them, and the paths they name)
+parity/record.json            parity record's report: every output and its class
+parity/goldens-check.json     parity goldens --check's report: the H-sites
 parity/runs/                  one folder per comparison run; same/ holds parity same's cases
                               (cases/), and each engine's recorded runs (reference/, head/:
                               <case>/<n>/ with stdout, stderr and files/); neutral/ holds parity
                               neutral's cases, its recorded runs (head/, oracle/, pinned-a/,
                               pinned-b/, threads-1/, threads-8/) and the dumps of the thread runs
-                              (dumps-t1/, dumps-t8/: <case>/<n>/*.sop1)
+                              (dumps-t1/, dumps-t8/: <case>/<n>/*.sop1); record/ holds parity
+                              record's cases (cases/) and a store per pass (oracle-p<P>/,
+                              engine-<n>/: <case>/<n>/ and pass.json)
 parity/probes/                the probe program's full set (parity probe): crt.sop1, fmt.sop1,
                               stl.sop1, tbb.sop1, configdef.json
 parity/runs/probe-check/      parity probe --check's second run (committed/, full/)
@@ -115,8 +124,10 @@ of the probe files), `HAZARDS.md` (every place the engine's bytes hang on more t
 with its source line, its class and what holds the translation to it), `oracle/` (the oracle's
 patches and their README, and `oracle/probe/`, the probe program, with `oracle/probe/recorded/`,
 the programs whose output the crates' own tests hold), `probes/` (the committed probe subset,
-about 6.4 MB), and later `parity.json`, `corpus.json` and the front-end goldens. Meshes, slice
-goldens and the full probe set stay in the work folder.
+about 6.4 MB), `corpus.json` and `CORPUS.md` (the corpus, its families and classes),
+`parity.json` (every family, its classes and whether it is certified), and `goldens/front/` (the
+front end's goldens: `version.json`, `config-def.json` and `intake/<case>.result.json`, about
+0.5 MB). Meshes, slice goldens and the full probe set stay in the work folder.
 
 ## Tests
 
@@ -126,4 +137,8 @@ GitHub and fetch), `test/parity-same.test.ts`, `test/parity-oracle.test.ts` (the
 and knobs, the refusals of `parity oracle`, the SOP1 reader and what `parity neutral` makes of runs
 and dumps), `test/parity-probe.test.ts` (the map's maths functions, the compile and link lines
 read from a build.ninja, the probe's configure line, a fake probe run, and the committed probe
-files), `test/github.test.ts` and `test/paths.test.ts`.
+files), `test/parity-corpus.test.ts` (the meshes and the OBJ to `model.stl` conversion, the
+families a job's settings reach, the cases, a job made concrete in a case's folder, the invalid
+examples moved into one, and `corpus.json`), `test/parity-classes.test.ts` (each class, paths made
+portable, the thread counts, `parity.json`, the H-sites of two folders and the envelope),
+`test/github.test.ts` and `test/paths.test.ts`.

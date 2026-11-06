@@ -1,0 +1,16 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "file-not-found",
+  "message": "the model <case>\\missing.stl does not exist",
+  "exitCode": -3,
+  "warnings": [],
+  "command": "slice",
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.1.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}
