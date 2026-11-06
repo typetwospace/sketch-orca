@@ -111,7 +111,7 @@ fn available_hw_concurrency() -> usize {
             }
         }
     }
-    total.max(1)
+    if total < 1 { 1 } else { total }
 }
 
 /// The processors the standard library sees, where oneTBB's Windows reading does not apply.

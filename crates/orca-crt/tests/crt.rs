@@ -23,6 +23,9 @@
 //! - `rand` and `srand` equal the UCRT's on fresh threads, and the values that program printed.
 //!
 //! Every case runs with a seeded generator, and each test asserts its count of cases.
+//!
+//! The recording program is `parity/oracle/probe/recorded/msvc_crt_fmt.cpp`: it printed the edge
+//! casts (`MSVC_DOUBLE_CASTS`, `MSVC_FLOAT_CASTS`) and the `rand` values (`MSVC_RAND`).
 
 use std::arch::asm;
 use std::fmt::Debug;

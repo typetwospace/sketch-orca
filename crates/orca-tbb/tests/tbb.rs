@@ -18,8 +18,8 @@
 //! `parallel_invoke` and `task_group` run their functions, nested groups and a loop inside a task
 //! included.
 //!
-//! The recording program printed one line per case. The tests here print the same lines from
-//! orca-tbb in a serial arena and compare them: a few in full, and every line of each kind
+//! The recording program, `parity/oracle/probe/recorded/tbb.cpp`, printed one line per case. The
+//! tests here print the same lines from orca-tbb in a serial arena and compare them: a few in full, and every line of each kind
 //! through the FNV-1a digest of all of that kind's lines, with the line count. Besides, a
 //! parallel arena must give the same leaves and the same reductions, run every index once,
 //! and pass panics and cancellation on as oneTBB passes its exceptions.

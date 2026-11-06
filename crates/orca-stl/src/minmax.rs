@@ -365,7 +365,7 @@ fn element_impl<T: Lane>(v: &[T], mode: Mode, isa: VectorIsa) -> (usize, usize) 
                             let idx_val: Vec<u64> = (0..lanes)
                                 .map(|l| if eq[l] { idx_max[l] } else { 0 })
                                 .collect();
-                            let greatest = idx_val.iter().copied().max().unwrap_or(0);
+                            let greatest = idx_val.iter().copied().fold(0, max);
                             (0..lanes)
                                 .rev()
                                 .find(|&l| eq[l] && idx_val[l] == greatest)

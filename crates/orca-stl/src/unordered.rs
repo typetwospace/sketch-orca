@@ -533,7 +533,7 @@ impl<K, V, H, E> UnorderedMap<K, V, H, E> {
     /// `_Desired_grow_bucket_count`.
     fn desired_grow_bucket_count(&self, n: usize) -> usize {
         let old = self.maxidx;
-        let req = MIN_BUCKETS.max(self.min_load_factor_buckets(n));
+        let req = crate::max(MIN_BUCKETS, self.min_load_factor_buckets(n));
         if old >= req {
             return old;
         }
@@ -799,7 +799,7 @@ impl<K, V, H: HashFn<K>, E: KeyEq<K>> UnorderedMap<K, V, H, E> {
     /// `rehash(n)`: at least `n` buckets and at least `size / max_load_factor`, rounded up to a
     /// power of two; nothing if the table has that many already.
     pub fn rehash(&mut self, n: usize) {
-        let n = n.max(self.min_load_factor_buckets(self.len));
+        let n = crate::max(n, self.min_load_factor_buckets(self.len));
         if n <= self.maxidx {
             return;
         }

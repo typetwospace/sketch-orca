@@ -19,6 +19,9 @@
 //! as its adjustment says, and what a program built with MSVC 14.42 printed for 25 streams. Every
 //! case runs with a seeded generator, so a failure repeats; each test counts its cases and asserts
 //! the count, so none passes by doing less.
+//!
+//! The recording program of the 25 streams (`MSVC_OSTREAM`) is
+//! `parity/oracle/probe/recorded/msvc_crt_fmt.cpp`.
 
 use orca_fmt::Errc;
 use orca_fmt::ostream::{self, Adjust, FloatField, Numpunct, Stream};
@@ -847,7 +850,7 @@ fn double_midpoint(v: f64) -> Vec<u8> {
     let a = printf::sprintf(b"%.1100f", &[Arg::Double(v)]).unwrap();
     let b = printf::sprintf(b"%.1100f", &[Arg::Double(half_ulp)]).unwrap();
     // Both have 1100 decimals: align the integer parts and add digit by digit.
-    let width = a.len().max(b.len());
+    let width = if a.len() < b.len() { b.len() } else { a.len() };
     let pad = |s: &[u8]| {
         let mut p = vec![b'0'; width - s.len()];
         p.extend_from_slice(s);

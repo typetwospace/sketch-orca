@@ -371,7 +371,7 @@ struct RngV2 {
 
 impl RngV2 {
     fn new<G: Urbg + ?Sized>(ty_bits: u32) -> Self {
-        let udiff_bits = ty_bits.max(G::BITS);
+        let udiff_bits = crate::max(ty_bits, G::BITS);
         RngV2 {
             ty_bits,
             udiff_bits,

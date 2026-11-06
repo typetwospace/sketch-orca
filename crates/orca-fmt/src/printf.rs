@@ -728,7 +728,7 @@ fn write_integer(
     // Zero with precision 0 has no digits.
     let mut digits = Vec::new();
     push_digits(&mut digits, magnitude, base, upper);
-    let mut body = Vec::with_capacity(precision.max(digits.len()) + 1);
+    let mut body = Vec::with_capacity(crate::cpp_max(precision, digits.len()) + 1);
     body.resize(precision.saturating_sub(digits.len()), b'0');
     body.extend_from_slice(&digits);
 

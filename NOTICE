@@ -70,6 +70,73 @@ On Windows the engine and the libraries it loads that are built from source with
 with the Visual C++ compiler (/MT; patches/0005). GMP's DLL, built with MinGW-w64, loads Windows'
 own msvcrt.dll. No Visual C++ runtime DLL is shipped with the engine.
 
+Code of others that the Rust translation of the engine (crates/, added 2026-11-06) carries,
+translated into Rust. Each file that carries it says what it carries, from which file, under
+"Carries ... code" in its header:
+
+  - The Microsoft C++ Standard Library (https://github.com/microsoft/STL, tag vs-2022-17.12,
+    commit 91e425587a0b9b5ac0d1005844c661fee2e2813b), the standard library of MSVC 14.42, by
+    Microsoft Corporation, under the Apache License, version 2.0, with the LLVM Exceptions
+    (Apache-2.0 WITH LLVM-exception; licenses/Apache-2.0.txt and licenses/LLVM-exception.txt):
+      crates/orca-fmt/src/to_chars.rs, charconv_tables.rs, ostream.rs and parse.rs (std::to_chars,
+        std::from_chars, num_put and std::to_string: stl/inc/charconv, xcharconv_ryu.h,
+        xcharconv_ryu_tables.h, xlocnum and string, stl/src/charconv.cpp and the
+        xcharconv_*tables*.cpp files);
+      crates/orca-stl/src/sort.rs, stable_sort.rs, select.rs, heap.rs, minmax.rs, unordered.rs and
+        random.rs (sort, stable_sort, inplace_merge, nth_element, partial_sort, the searches and
+        unique, the heaps and priority_queue, min and max, the unordered containers and std::hash,
+        mersenne_twister_engine, seed_seq, the distributions and shuffle: stl/inc/algorithm,
+        xutility, utility, __msvc_heap_algorithms.hpp, queue, xhash, unordered_map, unordered_set,
+        type_traits, xstring and random, and stl/src/vector_algorithms.cpp).
+    As section 4(d) of the Apache License asks, these are the attribution notices of the
+    library's NOTICE.txt that pertain to the code carried here:
+
+      Microsoft C++ Standard Library
+
+      Copyright (c) Microsoft Corporation
+
+      Licensed under the Apache License, Version 2.0 (the "License");
+      you may not use this file except in compliance with the License.
+      You may obtain a copy of the License at
+
+         http://www.apache.org/licenses/LICENSE-2.0
+
+      Unless required by applicable law or agreed to in writing, software
+      distributed under the License is distributed on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+      See the License for the specific language governing permissions and
+      limitations under the License.
+
+    and Ryu's notice, below. The other notices of that NOTICE.txt (William E. Kempf's, Unicode,
+    Inc.'s, the LLVM Project's, Victor Zverovich's and David Blackman and Sebastiano Vigna's)
+    are for files of the library that nothing here carries.
+  - Ryu, by Ulf Adams (https://github.com/ulfjack/ryu), as microsoft/STL carries it in
+    stl/inc/xcharconv_ryu.h, xcharconv_ryu_tables.h and stl/src/xcharconv_ryu_tables.cpp, under
+    the Boost Software License, version 1.0 (BSL-1.0; licenses/BSL-1.0.txt) as well as Microsoft's
+    licence: crates/orca-fmt/src/to_chars.rs (d2s, f2s and d2fixed) and charconv_tables.rs (its
+    tables). Its notice:
+
+      Copyright 2018 Ulf Adams
+      Copyright (c) Microsoft Corporation. All rights reserved.
+
+      Boost Software License - Version 1.0 - August 17th, 2003
+
+  - oneTBB 2021.5.0 (https://github.com/uxlfoundation/oneTBB, tag v2021.5.0), the version
+    OrcaSlicer's dependency build pins, Copyright (c) 2005-2021 Intel Corporation, under the
+    Apache License, version 2.0 (licenses/Apache-2.0.txt): crates/orca-tbb/src/concurrency.rs,
+    partitioner.rs, range.rs, parallel_for.rs, parallel_reduce.rs and invoke.rs (the hardware
+    concurrency, the partitioners, blocked_range, parallel_for, parallel_for_each,
+    parallel_reduce, parallel_deterministic_reduce, parallel_invoke and task_group). oneTBB has
+    no NOTICE file at that tag, so section 4(d) of the Apache License asks for no notice beyond
+    its copyright and licence; the third-party programs of its third-party-programs.txt (ITT,
+    the Python thread pool, gperftools, the libstdc++ workaround and doctest) are not carried.
+
+The Rust translation matches Microsoft's Universal C Runtime (the static UCRT the engine links:
+its maths functions, printf, strtod and strtof, and rand) from black-box tests of the C++ engine's
+own build (parity/oracle/probe/, the records in parity/probes/), not from its source: the UCRT's
+source is not open source, and nothing of it is carried (CONTRIBUTING.md, "Behaviour without
+source").
+
 
 What was changed, and when
 --------------------------
@@ -101,10 +168,31 @@ newest date of the patch headers.
     2026-11-01 (the static runtime, which stage checks, a cap on the dependency build's jobs, the
     build's provenance, the run lock, the privacy and smoke gates, the source bundle's
     binaries, the MinGW-w64 toolchain that builds GMP and MPFR, and the longest work folder a
-    Windows build takes).
+    Windows build takes), and 2026-11-06: the parity harness (scripts/lib/parity/: the
+    dispatcher behind bun scripts/orca.ts parity, parity reference, same, oracle, neutral and
+    probe), the Rust runner (scripts/rust.ts and scripts/lib/rust.ts), the configure lines and
+    the check that no build can start Visual Studio's IDE (scripts/lib/cmake.ts and
+    scripts/lib/noide.ts: no Fortran compiler check, Eigen without its tests, and a build tree
+    with a CompilerIdFortran folder or a .vfproj file refused), and matchDepsBuild in
+    scripts/orca.ts (a build refuses a dependency build of other inputs).
     scripts/lib/smoke.ts carries a TypeScript port of layer-height code from
     src/libslic3r/Slicing.cpp, to predict the layers the engine must make; those portions are
     copyright the OrcaSlicer contributors.
   - protocol/ specifies the engine's command line and files, added 2026-10-31. It carries no
     OrcaSlicer code or text and is licensed under the MIT licence (protocol/LICENSE), so that any
     program may implement it.
+  - crates/ is the Rust translation of the engine, added 2026-11-06: a Cargo workspace (Cargo.toml,
+    Cargo.lock, rust-toolchain.toml, rustfmt.toml, clippy.toml) whose crates translate the C++
+    engine's foundations (orca-crt, orca-fmt, orca-stl, orca-tbb) and will translate its front
+    end and the parts of libslic3r it reaches. The code of others it carries is listed above;
+    code translated from OrcaSlicer, when it comes, is listed by file under "Carries OrcaSlicer
+    code", as for cli/.
+  - parity/ holds what holds the translation to the C++ engine, added 2026-11-06: the record
+    format (parity/SOP1.md), the masks of what may differ between runs (parity/masks.json), and
+    the oracle (parity/oracle/): the C++ engine built with knobs that pin its clock, seeds,
+    threads and FMA3 choice and dump its intermediate data. The oracle's changes to OrcaSlicer's
+    files are parity/oracle/patches/0001 to 0005, each headed in the same form as patches/ with
+    "Modified for Sketch, 2026-11-06.", each acting only when its knob is set; the shipped engine
+    never gets them. parity/oracle/probe/ is a program built against the oracle's build tree that
+    records what the C++ engine's foundations do (parity/probes/), and its recorded/ folder keeps
+    the programs whose output the crates' own tests hold.

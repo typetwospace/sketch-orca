@@ -23,10 +23,14 @@
 // licenses/LLVM-exception.txt). The STL marks its floating-point parser as derived from the UCRT's
 // corecrt_internal_big_integer.h and corecrt_internal_strtox.h; Microsoft publishes it, in the STL,
 // under that licence. strtod, strtof, the strtol family and atof, atoi, atol and atoll are not the
-// UCRT's code, whose source is not under an open licence: they are written from the C standard (C17 7.22.1) around
-// the STL's parser, with the UCRT's choices where the standard leaves them open and the three
-// places where the UCRT's rounding differs from the STL's (Parser), and tests/fmt.rs compares them
-// with the UCRT's own functions.
+// UCRT's code, whose source is not under an open licence: they are written from the C standard
+// (C17 7.22.1) around the STL's parser, with the UCRT's choices where the standard leaves them open
+// and the three places where the UCRT's rounding differs from the STL's (Parser). Those behaviours
+// come from black-box tests of the UCRT's own functions, never from the UCRT's source (which the
+// Windows SDK ships under Microsoft's own licence): tests/fmt.rs calls them and compares, and
+// parity/probes/fmt.sop1 records what the C++ engine's build of them does.
+// CONTRIBUTING.md, "Behaviour without source", gives the rule; README.md's open items hold the
+// question for counsel.
 
 //! Number parsing as the C++ engine's runtime does it: `std::from_chars` of MSVC 14.42's standard
 //! library, the UCRT's `strtod`, `strtof`, `strtol`, `strtoul`, `strtoll`, `strtoull`, `atof`,
@@ -1099,7 +1103,7 @@ fn convert_decimal_string<T: FromCharsFloat>(
 
     // 0.mantissa * 10^exponent: the first `exponent` digits (if positive) are the integer part,
     // the rest the fractional part.
-    let positive_exponent = data.exponent.max(0) as u32;
+    let positive_exponent = crate::cpp_max(data.exponent, 0) as u32;
     let integer_digits_present = positive_exponent.min(data.mantissa_count);
     let integer_digits_missing = positive_exponent - integer_digits_present;
     let integer_digits = &data.mantissa[..integer_digits_present as usize];
@@ -1439,7 +1443,7 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
         let read = if exp_abs_too_large {
             if exponent_is_negative { -5201 } else { 5201 }
         } else {
-            exponent.clamp(-5201, 5201)
+            crate::cpp_clamp(exponent, -5201, 5201)
         };
         let total = read + exponent_adjustment * exponent_adjustment_multiplier;
         if read > MAXIMUM_TEMPORARY_DECIMAL_EXPONENT
@@ -1481,11 +1485,11 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
     // Bring the exponent and the adjustment to the same sign, so neither overflows.
     if exponent > 0 && exponent_adjustment < 0 {
         if is_hexadecimal {
-            let further_adjustment = (-((exponent - 1) / 4 + 1)).max(exponent_adjustment);
+            let further_adjustment = crate::cpp_max(-((exponent - 1) / 4 + 1), exponent_adjustment);
             exponent += further_adjustment * 4;
             exponent_adjustment -= further_adjustment;
         } else {
-            let further_adjustment = (-exponent).max(exponent_adjustment);
+            let further_adjustment = crate::cpp_max(-exponent, exponent_adjustment);
             exponent += further_adjustment;
             exponent_adjustment -= further_adjustment;
         }

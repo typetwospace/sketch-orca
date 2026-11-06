@@ -41,14 +41,29 @@ The maintainers follow these rules for their own changes:
     and combines with AGPL-3.0-only; `NOTICE` and `licenses/` name each. A test refuses a block
     without a date, a source file, the holders or the licence, and a file that says it is
     translated or ported from other code and has no block.
-  - Every sort, selection, heap and float `min` or `max` goes through `orca-stl`, every maths call
-    (`sin`, `cos`, `pow`, `exp`, `ln` and the rest, for `f64` and `f32`) through `orca-crt`, and
-    no engine crate uses `std`'s `HashMap` or `HashSet`: `clippy.toml` refuses them with
-    `disallowed-methods` and `disallowed-types`. `orca-stl` and `orca-crt` allow them only at
+  - Every sort, selection, heap, search (`lower_bound`, `upper_bound`), `unique` and float `min`
+    or `max` goes through `orca-stl`, every maths call (`sin`, `cos`, `pow`, `exp`, `ln` and the
+    rest, for `f64` and `f32`) through `orca-crt`, and no engine crate uses `std`'s `HashMap` or
+    `HashSet`: `clippy.toml` refuses them with `disallowed-methods` and `disallowed-types`. It
+    also refuses Rust's `max` of two and its iterator `max`, `max_by`, `max_by_key` and
+    `min_by_key` (which keep another of equal elements than `std::max` and `std::max_element`),
+    `Ord::clamp` (which panics where `std::clamp` does not), `binary_search` and `partition_point`
+    (use `orca-stl`'s `lower_bound` and `upper_bound`) and `Vec::dedup` (use `orca-stl`'s
+    `unique`). A crate without `orca-stl` among its dependencies writes the C++ expression
+    (`a < b ? b : a`) instead, as `orca-fmt`'s `cpp_max` does. `orca-stl` and `orca-crt` allow them only at
     their own definitions, with an `#[allow(clippy::disallowed_methods)]` or
     `#[allow(clippy::disallowed_types)]` on that one item and a comment saying why. Rust's own
     sorts are not the C++ engine's: the order of the comparator calls is part of the result.
   - Use `f32` wherever the C++ uses `float`, and the C++ order of evaluation.
+  - Behaviour without source. Where the C++ engine's behaviour comes from code whose source is not
+    under an open licence (Microsoft's Universal C Runtime: its maths functions, `printf`,
+    `strtod`, `strtof` and the `strtol` family, `rand`), the translation is written from the C
+    standard and from black-box tests of that code, never from its source (the Windows SDK ships
+    the UCRT's source under Microsoft's own licence; do not read it for this work). The tests are
+    the crates' own (`orca-fmt`'s `tests/fmt.rs` calls the UCRT and compares) and the probe
+    records of the C++ engine's build (`parity/oracle/probe/`, `parity/probes/`). `orca-crt`
+    calls the UCRT's maths functions instead of translating them. Whether this is enough is an
+    open question for counsel (`README.md`, open items).
   - A dependency pin (`rayon`, `windows-sys`, `sha2`, the toolchain, MSVC, the SDK) is changed by
     a task of its own, with the probes run again; `Cargo.lock` is committed with it.
   - Update the docs that describe a change with it: this file, `README.md`, `BUILDING.md`, the

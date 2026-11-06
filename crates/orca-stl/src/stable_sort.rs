@@ -63,7 +63,7 @@ impl<T> TempBuffer<T> {
     fn optimistic_count() -> usize {
         match mem::size_of::<T>() {
             0 => usize::MAX,
-            size => (4096 / size).max(1),
+            size => crate::max(4096 / size, 1),
         }
     }
 
@@ -85,7 +85,7 @@ impl<T> TempBuffer<T> {
         let mut storage: Vec<MaybeUninit<T>> = Vec::new();
         let mut count = requested.min(isize::MAX as usize);
         let mut got = 0;
-        if count <= usize::MAX / mem::size_of::<T>().max(1) {
+        if count <= usize::MAX / crate::max(mem::size_of::<T>(), 1) {
             while 0 < count {
                 if storage.try_reserve_exact(count).is_ok() {
                     got = count;

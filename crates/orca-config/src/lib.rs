@@ -8,9 +8,9 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
 // (LICENSE) for more details.
 
-//! Orca configuration: the definition of every setting, legacy keys and serialisation.
+//! A scaffold: the crate holds only its name until task O1.8b of the translation's plan fills it.
 //!
-//! Orca's configuration: `ConfigDef` (generated from the `config-def` probe, not typed in by hand),
+//! It is to hold Orca's configuration: `ConfigDef` (generated from the `config-def` probe, not typed in by hand),
 //! the legacy and obsolete keys Orca renames or drops when it reads a configuration, and the
 //! serialisation of a configuration.
 

@@ -1,8 +1,8 @@
 # orca-config
 
-Orca configuration: the definition of every setting, legacy keys and serialisation.
+A scaffold: the crate holds only its name until task O1.8b of the translation's plan fills it.
 
-Orca's configuration: `ConfigDef` (generated from the `config-def` probe, not typed in by hand), the legacy and obsolete keys Orca renames or drops when it reads a configuration, and the serialisation of a configuration.
+It is to hold Orca's configuration: `ConfigDef` (generated from the `config-def` probe, not typed in by hand), the legacy and obsolete keys Orca renames or drops when it reads a configuration, and the serialisation of a configuration.
 
 Part of the Rust translation of sketch-orca (the workspace in the repository root; see the
 repository's `README.md`, `BUILDING.md` and `CONTRIBUTING.md`). Licence: AGPL-3.0-only.

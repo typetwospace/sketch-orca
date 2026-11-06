@@ -19,8 +19,8 @@
 //! `std::mt19937_64`, `std::seed_seq`, `std::uniform_int_distribution`,
 //! `std::uniform_real_distribution`, `std::generate_canonical` and `std::shuffle`.
 //!
-//! The recording program printed one line per case. The tests here print the same lines from
-//! orca-stl and compare them: a few in full, and every line of each kind through the FNV-1a
+//! The recording program, `parity/oracle/probe/recorded/msvc_stl.cpp`, printed one line per case.
+//! The tests here print the same lines from orca-stl and compare them: a few in full, and every line of each kind through the FNV-1a
 //! digest of all of that kind's lines, with the line count. Besides, properties every result
 //! must have (sorted, a permutation, stable, a heap) are checked on the same inputs.
 
