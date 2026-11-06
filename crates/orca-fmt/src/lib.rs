@@ -20,6 +20,9 @@
 //! - [`parse`]: microsoft/STL's `std::from_chars`; `strtod`, `strtof`, `strtol` and their family,
 //!   written from the C standard around it with the UCRT's choices; and the STL's `std::stod`,
 //!   `stof`, `stoi` and the rest.
+//! - [`istream`]: microsoft/STL's `std::istringstream >> double` and `>> int` (`num_get`), which
+//!   Orca's configuration options read their values with; not yet replayed against the runtime
+//!   (`parity/HAZARDS.md`).
 //!
 //! The modules that carry the STL's code say what they carry, and from where, in their `Carries`
 //! blocks.
@@ -28,6 +31,7 @@
 //! `str::parse` are not the C++ runtime's.
 
 mod charconv_tables;
+pub mod istream;
 pub mod ostream;
 pub mod parse;
 pub mod printf;

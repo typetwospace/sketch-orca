@@ -11,9 +11,15 @@
 //! sketch-orca-rs: the Rust program of the sketch-orca translation, a separate program from the
 //! C++ `sketch-orca` of `cli/` and under the same licence.
 //!
-//! For now it does what `cli/main.cpp` does with no command: it prints the usage after the
-//! message "no command" on stderr and exits with -2 (invalid parameters). The commands themselves
-//! (`version`, `config-def`, `run`) come with the tasks that follow.
+//! Its command line is `cli/main.cpp`'s: `help` (and `--help`, `-h`), `version` (and
+//! `--version`), `config-def --out <file>` and `run --job <file> --out <file> [--progress <file>]`,
+//! with the same usage text, the same messages for a command line it does not take, and the same
+//! exit codes. `version` and `config-def` answer as the C++ program does (`version` adds
+//! `implementation: "rust"`); `run` checks its command line as the C++ does.
+
+mod config_def;
+mod files;
+mod version;
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -107,15 +113,118 @@ fn usage_error_text(message: &str) -> String {
     format!("sketch-orca: {message}\n\n{}", usage())
 }
 
-/// Runs the command line `args` (the program's name first) and returns the exit code; what the
-/// program writes goes to `err`.
-fn run(args: &[String], err: &mut dyn Write) -> i32 {
-    let message = match args.get(1) {
-        None => "no command".to_string(),
-        Some(command) => format!("unknown command {command}"),
-    };
-    write_text(err, &usage_error_text(&message));
+/// `parse_options`: `--name value` or `--name=value`, every option with a value, each known,
+/// given once and not empty; the message of the first that is not.
+fn parse_options(
+    args: &[String],
+    first: usize,
+    known: &[&str],
+) -> Result<BTreeMap<String, String>, String> {
+    let mut out = BTreeMap::new();
+    let mut i = first;
+    while i < args.len() {
+        let a = &args[i];
+        if a.len() < 3 || !a.starts_with("--") {
+            return Err(format!("unexpected argument {a}"));
+        }
+        let mut name = a[2..].to_string();
+        let value;
+        if let Some(eq) = name.find('=') {
+            value = name[eq + 1..].to_string();
+            name.truncate(eq);
+        } else {
+            if i + 1 >= args.len() {
+                return Err(format!("--{name} needs a value"));
+            }
+            i += 1;
+            value = args[i].clone();
+        }
+        if !known.contains(&name.as_str()) {
+            return Err(format!("unknown option --{name}"));
+        }
+        if out.contains_key(&name) {
+            return Err(format!("--{name} is given twice"));
+        }
+        if value.is_empty() {
+            return Err(format!("--{name} is empty"));
+        }
+        out.insert(name, value);
+        i += 1;
+    }
+    Ok(out)
+}
+
+/// Where the program writes: its standard output and standard error.
+struct Streams<'a> {
+    out: &'a mut dyn Write,
+    err: &'a mut dyn Write,
+}
+
+/// `usage_error`: the message and the usage on stderr, -2.
+fn usage_error(s: &mut Streams<'_>, message: &str) -> i32 {
+    write_text(s.err, &usage_error_text(message));
     EXIT_INVALID_PARAMS
+}
+
+/// The exit code of a failure code (`exit_code_for`).
+fn exit_code_for(code: &str) -> i32 {
+    FAILURE_TABLE
+        .iter()
+        .find(|e| e.0 == code)
+        .map_or(-1, |e| e.1)
+}
+
+fn command_config_def(args: &[String], s: &mut Streams<'_>) -> i32 {
+    let opts = match parse_options(args, 2, &["out"]) {
+        Ok(o) => o,
+        Err(e) => return usage_error(s, &e),
+    };
+    let Some(out) = opts.get("out") else {
+        return usage_error(s, "config-def needs --out <file>");
+    };
+    if let Err(e) = files::write_file_atomic(out, config_def::config_def_text().as_bytes()) {
+        write_text(s.err, &format!("sketch-orca: cannot write {out}: {e}\n"));
+        return exit_code_for("output-failed");
+    }
+    0
+}
+
+fn command_run(args: &[String], s: &mut Streams<'_>) -> i32 {
+    let opts = match parse_options(args, 2, &["job", "out", "progress"]) {
+        Ok(o) => o,
+        Err(e) => return usage_error(s, &e),
+    };
+    if !opts.contains_key("out") {
+        return usage_error(s, "run needs --out <file> for the result");
+    }
+    if !opts.contains_key("job") {
+        return usage_error(s, "run needs --job <file>");
+    }
+    write_text(s.err, "sketch-orca: run is not in sketch-orca-rs yet\n");
+    exit_code_for("unsupported")
+}
+
+/// Runs the command line `args` (the program's name first) and returns the exit code.
+fn run(args: &[String], s: &mut Streams<'_>) -> i32 {
+    let Some(command) = args.get(1) else {
+        return usage_error(s, "no command");
+    };
+    match command.as_str() {
+        "help" | "--help" | "-h" => {
+            write_text(s.out, &usage());
+            0
+        }
+        "version" | "--version" => {
+            if args.len() > 2 {
+                return usage_error(s, "version takes no options");
+            }
+            write_text(s.out, &version::version_line());
+            0
+        }
+        "config-def" => command_config_def(args, s),
+        "run" => command_run(args, s),
+        _ => usage_error(s, &format!("unknown command {command}")),
+    }
 }
 
 /// Writes `text` as the C++ program's streams do on Windows: in text mode, so each line feed
@@ -135,7 +244,15 @@ fn main() {
     let args: Vec<String> = std::env::args_os()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    let code = run(&args, &mut std::io::stderr());
+    let mut out = std::io::stdout();
+    let mut err = std::io::stderr();
+    let code = run(
+        &args,
+        &mut Streams {
+            out: &mut out,
+            err: &mut err,
+        },
+    );
     std::process::exit(code);
 }
 
@@ -145,9 +262,17 @@ mod tests {
 
     fn run_with(args: &[&str]) -> (i32, String) {
         let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
-        let mut err = Vec::new();
-        let code = run(&args, &mut err);
-        (code, String::from_utf8(err).unwrap().replace("\r\n", "\n"))
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = run(
+            &args,
+            &mut Streams {
+                out: &mut out,
+                err: &mut err,
+            },
+        );
+        assert!(out.is_empty() || err.is_empty(), "one stream only");
+        let text = if out.is_empty() { err } else { out };
+        (code, String::from_utf8(text).unwrap().replace("\r\n", "\n"))
     }
 
     #[test]
@@ -230,9 +355,46 @@ mod tests {
     }
 
     #[test]
-    fn a_command_not_yet_here_is_a_usage_error_naming_it() {
-        let (code, err) = run_with(&["sketch-orca-rs", "version"]);
+    fn help_prints_the_usage_on_stdout_and_an_unknown_command_is_a_usage_error() {
+        for h in ["help", "--help", "-h"] {
+            let (code, out) = run_with(&["sketch-orca-rs", h]);
+            assert_eq!((code, out), (0, usage()));
+        }
+        let (code, err) = run_with(&["sketch-orca-rs", "slice"]);
         assert_eq!(code, -2);
-        assert!(err.starts_with("sketch-orca: unknown command version\n\n"));
+        assert!(err.starts_with("sketch-orca: unknown command slice\n\n"));
+        let (code, err) = run_with(&["sketch-orca-rs", "version", "--x"]);
+        assert_eq!(code, -2);
+        assert!(err.starts_with("sketch-orca: version takes no options\n\n"));
+    }
+
+    #[test]
+    fn options_are_refused_as_cli_main_refuses_them() {
+        let refused = |args: &[&str]| {
+            let mut all = vec!["sketch-orca-rs", "config-def"];
+            all.extend_from_slice(args);
+            let (code, err) = run_with(&all);
+            assert_eq!(code, -2, "{args:?}");
+            err.lines().next().unwrap().to_string()
+        };
+        assert_eq!(refused(&[]), "sketch-orca: config-def needs --out <file>");
+        assert_eq!(
+            refused(&["out.json"]),
+            "sketch-orca: unexpected argument out.json"
+        );
+        assert_eq!(refused(&["--out"]), "sketch-orca: --out needs a value");
+        assert_eq!(refused(&["--job=a"]), "sketch-orca: unknown option --job");
+        assert_eq!(
+            refused(&["--out=a", "--out", "b"]),
+            "sketch-orca: --out is given twice"
+        );
+        assert_eq!(refused(&["--out="]), "sketch-orca: --out is empty");
+        assert_eq!(refused(&["--"]), "sketch-orca: unexpected argument --");
+        let (code, err) = run_with(&["sketch-orca-rs", "run", "--job", "j.json"]);
+        assert_eq!(code, -2);
+        assert!(err.starts_with("sketch-orca: run needs --out <file> for the result\n"));
+        let (code, err) = run_with(&["sketch-orca-rs", "run", "--out", "r.json"]);
+        assert_eq!(code, -2);
+        assert!(err.starts_with("sketch-orca: run needs --job <file>\n"));
     }
 }

@@ -82,6 +82,8 @@ translated into Rust. Each file that carries it says what it carries, from which
         std::from_chars, num_put and std::to_string: stl/inc/charconv, xcharconv_ryu.h,
         xcharconv_ryu_tables.h, xlocnum and string, stl/src/charconv.cpp and the
         xcharconv_*tables*.cpp files);
+      crates/orca-fmt/src/istream.rs (num_get and istream's operator>> for int and double:
+        stl/inc/xlocnum and istream, stl/src/xstol.cpp and xstoul.cpp);
       crates/orca-stl/src/sort.rs, stable_sort.rs, select.rs, heap.rs, minmax.rs, unordered.rs and
         random.rs (sort, stable_sort, inplace_merge, nth_element, partial_sort, the searches and
         unique, the heaps and priority_queue, min and max, the unordered containers and std::hash,
@@ -120,6 +122,14 @@ translated into Rust. Each file that carries it says what it carries, from which
       Copyright (c) Microsoft Corporation. All rights reserved.
 
       Boost Software License - Version 1.0 - August 17th, 2003
+
+  - JSON for Modern C++ 3.10.4 (https://github.com/nlohmann/json), as OrcaSlicer v2.4.2 carries it
+    in deps_src/nlohmann, Copyright (c) 2013-2019 Niels Lohmann, under the MIT licence
+    (licenses/MIT-nlohmann-json.txt): crates/orca-json/src/lib.rs (the lexer, the parser, the
+    serializer and the messages of their exceptions) and crates/orca-json/src/dtoa.rs (its Grisu2
+    conversion of doubles to text, detail/conversions/to_chars.hpp, which modifies Florian
+    Loitsch's reference implementation, Copyright (c) 2009 Florian Loitsch, under the MIT
+    licence). The licence file carries both notices.
 
   - oneTBB 2021.5.0 (https://github.com/uxlfoundation/oneTBB, tag v2021.5.0), the version
     OrcaSlicer's dependency build pins, Copyright (c) 2005-2021 Intel Corporation, under the
@@ -169,8 +179,8 @@ newest date of the patch headers.
     build's provenance, the run lock, the privacy and smoke gates, the source bundle's
     binaries, the MinGW-w64 toolchain that builds GMP and MPFR, and the longest work folder a
     Windows build takes), and 2026-11-06: the parity harness (scripts/lib/parity/: the
-    dispatcher behind bun scripts/orca.ts parity, parity reference, same, oracle, neutral and
-    probe), the Rust runner (scripts/rust.ts and scripts/lib/rust.ts), the configure lines and
+    dispatcher behind bun scripts/orca.ts parity, parity reference, same, oracle, neutral,
+    probe, corpus, record, envelope, goldens and gen-config), the Rust runner (scripts/rust.ts and scripts/lib/rust.ts), the configure lines and
     the check that no build can start Visual Studio's IDE (scripts/lib/cmake.ts and
     scripts/lib/noide.ts: no Fortran compiler check, Eigen without its tests, and a build tree
     with a CompilerIdFortran folder or a .vfproj file refused), and matchDepsBuild in
@@ -183,10 +193,16 @@ newest date of the patch headers.
     program may implement it.
   - crates/ is the Rust translation of the engine, added 2026-11-06: a Cargo workspace (Cargo.toml,
     Cargo.lock, rust-toolchain.toml, rustfmt.toml, clippy.toml) whose crates translate the C++
-    engine's foundations (orca-crt, orca-fmt, orca-stl, orca-tbb) and will translate its front
-    end and the parts of libslic3r it reaches. The code of others it carries is listed above;
-    code translated from OrcaSlicer, when it comes, is listed by file under "Carries OrcaSlicer
-    code", as for cli/.
+    engine's foundations (orca-crt, orca-fmt, orca-stl, orca-tbb), its JSON (orca-json), Orca's
+    configuration (orca-config) and its front end (orca-cli, the program sketch-orca-rs, from
+    cli/), and will translate the parts of libslic3r the front end reaches. The code of others it
+    carries is listed above. The files that carry OrcaSlicer code, translated, say which code
+    from which OrcaSlicer file under "Carries OrcaSlicer code"; their portions are copyright the
+    OrcaSlicer contributors:
+      crates/orca-config/src/value.rs        (src/libslic3r/Config.hpp, src/libslic3r/Config.cpp)
+      crates/orca-config/src/legacy.rs       (src/libslic3r/PrintConfig.cpp)
+      crates/orca-config/src/def_generated.rs (src/libslic3r/PrintConfig.cpp, src/libslic3r/Preset.cpp,
+                                              generated from the configdef probe)
   - parity/ holds what holds the translation to the C++ engine, added 2026-11-06: the record
     format (parity/SOP1.md), the masks of what may differ between runs (parity/masks.json), and
     the oracle (parity/oracle/): the C++ engine built with knobs that pin its clock, seeds,

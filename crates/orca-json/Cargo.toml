@@ -11,3 +11,5 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+orca-fmt = { workspace = true }
+orca-stl = { workspace = true }

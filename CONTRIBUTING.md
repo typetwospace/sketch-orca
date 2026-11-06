@@ -37,7 +37,7 @@ The maintainers follow these rules for their own changes:
     <project> code" block under the header. The block names the source files, says whose
     copyright they are (the holders) and gives their licence: OrcaSlicer, PrusaSlicer and Slic3r
     (AGPL-3.0), Microsoft STL (Apache-2.0 WITH LLVM-exception), oneTBB (Apache-2.0), Boost and
-    Clipper (BSL-1.0), Eigen (MPL-2.0), and so on. Translated code keeps the licence of its source
+    Clipper (BSL-1.0), Eigen (MPL-2.0), JSON for Modern C++ (MIT), and so on. Translated code keeps the licence of its source
     and combines with AGPL-3.0-only; `NOTICE` and `licenses/` name each. A test refuses a block
     without a date, a source file, the holders or the licence, and a file that says it is
     translated or ported from other code and has no block.
@@ -55,6 +55,10 @@ The maintainers follow these rules for their own changes:
     `#[allow(clippy::disallowed_types)]` on that one item and a comment saying why. Rust's own
     sorts are not the C++ engine's: the order of the comparator calls is part of the result.
   - Use `f32` wherever the C++ uses `float`, and the C++ order of evaluation.
+  - JSON is read and written through `orca-json` (nlohmann's parse errors, key orders and number
+    output), never `serde_json`. Orca's option definitions come from the configdef probe through
+    `bun scripts/orca.ts parity gen-config`; `crates/orca-config/src/def_generated.rs` is never
+    edited by hand, and `parity gen-config --check` fails while it differs from the probe.
   - Behaviour without source. Where the C++ engine's behaviour comes from code whose source is not
     under an open licence (Microsoft's Universal C Runtime: its maths functions, `printf`,
     `strtod`, `strtof` and the `strtol` family, `rand`), the translation is written from the C

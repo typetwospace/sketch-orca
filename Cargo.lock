@@ -140,6 +140,10 @@ dependencies = [
 [[package]]
 name = "orca-json"
 version = "0.1.0"
+dependencies = [
+ "orca-fmt",
+ "orca-stl",
+]
 
 [[package]]
 name = "orca-probe"

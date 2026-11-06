@@ -22,7 +22,8 @@ Each command is one module, `scripts/lib/parity/cmd-<name>.ts`, found by name wh
 
 A new command is a new module: nothing in `orca.ts` lists them. Each command logs to
 `<work>/logs/parity-<name>.log`. Exit codes are the pipeline's: 0 done, 3 failed, 64 a command line
-it does not take; a gate that ran and failed exits 1 (`parity neutral`, `parity probe --check`).
+it does not take; a gate that ran and failed exits 1 (`parity neutral`, `parity probe --check`,
+`parity gen-config --check`).
 
 ## Commands
 
@@ -36,6 +37,7 @@ it does not take; a gate that ran and failed exits 1 (`parity neutral`, `parity 
 | `corpus` | Builds the corpus (`CORPUS.md`, `corpus.ts`): converts Orca's 21 OBJ test meshes to binary STL as Sketch writes `model.stl`, and copies the 6 STL files and the 3MF as they are, from `<work>/src/tests/data` into `<work>/parity/corpus/meshes`. It works out the families each case exercises from its presets, overrides and Orca's defaults (`probes/configdef.json`), and writes `corpus.json`: 165 cases, namely the smoke cases, each mesh as info, layers and slice, the Sketch-shaped jobs, a slice per family the presets leave off, the invalid examples and the refusals. It needs `fetch` and `parity probe`. |
 | `record [--only <regex>]` | Runs every corpus case with the oracle (time and seed pinned) at 1, 2, 8 and the machine's thread count, and with `<work>/dist/engine` five times, all in one cases folder and in the environment a client gives the engine (`record.ts`). It gives each output a class (`classes.ts`: H, R, T, N, E, B). It keeps the oracle's one-thread outputs in `<work>/parity/goldens`, and writes the front end's goldens into `goldens/front/`, `parity.json`, and `<work>/parity/record.json`. A pass whose program, knobs and corpus are unchanged is kept, not run again. `--only` tries the matching cases in `runs/record-only` and writes nothing else. It needs `parity corpus`, `parity oracle`, and `build`, `smoke` and `stage`. |
 | `envelope` | For each output `record` classed R, records which lines of the shipped engine's five runs vary, and by how much each number on them (`envelope.ts`), in `<work>/parity/envelope/envelope.json`. |
+| `gen-config [--check]` | Writes `crates/orca-config/src/def_generated.rs`, orca-config's `print_config_def`, from the committed configdef probe (`probes/configdef.json`, `gen-config.ts`): every option with every field of its `ConfigOptionDef` (min and max as the bits of their `float`), the preset key lists, the legacy keys and the values the probe read them with. It refuses a probe of another format or option count, options out of order, a type, mode, GUI type or printer technology it does not know, and a default that threw. `--check` writes nothing and exits 1 while the file differs from what the probe gives. It reads only the repository and takes no run lock (it logs, as every command does, to `<work>/logs/parity-gen-config.log`). |
 | `goldens --check <folder>` | Copies the oracle and the corpus to a second work folder and runs the oracle there as the goldens were run. It compares each output with the goldens, with each folder's paths written as `<case>`, `<cases>`, `<resources>` and `<work>` (`goldens.ts`). Every output that still differs is an H-site: it goes in `parity.json`'s `hSites` for an oracle H-patch, and its class in `record.json` becomes H. It writes `<work>/parity/goldens-check.json` and exits 0: an H-site is a finding. |
 
 ## Every engine runs as a client runs it
@@ -141,4 +143,7 @@ files), `test/parity-corpus.test.ts` (the meshes and the OBJ to `model.stl` conv
 families a job's settings reach, the cases, a job made concrete in a case's folder, the invalid
 examples moved into one, and `corpus.json`), `test/parity-classes.test.ts` (each class, paths made
 portable, the thread counts, `parity.json`, the H-sites of two folders and the envelope),
-`test/github.test.ts` and `test/paths.test.ts`.
+`test/parity-gen-config.test.ts` (the committed file against the committed probe, the fields left
+to `OptionDef::EMPTY`, the Rust literals, the refusals of a probe it does not take, and the
+command's registration), `test/github.test.ts` and
+`test/paths.test.ts`.

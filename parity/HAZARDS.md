@@ -200,8 +200,16 @@ G-code writer's own buffers), through `std::to_chars`, and through nlohmann's `d
 becomes numbers through `strtod`, `atof`, `std::stod`, `std::from_chars`, `boost::lexical_cast`
 and `istream >>` (about 600 sites). **Probed** (`fmt.sop1` PRTF, TOCH, OSTR, TOST, PARS);
 `orca-fmt` reproduces them. `boost::lexical_cast<double>` and `istream >> double` go through the
-STL's `num_get`, which the probe does not hold yet: open. nlohmann's number output is its own
-Grisu2 (`deps_src/nlohmann/json.hpp`), for `orca-json` (task O1.8b): open.
+STL's `num_get`: `orca-fmt`'s `istream` translates MSVC 14.42's (`xlocnum`: the 768 significant
+digits, the sticky last digit, the exponent held to 1100, `_Stolx` for `int`), and `orca-config`
+reads every option value through it, but the probe does not hold `num_get` yet, so it is checked
+only through the configdef probe's round trips: open. `sscanf("%lf")` (a point's `x` and `y`) is
+modelled as the UCRT's `strtod` of the same characters: open, unprobed. nlohmann's number output
+is its own Grisu2 (`deps_src/nlohmann/json.hpp`), translated in `orca-json` (`src/dtoa.rs`) and
+held to the front end's goldens: done. The configdef probe records each default as its
+serialisation (six significant digits for a double), so `OptionDef::default_value` holds that
+text read back, not the C++ default's full double; a default whose digits matter past the sixth
+is open until the probe records the double's bits.
 
 ## File-system order (class R or O)
 

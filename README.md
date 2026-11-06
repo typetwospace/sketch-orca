@@ -77,7 +77,7 @@ bun run rs:build | rs:test | rs:clippy | rs:fmt:check   # the Rust translation (
 | `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. It takes the staged engine only when its manifest's `deps` are the dependency inputs `build` works out now, so the MinGW-w64 toolchain `bundle.json` names is the one that built GMP and MPFR. `--no-deps` leaves the dependency packages out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency has no pinned source, the Orca archive keeps a binary, a dependency package holds a binary `PACKAGE_BINARIES` does not name, or the engine ships a binary of Orca's tree (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
 | `release [--offline] [--no-deps] [--allow-missing]` | `check`, `update` (only to a newer stable release), `fetch`, `build`, `smoke`, `stage` and `source`, in order, stopping at the first failure. `--offline` leaves out `check` and `update`. |
 | `env` | Prints the toolchain found and the cleaned build PATH. |
-| `parity <command> [options]` | The parity harness, which holds the Rust translation to the C++ engine (`parity/README.md`). Each command is a module, `scripts/lib/parity/cmd-<name>.ts`; `parity --help` lists them. So far: `parity reference` downloads the published 0.1.0 engine zip (never the source zip), checks it against the release's `SHA256SUMS` and unpacks it to `<work>/parity/reference/0.1.0`; `parity same` runs that reference and the engine staged from this checkout on every smoke case's jobs, in the environment a client gives the engine, and writes `<work>/parity/same.json`, with each output identical, identical after `parity/masks.json`, or different; `parity oracle` builds the oracle, the engine plus the knobs of `parity/oracle/patches` (`parity/oracle/README.md`), on the engine's dependency build and stages it in `<work>/oracle/dist` (it never ships); `parity neutral` checks that the oracle is the engine with no knob set, that two runs with the clock and seed pinned are byte for byte the same, and records what differs between 1 and 8 threads, in `<work>/parity/neutral.json` (exit 1 when either of the first two fails); `parity probe` builds the probe program (`parity/oracle/probe/`) against the oracle's build tree and records what the engine's C runtime, STL, oneTBB and ConfigDef do (`parity/SOP1.md`), the full set in `<work>/parity/probes` and a subset under 8 MB in `parity/probes/` (`--check` runs it again and exits 1 unless the bytes are the same). Each holds the run lock and logs to `<work>/logs/parity-<name>.log`. |
+| `parity <command> [options]` | The parity harness, which holds the Rust translation to the C++ engine (`parity/README.md`). Each command is a module, `scripts/lib/parity/cmd-<name>.ts`; `parity --help` lists them. So far: `parity reference` downloads the published 0.1.0 engine zip (never the source zip), checks it against the release's `SHA256SUMS` and unpacks it to `<work>/parity/reference/0.1.0`; `parity same` runs that reference and the engine staged from this checkout on every smoke case's jobs, in the environment a client gives the engine, and writes `<work>/parity/same.json`, with each output identical, identical after `parity/masks.json`, or different; `parity oracle` builds the oracle, the engine plus the knobs of `parity/oracle/patches` (`parity/oracle/README.md`), on the engine's dependency build and stages it in `<work>/oracle/dist` (it never ships); `parity neutral` checks that the oracle is the engine with no knob set, that two runs with the clock and seed pinned are byte for byte the same, and records what differs between 1 and 8 threads, in `<work>/parity/neutral.json` (exit 1 when either of the first two fails); `parity probe` builds the probe program (`parity/oracle/probe/`) against the oracle's build tree and records what the engine's C runtime, STL, oneTBB and ConfigDef do (`parity/SOP1.md`), the full set in `<work>/parity/probes` and a subset under 8 MB in `parity/probes/` (`--check` runs it again and exits 1 unless the bytes are the same); `parity gen-config` writes orca-config's `src/def_generated.rs` from the committed configdef probe (`--check` exits 1 while the file differs). `parity/README.md` describes these and the others (`corpus`, `record`, `envelope`, `goldens`). Each logs to `<work>/logs/parity-<name>.log`, and each that writes in the work folder holds the run lock. |
 
 `release` is the workflow for a new engine. After a failure, fix the cause and run it again: the
 finished steps skip. When a newer release is out it rewrites `orca.lock.json` in the repository;
@@ -108,8 +108,21 @@ into Rust, built to give the same bytes as the C++ engine. It is a separate prog
 repository, under the same licence (AGPL-3.0-only): `sketch-orca-rs`, the binary of
 `crates/orca-cli`, which speaks the same command line and files (`protocol/`) as the C++
 `sketch-orca` of `cli/` and runs beside it. The C++ engine is unchanged and stays what ships until
-the translation covers the whole protocol. Today `sketch-orca-rs` is the scaffold: it prints the
-usage, with the message "no command", and exits with -2, as `cli/main.cpp` does with no command.
+the translation covers the whole protocol.
+
+What `sketch-orca-rs` answers so far (`crates/orca-cli/README.md`):
+
+- `help`, `--help` and `-h` print `cli/main.cpp`'s usage; no command, an unknown command and every
+  command line `cli/main.cpp` refuses give its message, the usage and exit -2.
+- `version` prints the C++ program's fields (`engine`, `engineVersion`, `orcaVersion` 2.4.2,
+  `orcaTag` v2.4.2, `orcaCommit` 8500fcdccaa10b5099ac20d252af3a7c560046f1) and
+  `implementation: "rust"`.
+- `config-def --out <file>` writes the same bytes as the C++ program
+  (`parity/goldens/front/config-def.json`), from orca-config's definitions, which
+  `bun scripts/orca.ts parity gen-config` generates from the configdef probe
+  (`parity gen-config --check` fails while they differ).
+- `run` checks its command line as `cli/main.cpp` does, then declines a run it takes with exit -8
+  until the intake arrives.
 
 One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
 `.cargo/config.toml`, `rustfmt.toml`, `clippy.toml`). Its crates, each with a README of its own:
@@ -117,12 +130,12 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | Crate | What it is |
 | --- | --- |
 | `orca-crt` | The static UCRT's maths functions, float-to-integer conversions and `rand`, called as the C++ engine calls them. |
-| `orca-fmt` | `printf`, `to_chars`, `iostream` double output and number parsing, with the C++ engine's digits. |
+| `orca-fmt` | `printf`, `to_chars`, `iostream` double output, `istream` input (`num_get`) and number parsing, with the C++ engine's digits. |
 | `orca-stl` | The C++ standard library's sorts, selections, heaps, `min` and `max`, hash containers and `mt19937`, in Microsoft's order of operations. |
 | `orca-tbb` | oneTBB's concurrency and partitioners as fixed split trees, run on rayon. |
 | `orca-probe` | Reads the probe files (SOP1) the probe program records, for the probe gate: each crate above has a `tests/probes.rs` that replays every record of its file, the committed subset by default and the full set with `SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes`. |
-| `orca-json` | A scaffold until task O1.8b fills it: JSON with `nlohmann::json`'s semantics. |
-| `orca-config` | A scaffold until task O1.8b fills it: Orca's configuration, the definition of every setting, legacy keys, serialisation. |
+| `orca-json` | JSON with `nlohmann::json`'s semantics: parsing with its errors, the key order of `json` and of `ordered_json`, and `dump` with nlohmann's own number output. |
+| `orca-config` | Orca's configuration: every option's `ConfigOptionDef`, generated from the configdef probe; the option values with `ConfigOption`'s serialisation and deserialisation; `handle_legacy`. |
 | `orca-cli` | The program, `sketch-orca-rs`. |
 
 The Rust scripts run cargo with `--locked`, inside the environment of the same Visual Studio the
