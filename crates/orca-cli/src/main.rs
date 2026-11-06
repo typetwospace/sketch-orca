@@ -15,51 +15,30 @@
 //! `--version`), `config-def --out <file>` and `run --job <file> --out <file> [--progress <file>]`,
 //! with the same usage text, the same messages for a command line it does not take, and the same
 //! exit codes. `version` and `config-def` answer as the C++ program does (`version` adds
-//! `implementation: "rust"`); `run` checks its command line as the C++ does.
+//! `implementation: "rust"`). `run` checks its command line and reads and checks the job as the
+//! C++ does, writing the same result and progress file for a job it refuses (`result.rs`,
+//! `job.rs`); a valid job it declines, `not-ported` with exit -8, while what the job needs is not
+//! ported and certified (`decline.rs`). A crash or a panic still writes the result
+//! (`crash.rs`).
 
+mod common;
 mod config_def;
+mod crash;
+mod decline;
 mod files;
+mod job;
+mod paths;
+mod result;
 mod version;
 
 use std::collections::BTreeMap;
 use std::io::Write;
 
+use common::{FAILURE_TABLE, exit_code_for};
+
 /// The exit code of a command line the program does not take (`EXIT_INVALID_PARAMS` in
 /// `cli/main.cpp`; the stock Orca command line's `CLI_INVALID_PARAMS`).
 const EXIT_INVALID_PARAMS: i32 = -2;
-
-/// The failure codes and the exit code of each, in the order of `cli/common.cpp`'s table (the
-/// stock Orca command line's `cli_errors` for the same meanings).
-const FAILURE_TABLE: &[(&str, i32)] = &[
-    ("ok", 0),
-    ("environment", -1),
-    ("internal-error", -1),
-    ("invalid-params", -2),
-    ("job-invalid", -2),
-    ("setting-invalid", -2),
-    ("layer-profile-invalid", -2),
-    ("custom-gcode-invalid", -2),
-    ("file-not-found", -3),
-    ("preset-invalid", -5),
-    ("model-unreadable", -6),
-    ("not-fdm", -7),
-    ("unsupported", -8),
-    ("output-failed", -13),
-    ("out-of-memory", -14),
-    ("process-not-compatible", -17),
-    ("config-invalid", -18),
-    ("arrange-failed", -21),
-    ("orient-failed", -22),
-    ("empty-plate", -50),
-    ("validate-error", -51),
-    ("not-printable", -52),
-    ("filament-bed-mismatch", -61),
-    ("temperature-difference", -62),
-    ("collision", -63),
-    ("slice-failed", -100),
-    ("path-conflicts", -101),
-    ("gcode-in-unprintable-area", -102),
-];
 
 /// The usage text of `cli/main.cpp`'s `usage()`: the commands, then the exit codes from the
 /// highest (closest to zero) to the lowest with the failure codes that share each, then the
@@ -121,6 +100,18 @@ fn parse_options(
     known: &[&str],
 ) -> Result<BTreeMap<String, String>, String> {
     let mut out = BTreeMap::new();
+    parse_options_into(args, first, known, &mut out)?;
+    Ok(out)
+}
+
+/// `parse_options` as the C++ calls it: `out` holds the options read before the first that is
+/// wrong.
+fn parse_options_into(
+    args: &[String],
+    first: usize,
+    known: &[&str],
+    out: &mut BTreeMap<String, String>,
+) -> Result<(), String> {
     let mut i = first;
     while i < args.len() {
         let a = &args[i];
@@ -151,7 +142,59 @@ fn parse_options(
         out.insert(name, value);
         i += 1;
     }
-    Ok(out)
+    Ok(())
+}
+
+/// `find_option(args, first, name)`: the value of `--name` (`--name value` or `--name=value`)
+/// wherever it is, "" when it is not given; it finds --out before the options are checked.
+fn find_option(args: &[String], first: usize, name: &str) -> String {
+    let flag = format!("--{name}");
+    let with_eq = format!("{flag}=");
+    for i in first..args.len() {
+        if args[i] == flag {
+            return args.get(i + 1).cloned().unwrap_or_default();
+        }
+        if let Some(value) = args[i].strip_prefix(&with_eq) {
+            return value.to_string();
+        }
+    }
+    String::new()
+}
+
+/// `command_line_values(args, out, values, jobs)`: the values a command line gives after its
+/// command (`--name value`, `--name=value` and stray ones), but the first --out's, which is
+/// `out`; and the values of --job.
+fn command_line_values(args: &[String], out: &str) -> (Vec<String>, Vec<String>) {
+    let (mut values, mut jobs) = (Vec::new(), Vec::new());
+    let mut out_seen = false;
+    for i in 2..args.len() {
+        let a = &args[i];
+        let (name, value);
+        if let Some(rest) = a.strip_prefix("--") {
+            let Some(eq) = rest.find('=') else {
+                continue;
+            };
+            name = rest[..eq].to_string();
+            value = rest[eq + 1..].to_string();
+        } else {
+            value = a.clone();
+            let prev = &args[i - 1];
+            name = if i > 2 && prev.starts_with("--") && !prev.contains('=') {
+                prev[2..].to_string()
+            } else {
+                String::new()
+            };
+        }
+        if !out_seen && name == "out" && value == out {
+            out_seen = true;
+            continue;
+        }
+        if name == "job" {
+            jobs.push(value.clone());
+        }
+        values.push(value);
+    }
+    (values, jobs)
 }
 
 /// Where the program writes: its standard output and standard error.
@@ -164,14 +207,6 @@ struct Streams<'a> {
 fn usage_error(s: &mut Streams<'_>, message: &str) -> i32 {
     write_text(s.err, &usage_error_text(message));
     EXIT_INVALID_PARAMS
-}
-
-/// The exit code of a failure code (`exit_code_for`).
-fn exit_code_for(code: &str) -> i32 {
-    FAILURE_TABLE
-        .iter()
-        .find(|e| e.0 == code)
-        .map_or(-1, |e| e.1)
 }
 
 fn command_config_def(args: &[String], s: &mut Streams<'_>) -> i32 {
@@ -190,18 +225,34 @@ fn command_config_def(args: &[String], s: &mut Streams<'_>) -> i32 {
 }
 
 fn command_run(args: &[String], s: &mut Streams<'_>) -> i32 {
-    let opts = match parse_options(args, 2, &["job", "out", "progress"]) {
-        Ok(o) => o,
-        Err(e) => return usage_error(s, &e),
+    let mut opts = BTreeMap::new();
+    let parsed = parse_options_into(args, 2, &["job", "out", "progress"], &mut opts);
+    let out = opts
+        .get("out")
+        .cloned()
+        .unwrap_or_else(|| find_option(args, 2, "out"));
+    // A wrong command line gets its result at --out, unless that would replace a file the command
+    // line or its job names (sketch-orca, 2026-11-01).
+    let refuse = |s: &mut Streams<'_>, message: &str| {
+        let code = usage_error(s, message);
+        if out.is_empty() {
+            return code;
+        }
+        let (values, jobs) = command_line_values(args, &out);
+        result::write_command_line_failure(&out, &values, &jobs, message, code, s.err);
+        code
     };
-    if !opts.contains_key("out") {
+    if let Err(e) = parsed {
+        return refuse(s, &e);
+    }
+    if out.is_empty() {
         return usage_error(s, "run needs --out <file> for the result");
     }
-    if !opts.contains_key("job") {
-        return usage_error(s, "run needs --job <file>");
-    }
-    write_text(s.err, "sketch-orca: run is not in sketch-orca-rs yet\n");
-    exit_code_for("unsupported")
+    let Some(job) = opts.get("job") else {
+        return refuse(s, "run needs --job <file>");
+    };
+    let progress = opts.get("progress").map_or("", String::as_str);
+    result::run_job(job, &out, progress, s.err)
 }
 
 /// Runs the command line `args` (the program's name first) and returns the exit code.
@@ -230,7 +281,7 @@ fn run(args: &[String], s: &mut Streams<'_>) -> i32 {
 /// Writes `text` as the C++ program's streams do on Windows: in text mode, so each line feed
 /// goes out as a carriage return and a line feed. A broken stream cannot be told about; the
 /// exit code still says what happened.
-fn write_text(out: &mut dyn Write, text: &str) {
+pub(crate) fn write_text(out: &mut dyn Write, text: &str) {
     let bytes = if cfg!(windows) {
         text.replace('\n', "\r\n")
     } else {
@@ -241,6 +292,7 @@ fn write_text(out: &mut dyn Write, text: &str) {
 }
 
 fn main() {
+    crash::install();
     let args: Vec<String> = std::env::args_os()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
@@ -393,8 +445,48 @@ mod tests {
         let (code, err) = run_with(&["sketch-orca-rs", "run", "--job", "j.json"]);
         assert_eq!(code, -2);
         assert!(err.starts_with("sketch-orca: run needs --out <file> for the result\n"));
-        let (code, err) = run_with(&["sketch-orca-rs", "run", "--out", "r.json"]);
+        // A run without --job still gets its result at --out.
+        let dir = std::env::temp_dir().join(format!("orca-cli-main-{}", std::process::id()));
+        let out = dir.join("r.json").to_string_lossy().into_owned();
+        let (code, err) = run_with(&["sketch-orca-rs", "run", "--out", &out]);
         assert_eq!(code, -2);
         assert!(err.starts_with("sketch-orca: run needs --job <file>\n"));
+        let result = std::fs::read_to_string(&out).unwrap();
+        assert!(result.contains("\"code\": \"invalid-params\",\n  \"message\": \"run needs --job <file>\",\n  \"exitCode\": -2,"), "{result}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_command_line_values_are_those_cli_main_reads() {
+        let args: Vec<String> = [
+            "x",
+            "run",
+            "--job",
+            "j",
+            "--out=o",
+            "--progress",
+            "p",
+            "stray",
+            "--out",
+            "o",
+            "--x=y",
+        ]
+        .iter()
+        .map(|a| (*a).to_string())
+        .collect();
+        assert_eq!(find_option(&args, 2, "out"), "o");
+        assert_eq!(find_option(&args, 2, "progress"), "p");
+        assert_eq!(find_option(&args, 2, "none"), "");
+        let (values, jobs) = command_line_values(&args, "o");
+        assert_eq!(values, ["j", "p", "stray", "o", "y"]);
+        assert_eq!(jobs, ["j"]);
+        let mut partial = BTreeMap::new();
+        let e = parse_options_into(&args[..5], 2, &["job", "out"], &mut partial);
+        assert_eq!(e, Ok(()));
+        assert_eq!(partial.get("out").map(String::as_str), Some("o"));
+        let mut partial = BTreeMap::new();
+        let e = parse_options_into(&args, 2, &["job", "out"], &mut partial);
+        assert_eq!(e, Err("unknown option --progress".to_string()));
+        assert_eq!(partial.len(), 2);
     }
 }

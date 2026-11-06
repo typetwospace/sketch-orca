@@ -12,6 +12,11 @@
     "message": { "type": "string" },
     "exitCode": { "type": "integer", "description": "What the engine exits with: 0 when ok, else the code of the failure." },
     "objectIndex": { "type": "integer", "minimum": 0, "description": "The object a failure is about." },
+    "missing": {
+      "description": "A decline's (code not-ported, exit code -8; protocol/README.md, Errors): the steps of the engine the job reaches that the program that wrote the result does not do yet, by the parity harness's family names.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "command": { "enum": ["slice", "layers", "info"] },
     "engine": { "type": ["object", "null"], "description": "The engine that wrote the result, as `sketch-orca version` prints it (version.schema.json)." },
     "warnings": {

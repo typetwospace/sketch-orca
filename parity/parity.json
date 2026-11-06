@@ -22,7 +22,7 @@
       "classes": [
         "B"
       ],
-      "certified": false
+      "certified": true
     },
     {
       "name": "config-def",
@@ -34,7 +34,7 @@
       "classes": [
         "B"
       ],
-      "certified": false
+      "certified": true
     },
     {
       "name": "intake",
@@ -70,7 +70,7 @@
         "E",
         "B"
       ],
-      "certified": false
+      "certified": true
     },
     {
       "name": "model-load",

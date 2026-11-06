@@ -107,7 +107,7 @@ caller's, and whether line 34 ran on it before) matters as it does in the C++.
 | `src/libslic3r/PlaceholderParser.cpp:105` | P | `USER` / `USERNAME` from the environment, the `user` placeholder | pinned: the parity runs set the environment (`scripts/lib/parity/engineEnv.ts`) |
 | `src/libslic3r/GCode/PostProcessor.cpp:159` | O | `SHELL` for post-processing scripts | n/a (the front end runs none) |
 | `src/libslic3r/PrintObject.cpp:3722-3728`, `Timer.cpp:6`, `:11`, `Timer.hpp:34`, `Support/TreeModelVolumes.cpp:159-249`, `Support/TreeSupport.cpp:139-153`, `Support/TreeSupport3D.cpp:2472-2521`, `:3423-3608`, `Format/bbs_3mf.cpp:8747-8750` | O | timing for logs; never in an output | n/a |
-| `cli/main.cpp:159`, `cli/common.cpp:640` | R | `SKETCH_ORCA_LOG_LEVEL` and the smoke test's crash trigger `SKETCH_ORCA_TEST_CRASH` | the translation reads the same variables |
+| `cli/main.cpp:159`, `cli/common.cpp:640` | R | `SKETCH_ORCA_LOG_LEVEL` and the smoke test's crash trigger `SKETCH_ORCA_TEST_CRASH` | the translation reads the same variables (`crates/orca-cli/src/crash.rs`, which also takes `<stage>:panic` and the point `decline`) |
 
 ## Orders the language leaves open
 

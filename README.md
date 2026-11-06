@@ -77,7 +77,7 @@ bun run rs:build | rs:test | rs:clippy | rs:fmt:check   # the Rust translation (
 | `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. It takes the staged engine only when its manifest's `deps` are the dependency inputs `build` works out now, so the MinGW-w64 toolchain `bundle.json` names is the one that built GMP and MPFR. `--no-deps` leaves the dependency packages out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency has no pinned source, the Orca archive keeps a binary, a dependency package holds a binary `PACKAGE_BINARIES` does not name, or the engine ships a binary of Orca's tree (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
 | `release [--offline] [--no-deps] [--allow-missing]` | `check`, `update` (only to a newer stable release), `fetch`, `build`, `smoke`, `stage` and `source`, in order, stopping at the first failure. `--offline` leaves out `check` and `update`. |
 | `env` | Prints the toolchain found and the cleaned build PATH. |
-| `parity <command> [options]` | The parity harness, which holds the Rust translation to the C++ engine (`parity/README.md`). Each command is a module, `scripts/lib/parity/cmd-<name>.ts`; `parity --help` lists them. So far: `parity reference` downloads the published 0.1.0 engine zip (never the source zip), checks it against the release's `SHA256SUMS` and unpacks it to `<work>/parity/reference/0.1.0`; `parity same` runs that reference and the engine staged from this checkout on every smoke case's jobs, in the environment a client gives the engine, and writes `<work>/parity/same.json`, with each output identical, identical after `parity/masks.json`, or different; `parity oracle` builds the oracle, the engine plus the knobs of `parity/oracle/patches` (`parity/oracle/README.md`), on the engine's dependency build and stages it in `<work>/oracle/dist` (it never ships); `parity neutral` checks that the oracle is the engine with no knob set, that two runs with the clock and seed pinned are byte for byte the same, and records what differs between 1 and 8 threads, in `<work>/parity/neutral.json` (exit 1 when either of the first two fails); `parity probe` builds the probe program (`parity/oracle/probe/`) against the oracle's build tree and records what the engine's C runtime, STL, oneTBB and ConfigDef do (`parity/SOP1.md`), the full set in `<work>/parity/probes` and a subset under 8 MB in `parity/probes/` (`--check` runs it again and exits 1 unless the bytes are the same); `parity gen-config` writes orca-config's `src/def_generated.rs` from the committed configdef probe (`--check` exits 1 while the file differs). `parity/README.md` describes these and the others (`corpus`, `record`, `envelope`, `goldens`). Each logs to `<work>/logs/parity-<name>.log`, and each that writes in the work folder holds the run lock. |
+| `parity <command> [options]` | The parity harness, which holds the Rust translation to the C++ engine (`parity/README.md`). Each command is a module, `scripts/lib/parity/cmd-<name>.ts`; `parity --help` lists them. So far: `parity reference` downloads the published 0.1.0 engine zip (never the source zip), checks it against the release's `SHA256SUMS` and unpacks it to `<work>/parity/reference/0.1.0`; `parity same` runs that reference and the engine staged from this checkout on every smoke case's jobs, in the environment a client gives the engine, and writes `<work>/parity/same.json`, with each output identical, identical after `parity/masks.json`, or different; `parity oracle` builds the oracle, the engine plus the knobs of `parity/oracle/patches` (`parity/oracle/README.md`), on the engine's dependency build and stages it in `<work>/oracle/dist` (it never ships); `parity neutral` checks that the oracle is the engine with no knob set, that two runs with the clock and seed pinned are byte for byte the same, and records what differs between 1 and 8 threads, in `<work>/parity/neutral.json` (exit 1 when either of the first two fails); `parity probe` builds the probe program (`parity/oracle/probe/`) against the oracle's build tree and records what the engine's C runtime, STL, oneTBB and ConfigDef do (`parity/SOP1.md`), the full set in `<work>/parity/probes` and a subset under 8 MB in `parity/probes/` (`--check` runs it again and exits 1 unless the bytes are the same); `parity gen-config` writes orca-config's `src/def_generated.rs` from the committed configdef probe (`--check` exits 1 while the file differs). `parity/README.md` describes these and the others (`corpus`, `record`, `envelope`, `goldens`, `certify`). Each logs to `<work>/logs/parity-<name>.log`, and each that writes in the work folder holds the run lock. |
 
 `release` is the workflow for a new engine. After a failure, fix the cause and run it again: the
 finished steps skip. When a newer release is out it rewrites `orca.lock.json` in the repository;
@@ -121,8 +121,24 @@ What `sketch-orca-rs` answers so far (`crates/orca-cli/README.md`):
   (`parity/goldens/front/config-def.json`), from orca-config's definitions, which
   `bun scripts/orca.ts parity gen-config` generates from the configdef probe
   (`parity gen-config --check` fails while they differ).
-- `run` checks its command line as `cli/main.cpp` does, then declines a run it takes with exit -8
-  until the intake arrives.
+- `run` checks its command line as `cli/main.cpp` does and reads the job as `cli/job.cpp` does,
+  in the same order: every command line and job the C++ program refuses gets the same result
+  (code, message, exit code), result file and progress file (`parity/goldens/front/intake/`), and
+  the run's files are told apart as the C++ tells them apart.
+- The decline: a valid job that reaches a step `parity/parity.json` does not certify, which for now
+  is every `info`, `layers` and `slice` job, gets `not-ported`, exit -8 (the class of
+  `unsupported`; 248 as a low byte) and `missing`, the steps (`protocol/README.md`,
+  `protocol/examples/result-not-ported.json`). It comes before any output is written; outputs are
+  written under temporary names and renamed only on success, so nothing is left behind.
+- A crash (a panic, an unhandled exception, `abort`) writes the C++ program's `internal-error`
+  result, and the process ends with -1; `SKETCH_ORCA_TEST_CRASH` triggers one as in the C++.
+
+`bun scripts/orca.ts parity certify` runs every corpus case with `target/debug/sketch-orca-rs.exe`
+(build it first with `bun run rs:build`) and compares it with the goldens: results as JSON values,
+every other output byte for byte, an output that varies between the engine's own runs within that
+variance. It raises the certified families in `parity/parity.json` and never lowers them;
+`--check` writes nothing there and fails on a regression. `version`, `config-def` and `intake` are
+certified (`parity/README.md`).
 
 One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
 `.cargo/config.toml`, `rustfmt.toml`, `clippy.toml`). Its crates, each with a README of its own:

@@ -61,7 +61,9 @@ fatal to 5 trace; 1, errors, by default).
 
 - `version` prints one line of JSON (`schema/version.schema.json`): `engine` (`sketch-orca`),
   `engineVersion`, and the OrcaSlicer release it is built from, `orcaVersion`, `orcaTag` and
-  `orcaCommit`.
+  `orcaCommit`. An engine that is not the C++ program adds `implementation`: `rust` from
+  `sketch-orca-rs`, the Rust translation (`examples/version-rust.json`). The C++ program leaves it
+  out. A result's `engine` is the same object.
 - `config-def --out <file>` writes the settings catalogue (below).
 - `run --job <file> --out <file> [--progress <file>]` does the job and writes its result, also when
   it fails; with `--progress`, it appends progress lines as it goes. It exits with the result's
@@ -174,6 +176,9 @@ fatal to 5 trace; 1, errors, by default).
 
 - `ok` is true exactly when `code` is `ok` and `exitCode` is 0. `message` says what went wrong,
   naming the culprit where there is one; a failure about one object names it in `objectIndex`.
+- `missing` comes only with `not-ported` (below): the steps the job needs that the engine does
+  not do yet, by their names in the engine's parity record (`model-load`, `slice-mesh`,
+  `gcode-export`, ...), each once.
 - `layers` gives each object's layers as `[bottom, top]` print Z, ascending; `printZ` the print Z
   of every layer of the plate, ascending. Print Z is the height of the top of a layer above the
   bed, not counting the printer's `z_offset` (G-code Z is print Z plus `z_offset`).
@@ -207,6 +212,7 @@ gives it as the result's `exitCode`:
 | `model-unreadable` | -6 | a model that cannot be read, or an object with nothing to print |
 | `not-fdm` | -7 | the printer is not a filament printer |
 | `unsupported` | -8 | something the engine does not do |
+| `not-ported` | -8 | a valid job that needs steps this engine does not do yet (`missing` names them); only `sketch-orca-rs` writes it |
 | `output-failed` | -13 | an output that cannot be written |
 | `out-of-memory` | -14 | out of memory |
 | `process-not-compatible` | -17 | the process preset is not made for the printer |
@@ -225,6 +231,13 @@ gives it as the result's `exitCode`:
 
 Other codes may appear in later versions; they are lower-case words joined by `-`. A crash inside
 OrcaSlicer's code still writes an `internal-error` result, and the process ends with -1.
+
+`sketch-orca-rs`, the Rust translation of the engine, does only the steps its parity record
+certifies. It checks a job as the C++ program does, with the same results for a job that is not
+valid. A valid job that reaches a step it does not do yet gets `not-ported` with exit code -8, the
+same class as `unsupported`, before it writes any output
+(`examples/result-not-ported.json`). A client that gets `not-ported` can run the same job with the
+C++ program.
 
 Process exit codes reach a client in different forms: Node on Windows reports -3 as 4294967293,
 Bun on Windows as 253. Compare the low byte only when the exit code has a small code's form, from

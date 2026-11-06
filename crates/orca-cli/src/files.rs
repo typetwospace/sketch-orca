@@ -8,9 +8,10 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
 // (LICENSE) for more details.
 
-//! Files as cli/common.cpp writes them: [`write_file_atomic`] (the text into `<path>.tmp`, then
-//! renamed over `<path>`), the folders it makes first, and the messages of each failure, Windows'
-//! own text for a system error as Boost.System gives it.
+//! Files as cli/common.cpp reads and writes them: [`read_file`], [`write_file_atomic`] (the text
+//! into `<path>.tmp`, then renamed over `<path>`), the folders it makes first
+//! ([`make_parent_directories`]), and the messages of each failure, Windows' own text for a system
+//! error as Boost.System gives it.
 
 use std::path::Path;
 
@@ -90,6 +91,34 @@ pub fn make_directories(path: &Path) -> Result<(), FileError> {
     }
 }
 
+/// `make_parent_directories(path)`: the folder `path` is in, and its parents.
+///
+/// # Errors
+///
+/// As [`make_directories`].
+pub fn make_parent_directories(path: &str) -> Result<(), FileError> {
+    match Path::new(path).parent() {
+        Some(parent) => make_directories(parent),
+        None => Ok(()),
+    }
+}
+
+/// `read_file(path)`: the file's bytes.
+///
+/// # Errors
+///
+/// "cannot open <path>" when it does not open (it is missing, a folder or refused), "cannot read
+/// <path>" when reading it fails.
+pub fn read_file(path: &str) -> Result<Vec<u8>, FileError> {
+    use std::io::Read;
+    let mut file =
+        std::fs::File::open(path).map_err(|_| FileError(format!("cannot open {path}")))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|_| FileError(format!("cannot read {path}")))?;
+    Ok(bytes)
+}
+
 /// `write_file_atomic(path, text)`: the bytes into `<path>.tmp`, then renamed over `path`.
 ///
 /// # Errors
@@ -98,9 +127,7 @@ pub fn make_directories(path: &Path) -> Result<(), FileError> {
 /// "cannot replace <path>", as the C++ throws them.
 pub fn write_file_atomic(path: &str, text: &[u8]) -> Result<(), FileError> {
     let target = Path::new(path);
-    if let Some(parent) = target.parent() {
-        make_directories(parent)?;
-    }
+    make_parent_directories(path)?;
     let tmp = format!("{path}.tmp");
     {
         use std::io::Write;

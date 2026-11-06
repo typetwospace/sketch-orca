@@ -10,6 +10,7 @@
     "engineVersion": { "type": "string" },
     "orcaVersion": { "type": "string" },
     "orcaCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-    "orcaTag": { "type": "string" }
+    "orcaTag": { "type": "string" },
+    "implementation": { "type": "string", "description": "Which program answered when it is not the C++ engine: \"rust\" for sketch-orca-rs, the Rust translation. Absent for the C++ engine." }
   }
 }

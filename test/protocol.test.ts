@@ -356,10 +356,17 @@ describe('the specification names what the engine does', () => {
 
   test('the error table is the engine\'s failure table (cli/common.cpp), with the stock exit codes', () => {
     const engine = [...cpp('common.cpp').matchAll(/^\s*\{"([a-z0-9-]+)", (-?\d+)\},/gm)].map((m) => [m[1]!, Number(m[2])] as const).filter(([c]) => c !== 'ok')
-    const table = [...spec.matchAll(/^\| `([a-z0-9-]+)` \| (-?\d+) \|/gm)].map((m) => [m[1]!, Number(m[2])] as const)
+    const rows = [...spec.matchAll(/^\| `([a-z0-9-]+)` \| (-?\d+) \| (.*) \|$/gm)]
+    const rustOnly = (m: RegExpMatchArray) => m[3]!.includes('only `sketch-orca-rs` writes it')
+    const table = rows.filter((m) => !rustOnly(m)).map((m) => [m[1]!, Number(m[2])] as const)
     expect(engine.length).toBeGreaterThan(20)
     expect(table).toEqual(engine)
-    for (const [, exit] of table) expect(ORCA_EXIT_CODES[exit]).toBeString()
+    // The codes only the Rust program writes: its decline (crates/orca-cli/src/decline.rs).
+    expect(rows.filter(rustOnly).map((m) => [m[1]!, Number(m[2])])).toEqual([['not-ported', -8]])
+    const decline = read(join(ROOT, 'crates', 'orca-cli', 'src', 'decline.rs'))
+    expect(decline).toContain('code: "not-ported".to_string()')
+    expect(decline).toContain('exit_code: -8,')
+    for (const m of rows) expect(ORCA_EXIT_CODES[Number(m[2])]).toBeString()
   })
 
   test('the warnings it lists are the ones the engine adds', () => {

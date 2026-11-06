@@ -23,7 +23,7 @@ Each command is one module, `scripts/lib/parity/cmd-<name>.ts`, found by name wh
 A new command is a new module: nothing in `orca.ts` lists them. Each command logs to
 `<work>/logs/parity-<name>.log`. Exit codes are the pipeline's: 0 done, 3 failed, 64 a command line
 it does not take; a gate that ran and failed exits 1 (`parity neutral`, `parity probe --check`,
-`parity gen-config --check`).
+`parity gen-config --check`, `parity certify` and `parity certify --check`).
 
 ## Commands
 
@@ -39,6 +39,7 @@ it does not take; a gate that ran and failed exits 1 (`parity neutral`, `parity 
 | `envelope` | For each output `record` classed R, records which lines of the shipped engine's five runs vary, and by how much each number on them (`envelope.ts`), in `<work>/parity/envelope/envelope.json`. |
 | `gen-config [--check]` | Writes `crates/orca-config/src/def_generated.rs`, orca-config's `print_config_def`, from the committed configdef probe (`probes/configdef.json`, `gen-config.ts`): every option with every field of its `ConfigOptionDef` (min and max as the bits of their `float`), the preset key lists, the legacy keys and the values the probe read them with. It refuses a probe of another format or option count, options out of order, a type, mode, GUI type or printer technology it does not know, and a default that threw. `--check` writes nothing and exits 1 while the file differs from what the probe gives. It reads only the repository and takes no run lock (it logs, as every command does, to `<work>/logs/parity-gen-config.log`). |
 | `goldens --check <folder>` | Copies the oracle and the corpus to a second work folder and runs the oracle there as the goldens were run. It compares each output with the goldens, with each folder's paths written as `<case>`, `<cases>`, `<resources>` and `<work>` (`goldens.ts`). Every output that still differs is an H-site: it goes in `parity.json`'s `hSites` for an oracle H-patch, and its class in `record.json` becomes H. It writes `<work>/parity/goldens-check.json` and exits 0: an H-site is a finding. |
+| `certify [--check] [--program <exe>]` | Runs every corpus case with `sketch-orca-rs` (`target/debug/sketch-orca-rs.exe` from `bun run rs:build`, or `--program`), in the environment a client gives an engine and with the goldens' resources, and compares every output of every run with the goldens, each side's paths made portable and the engine block made alike (its version and `implementation` are not compared; `certify.ts`). A result is compared as a JSON value (the same members in the same order, the same values), every other output byte for byte after `masks.json`, and an output `record` classed R within the envelope (each line that varies between the shipped engine's runs, each number on it between the least and greatest of them). A run the program declines (`not-ported`, exit -8) passes for the front families alone (`version`, `config-def`, `intake`), and only when the C++ run got past reading the job (its progress shows a stage after `job`), the program wrote nothing the C++ did not and nothing to stdout or stderr, and the families it is missing are neither front families nor certified. A family whose every run of every case passes is certified in `parity.json`. A flag is raised, never lowered. It refuses a program older than a crate's `Cargo.toml`, `build.rs` or `src/`, or the workspace's Cargo files or toolchain pin. It writes `<work>/parity/certify.json`; `--check` runs into `runs/certify-check`, writes `certify-check.json` and no `parity.json`. Either exits 1 when a family `parity.json` certifies does not pass. It needs `parity corpus` and `parity record` (and `parity envelope` for R outputs). |
 
 ## Every engine runs as a client runs it
 
@@ -105,6 +106,9 @@ parity/runs/probe-check/      parity probe --check's second run (committed/, ful
 parity/envelope/              the shipped engine's own run-to-run variance
 parity/same.json              parity same's report
 parity/neutral.json           parity neutral's report
+parity/certify.json           parity certify's report: each family's verdict and first problems
+                              (certify-check.json for --check); its runs in runs/certify/ (cases/,
+                              and rust/: <case>/<n>/), or runs/certify-check/
 oracle/src/                   the oracle's checkout (a separate C++ build that never ships)
 oracle/build/                 its build; the linker map is build/sketch-orca/sketch-orca.map
 oracle/state/                 what the checkout and the build were made from
@@ -145,5 +149,7 @@ examples moved into one, and `corpus.json`), `test/parity-classes.test.ts` (each
 portable, the thread counts, `parity.json`, the H-sites of two folders and the envelope),
 `test/parity-gen-config.test.ts` (the committed file against the committed probe, the fields left
 to `OptionDef::EMPTY`, the Rust literals, the refusals of a probe it does not take, and the
-command's registration), `test/github.test.ts` and
+command's registration), `test/parity-certify.test.ts` (the engine block made alike, results as
+JSON values, the envelope, when a decline passes and when it does not, families, flags raised and
+never lowered, the program's sources, and the command's registration), `test/github.test.ts` and
 `test/paths.test.ts`.

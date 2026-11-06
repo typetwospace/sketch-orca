@@ -436,6 +436,8 @@ export interface JobResult {
   exitCode?: number
   /** The object a failure is about. */
   objectIndex?: number
+  /** A decline's (`not-ported`, sketch-orca-rs): the steps of the engine the job reaches that the program does not do yet. */
+  missing?: string[]
   /** The job's command, once the engine could read the job. */
   command?: JobCommand
   warnings: ResultWarning[]
@@ -550,6 +552,11 @@ export function validateResult(value: unknown): JobResult {
     result.exitCode = exitCode
   }
   if (value.objectIndex !== undefined) result.objectIndex = rwhole(value.objectIndex, 'objectIndex', 0)
+  if (value.missing !== undefined) {
+    if (!Array.isArray(value.missing)) throw new JobError('result missing must be a list')
+    if (value.ok) throw new JobError('result is ok but names missing steps')
+    result.missing = value.missing.map((m, i) => rtext(m, `missing[${i}]`))
+  }
   if (value.command !== undefined) {
     if (typeof value.command !== 'string' || !(JOB_COMMANDS as readonly string[]).includes(value.command)) {
       throw new JobError(`result command must be ${JOB_COMMANDS.join(', ')}, got ${JSON.stringify(value.command)}`)
