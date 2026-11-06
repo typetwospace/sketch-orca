@@ -77,7 +77,7 @@ bun run rs:build | rs:test | rs:clippy | rs:fmt:check   # the Rust translation (
 | `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. It takes the staged engine only when its manifest's `deps` are the dependency inputs `build` works out now, so the MinGW-w64 toolchain `bundle.json` names is the one that built GMP and MPFR. `--no-deps` leaves the dependency packages out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency has no pinned source, the Orca archive keeps a binary, a dependency package holds a binary `PACKAGE_BINARIES` does not name, or the engine ships a binary of Orca's tree (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
 | `release [--offline] [--no-deps] [--allow-missing]` | `check`, `update` (only to a newer stable release), `fetch`, `build`, `smoke`, `stage` and `source`, in order, stopping at the first failure. `--offline` leaves out `check` and `update`. |
 | `env` | Prints the toolchain found and the cleaned build PATH. |
-| `parity <command> [options]` | The parity harness, which holds the Rust translation to the C++ engine (`parity/README.md`). Each command is a module, `scripts/lib/parity/cmd-<name>.ts`; `parity --help` lists them. So far: `parity reference` downloads the published 0.1.0 engine zip (never the source zip), checks it against the release's `SHA256SUMS` and unpacks it to `<work>/parity/reference/0.1.0`; `parity same` runs that reference and the engine staged from this checkout on every smoke case's jobs, in the environment a client gives the engine, and writes `<work>/parity/same.json`, with each output identical, identical after `parity/masks.json`, or different; `parity oracle` builds the oracle, the engine plus the knobs of `parity/oracle/patches` (`parity/oracle/README.md`), on the engine's dependency build and stages it in `<work>/oracle/dist` (it never ships); `parity neutral` checks that the oracle is the engine with no knob set, that two runs with the clock and seed pinned are byte for byte the same, and records what differs between 1 and 8 threads, in `<work>/parity/neutral.json` (exit 1 when either of the first two fails). Each holds the run lock and logs to `<work>/logs/parity-<name>.log`. |
+| `parity <command> [options]` | The parity harness, which holds the Rust translation to the C++ engine (`parity/README.md`). Each command is a module, `scripts/lib/parity/cmd-<name>.ts`; `parity --help` lists them. So far: `parity reference` downloads the published 0.1.0 engine zip (never the source zip), checks it against the release's `SHA256SUMS` and unpacks it to `<work>/parity/reference/0.1.0`; `parity same` runs that reference and the engine staged from this checkout on every smoke case's jobs, in the environment a client gives the engine, and writes `<work>/parity/same.json`, with each output identical, identical after `parity/masks.json`, or different; `parity oracle` builds the oracle, the engine plus the knobs of `parity/oracle/patches` (`parity/oracle/README.md`), on the engine's dependency build and stages it in `<work>/oracle/dist` (it never ships); `parity neutral` checks that the oracle is the engine with no knob set, that two runs with the clock and seed pinned are byte for byte the same, and records what differs between 1 and 8 threads, in `<work>/parity/neutral.json` (exit 1 when either of the first two fails); `parity probe` builds the probe program (`parity/oracle/probe/`) against the oracle's build tree and records what the engine's C runtime, STL, oneTBB and ConfigDef do (`parity/SOP1.md`), the full set in `<work>/parity/probes` and a subset under 8 MB in `parity/probes/` (`--check` runs it again and exits 1 unless the bytes are the same). Each holds the run lock and logs to `<work>/logs/parity-<name>.log`. |
 
 `release` is the workflow for a new engine. After a failure, fix the cause and run it again: the
 finished steps skip. When a newer release is out it rewrites `orca.lock.json` in the repository;
@@ -89,7 +89,8 @@ Visual Studio's IDE: on Windows `build` configures every dependency so that no C
 
 Exit codes (`EXIT` in `scripts/lib/run.ts`): 0 when the command did its work; `check` also exits 1
 (a newer stable release is out) and 2 (the locked tag moved), `update` and `release` stop with 2
-when the locked tag moved, and `parity neutral` exits 1 when the oracle is not neutral; 3 when the
+when the locked tag moved, `parity neutral` exits 1 when the oracle is not neutral, and `parity
+probe --check` when a second run differs; 3 when the
 command failed; 64 for a command line the pipeline does not
 take (an unknown command, or `--step` with another value). The commands that write (all but
 `check` and `env`) hold `<work>/run.lock.d`, which names their process, while they run: a second
@@ -119,9 +120,9 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | `orca-fmt` | `printf`, `to_chars`, `iostream` double output and number parsing, with the C++ engine's digits. |
 | `orca-stl` | The C++ standard library's sorts, selections, heaps, `min` and `max`, hash containers and `mt19937`, in Microsoft's order of operations. |
 | `orca-tbb` | oneTBB's concurrency and partitioners as fixed split trees, run on rayon. |
-| `orca-probe` | Reads the probe files (SOP1) the oracle records, for the gate that holds the crates above to the C++ engine. |
-| `orca-json` | JSON with `nlohmann::json`'s semantics. |
-| `orca-config` | Orca's configuration: the definition of every setting, legacy keys, serialisation. |
+| `orca-probe` | A scaffold until task O1.8a fills it: it will read the probe files (SOP1) the probe program records, for the gate that holds the crates above to the C++ engine. |
+| `orca-json` | A scaffold until task O1.8b fills it: JSON with `nlohmann::json`'s semantics. |
+| `orca-config` | A scaffold until task O1.8b fills it: Orca's configuration, the definition of every setting, legacy keys, serialisation. |
 | `orca-cli` | The program, `sketch-orca-rs`. |
 
 The Rust scripts run cargo with `--locked`, inside the environment of the same Visual Studio the
@@ -165,7 +166,9 @@ crates/          the Rust translation: the crates of one Cargo workspace (Cargo.
 protocol/        the engine's command line and files: specification, JSON Schemas, examples (MIT)
 licenses/        licence texts we supply for dependencies and package binaries whose packages lack them
 parity/          the parity harness's committed data (masks.json), its README, SOP1.md (the oracle's
-                 dump format) and oracle/ (the oracle's patches and their README)
+                 dump format and the probe files'), HAZARDS.md (what the engine's bytes hang on
+                 beyond its inputs), probes/ (the committed probe subset), and oracle/ (the oracle's
+                 patches, the probe program in probe/, and their README)
 scripts/         orca.ts and its modules in lib/ (the parity harness in lib/parity/); rust.ts, the
                  cargo runner, and lib/rust.ts
 test/            unit tests and their fixtures
@@ -191,8 +194,8 @@ dist/engine/    the staged engine
 dist/source/    the source bundle
 parity/         the parity harness: published references, corpus, goldens, runs, probes, the
                 envelope, same.json and neutral.json (parity/README.md lists them)
-oracle/         the parity oracle's checkout, build, records and staged copy (a C++ build that
-                never ships; parity/oracle/README.md)
+oracle/         the parity oracle's checkout, build, records and staged copy, and the probe
+                program's build (C++ builds that never ship; parity/oracle/README.md)
 logs/           one log per command
 state/          what each step last did, and from which inputs
 run.lock.d/     the lock; its newest record: the command that writes, its process id and start time
@@ -531,6 +534,11 @@ These are for the maintainers to decide, and some for a lawyer. The first three 
     files keeps a program that runs it a separate work (an "aggregate"), as `protocol/` intends;
   - the Visual C++ runtime linked statically (above);
   - who holds the copyright in the changes, and the name to give for it (above);
+  - whether the Rust translation's reproduction of the static UCRT's behaviour (its `strtod` and
+    `strtof` rounding and NaN spellings, its `printf` choices, its `rand`), written from the C
+    standard and from black-box tests of the UCRT, never from the UCRT's source, which the Windows
+    SDK ships under Microsoft's own licence, is free of Microsoft's copyright in that source
+    (`CONTRIBUTING.md`, "Behaviour without source"; `crates/orca-fmt/src/parse.rs`);
   - "version 3" only, as OrcaSlicer's README grants it, against the "or later" of some of the code
     Orca carries (ArcWelderLib; libvgcode, which the engine does not build);
   - the OrcaSlicer name and any trademark in it, in the name "sketch-orca" and in a client's

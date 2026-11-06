@@ -149,3 +149,28 @@ It runs every smoke case's jobs three ways and writes `<work>/parity/neutral.jso
   run finishes, and each output or dump that differs between them is recorded as a T candidate.
 
 It exits 1 when (a) or (b) fails, 0 when both pass; (c) is a record, not a gate.
+
+## The probe program
+
+`probe/` is a second C++ program built against the oracle's build tree, never shipped:
+
+```
+bun scripts/orca.ts parity probe [--check]
+```
+
+It compiles with the compile line of the oracle's `config_def.cpp` and links with the oracle's link
+line (read from `oracle/build/build.ninja`), into `oracle/probe-build/`, so its maths, formatting,
+sorting, hashing, random numbers and threading are the engine's own: the static UCRT, MSVC's STL,
+oneTBB and libslic3r. It writes what they do as SOP1 files (`parity/SOP1.md`, "Probe files"):
+
+| File | Source | What it records |
+| --- | --- | --- |
+| `crt.sop1` | `crt.cpp` | every maths function of the static UCRT that the oracle's linker map lists, on edge and swept inputs, with FMA3 on and off; MSVC's casts; `rand()` |
+| `fmt.sop1` | `fmt.cpp` | `printf` and `snprintf` formats, `std::to_chars`, iostream output, `to_string`, and the parsers (`strtod`, `atof`, `from_chars`, `istream`) |
+| `stl.sop1` | `stl.cpp` | sorts, stable sorts, `nth_element`, partial sorts, merges, heaps and searches on patterned inputs; `std::hash`; unordered containers' iteration order; random engines and distributions; `shuffle` |
+| `tbb.sop1` | `tbb.cpp` | how oneTBB splits `parallel_for` and `parallel_reduce` ranges with each partitioner, for P from 1 to 64 |
+| `configdef.json` | `configdef.cpp` | Orca's whole `print_config_def`, its option lists, legacy keys and `handle_legacy` |
+
+`parity/probes/` keeps a subset under 8 MB; the full set stays in `<work>/parity/probes`. The crates
+replay them (`SKETCH_ORCA_PROBES_DEEP` for the full set). `probe/recorded/` holds the smaller
+programs whose outputs the crates' own unit tests carry as constants (`probe/recorded/README.md`).

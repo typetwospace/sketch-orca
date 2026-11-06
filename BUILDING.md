@@ -173,6 +173,15 @@ Run again, it keeps what still holds: a change to the patches or to `cli/` makes
 beside the clone and writes only the files that differ into it, so Ninja rebuilds only what they
 touch; another compiler environment or dependency build starts `<work>/oracle/build` over.
 
+`bun run engine parity probe` builds the probe program (`parity/oracle/probe/`) after `parity
+oracle`, into `<work>/oracle/probe-build`. It compiles with the compile line of the oracle's own
+`config_def.cpp` and links with the oracle's link line, both read from `<work>/oracle/build`'s
+`build.ninja` (`scripts/lib/parity/probe.ts`), so it runs the code the engine runs. It is held to
+"No window, no IDE" too: CMake configures it with Ninja for C++ only, `CMAKE_Fortran_COMPILER` set
+to `NOTFOUND`, `BUILD_TESTING` and `EIGEN_BUILD_TESTING` off, and it builds with 2 Ninja jobs; a
+`CompilerIdFortran` folder or a `.vfproj` file in `<work>/oracle/probe-build` before or after the
+build fails it. The program runs hidden, with the oracle's library folders on `PATH`.
+
 ## OpenSSL
 
 libslic3r computes MD5 sums with OpenSSL's libcrypto, which the engine links statically. OrcaSlicer
