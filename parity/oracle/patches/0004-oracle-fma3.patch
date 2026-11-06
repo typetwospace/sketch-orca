@@ -1,0 +1,171 @@
+sketch-orca oracle patch 0004: the FMA3 knob, SKETCH_ORCA_ORACLE_FMA3.
+Modified for Sketch, 2026-11-06.
+
+With SKETCH_ORCA_ORACLE_FMA3=0, the oracle calls _set_FMA3_enable(0) before anything else: in a
+static initializer placed in the compiler's initialization segment (#pragma init_seg(compiler),
+cli/oracle_fma3.cpp), which the CRT runs after its own initialization and before every other
+static initializer of the program. The Universal CRT's x64 maths functions (exp, log, pow, sin,
+cos and the rest) then take their SSE2 paths, not their FMA3 ones, whatever the CPU. "1" leaves
+the CRT's own choice, as unset does. Any other value stops the oracle before it does anything
+else, with exit code 78.
+
+---
+diff --git a/sketch-orca/cli/CMakeLists.txt b/sketch-orca/cli/CMakeLists.txt
+index 017a7a90..8f65bb7f 100644
+--- a/sketch-orca/cli/CMakeLists.txt
++++ b/sketch-orca/cli/CMakeLists.txt
+@@ -39,6 +39,9 @@ set(SKETCH_ORCA_SOURCES
+     gui_symbols.cpp
+     job.hpp
+     job.cpp
++    # sketch-orca oracle patch 0004 (2026-11-06): the FMA3 knob, SKETCH_ORCA_ORACLE_FMA3.
++    oracle_fma3.hpp
++    oracle_fma3.cpp
+     presets.hpp
+     presets.cpp
+     run.hpp
+diff --git a/sketch-orca/cli/main.cpp b/sketch-orca/cli/main.cpp
+index 7e8b3c94..4fde223d 100644
+--- a/sketch-orca/cli/main.cpp
++++ b/sketch-orca/cli/main.cpp
+@@ -50,6 +50,8 @@
+ #include "libslic3r/Utils.hpp"
+ 
+ #include "common.hpp"
++// sketch-orca oracle patch 0004 (2026-11-06): the FMA3 knob.
++#include "oracle_fma3.hpp"
+ #include "run.hpp"
+ 
+ namespace {
+@@ -340,6 +342,10 @@ static int engine_main(int argc, char **argv)
+ // is the front end's main as it was.
+ int main(int argc, char **argv)
+ {
++    // sketch-orca oracle patch 0004 (2026-11-06): SKETCH_ORCA_ORACLE_FMA3, when set, must be 0 or 1; the
++    // switch itself has already happened, before every static initializer (oracle_fma3.cpp).
++    if (const std::string problem = sketch_orca::oracle::fma3_knob_problem(); !problem.empty())
++        return oracle_knob_error(problem);
+     if (const std::string problem = Slic3r::Oracle::threads_knob_problem(); !problem.empty())
+         return oracle_knob_error(problem);
+     if (!Slic3r::Oracle::threads_set())
+diff --git a/sketch-orca/cli/oracle_fma3.cpp b/sketch-orca/cli/oracle_fma3.cpp
+new file mode 100644
+index 00000000..a86ea345
+--- /dev/null
++++ b/sketch-orca/cli/oracle_fma3.cpp
+@@ -0,0 +1,78 @@
++// Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
++// SPDX-License-Identifier: AGPL-3.0-only
++//
++// This file is part of sketch-orca, a modified version of OrcaSlicer. sketch-orca is free software:
++// you can redistribute it and/or modify it under the terms of the GNU Affero General Public
++// License, version 3, as published by the Free Software Foundation. It is distributed in the hope
++// that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++// (LICENSE) for more details.
++//
++// sketch-orca oracle patch 0004 (2026-11-06): the FMA3 knob (oracle_fma3.hpp). The switch happens in a
++// static initializer placed in the compiler's initialization segment (#pragma init_seg(compiler)),
++// which the CRT runs after its own C initialization (the environment, and the CRT's choice of FMA3
++// paths) and before the library and user segments, where every other static initializer of the
++// program, Orca's and its dependencies' included, runs. No floating-point work happens before it.
++#include "oracle_fma3.hpp"
++
++#include <cstdlib>
++#include <cstring>
++
++#if defined(_MSC_VER) && defined(_M_X64)
++#include <math.h>
++#define SKETCH_ORCA_ORACLE_HAS_FMA3_SWITCH 1
++// C4074: initializers put in compiler reserved initialization area; on purpose, see above. The one
++// static object of this file, fma3_switch, is the only initializer the pragma moves.
++#pragma warning(disable : 4074)
++#pragma init_seg(compiler)
++#else
++#define SKETCH_ORCA_ORACLE_HAS_FMA3_SWITCH 0
++#endif
++
++namespace sketch_orca {
++namespace oracle {
++
++namespace {
++
++// 1 when the knob is "0", 2 when "1", 0 when unset, -1 when it is anything else.
++int read_fma3_knob()
++{
++    const char *text = std::getenv("SKETCH_ORCA_ORACLE_FMA3");
++    if (text == nullptr)
++        return 0;
++    if (std::strcmp(text, "0") == 0)
++        return 1;
++    if (std::strcmp(text, "1") == 0)
++        return 2;
++    return -1;
++}
++
++#if SKETCH_ORCA_ORACLE_HAS_FMA3_SWITCH
++struct Fma3Switch
++{
++    Fma3Switch()
++    {
++        if (read_fma3_knob() == 1)
++            _set_FMA3_enable(0);
++    }
++};
++
++const Fma3Switch fma3_switch;
++#endif
++
++} // namespace
++
++std::string fma3_knob_problem()
++{
++    const int knob = read_fma3_knob();
++    if (knob < 0)
++        return "SKETCH_ORCA_ORACLE_FMA3 must be 0 (the CRT's FMA3 paths off) or 1 (the CRT's own choice)";
++#if !SKETCH_ORCA_ORACLE_HAS_FMA3_SWITCH
++    if (knob == 1)
++        return "SKETCH_ORCA_ORACLE_FMA3=0 works only in the Windows x64 build, whose CRT has the switch";
++#endif
++    return std::string();
++}
++
++} // namespace oracle
++} // namespace sketch_orca
+diff --git a/sketch-orca/cli/oracle_fma3.hpp b/sketch-orca/cli/oracle_fma3.hpp
+new file mode 100644
+index 00000000..0a879e66
+--- /dev/null
++++ b/sketch-orca/cli/oracle_fma3.hpp
+@@ -0,0 +1,31 @@
++// Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
++// SPDX-License-Identifier: AGPL-3.0-only
++//
++// This file is part of sketch-orca, a modified version of OrcaSlicer. sketch-orca is free software:
++// you can redistribute it and/or modify it under the terms of the GNU Affero General Public
++// License, version 3, as published by the Free Software Foundation. It is distributed in the hope
++// that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++// (LICENSE) for more details.
++//
++// sketch-orca oracle patch 0004 (2026-11-06): the FMA3 knob of the parity oracle, a build that never
++// ships. SKETCH_ORCA_ORACLE_FMA3=0 turns off the FMA3 code paths of the Universal CRT's x64 math
++// library (exp, log, pow, sin, cos and the rest) with _set_FMA3_enable(0), before any C++ static
++// initializer of the program runs (oracle_fma3.cpp), so every libm result is the one the CPU's SSE2
++// path gives, whatever the machine. SKETCH_ORCA_ORACLE_FMA3=1 leaves the CRT's own choice, as unset
++// does. Anything else is refused by main, before it does anything else.
++#ifndef sketch_orca_oracle_fma3_hpp_
++#define sketch_orca_oracle_fma3_hpp_
++
++#include <string>
++
++namespace sketch_orca {
++namespace oracle {
++
++// Why SKETCH_ORCA_ORACLE_FMA3 is refused, or "" when it is unset, 0 or 1.
++std::string fma3_knob_problem();
++
++} // namespace oracle
++} // namespace sketch_orca
++
++#endif // sketch_orca_oracle_fma3_hpp_

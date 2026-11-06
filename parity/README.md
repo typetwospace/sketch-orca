@@ -22,7 +22,7 @@ Each command is one module, `scripts/lib/parity/cmd-<name>.ts`, found by name wh
 
 A new command is a new module: nothing in `orca.ts` lists them. Each command logs to
 `<work>/logs/parity-<name>.log`. Exit codes are the pipeline's: 0 done, 3 failed, 64 a command line
-it does not take.
+it does not take; a gate that ran and failed exits 1 (`parity neutral`).
 
 ## Commands
 
@@ -30,6 +30,8 @@ it does not take.
 | --- | --- |
 | `reference` | Downloads the published sketch-orca 0.1.0 engine from this repository's GitHub release v0.1.0: `sketch-orca-0.1.0-orca-2.4.2-win32-x64.zip` (40,813,895 bytes) and `SHA256SUMS`, never the 611 MB source zip. It checks the zip's size and SHA-256 while it streams (`github.ts` `downloadReleaseAsset`). The SHA-256 must be the one `SHA256SUMS` lists and the one pinned in `reference.ts`. It then unpacks the zip to `<work>/parity/reference/0.1.0` and checks every file against the engine's manifest. A second run checks what is there and downloads nothing. |
 | `same` | Runs the reference and the engine staged from this checkout (`<work>/dist/engine`, after `build`, `smoke` and `stage`) on every smoke case's jobs (`smoke.ts` `SMOKE_CASES`, 19 cases), one engine after the other, in one folder, so the jobs and the paths in them are the same bytes. Every output of every engine run is compared: exit code, stdout, stderr, and each file the run made, changed or removed. Each is marked identical, masked (identical after `masks.json`) or different. The command writes `<work>/parity/same.json` and exits 0 whatever it finds: a difference is a finding, not a failure. |
+| `oracle` | Builds the oracle, the engine with the knobs of `oracle/patches` (`oracle/README.md`), and stages it in `<work>/oracle/dist`. It refuses to start with less than 40 GB free on the work folder's drive or in a work folder longer than `WINDOWS_WORK_PATH_MAX`, builds on the engine's dependency build (`<work>/deps`, shared, never rebuilt) with the engine's toolchain and `/MT`, writes the linker map beside the program, and stages `bin/sketch-orca-oracle.exe`, its map, the libraries it loads, the engine's resources and `oracle.json` (`oracle.ts`, `BUILDING.md`). The oracle never ships. |
+| `neutral` | The neutrality gate (`neutral.ts`), on every smoke case's jobs, run as `same` runs them: (a) with no knob set, the oracle's outputs equal those of `<work>/dist/engine` after `masks.json`; (b) with `SKETCH_ORCA_ORACLE_TIME` and `SKETCH_ORCA_ORACLE_SEED` set, two oracle runs are byte for byte the same, with no mask; (c) with `SKETCH_ORCA_ORACLE_THREADS=1` and `=8` (time and seed pinned, each run dumping SOP1 files, `SOP1.md`), every run finishes, and each output or dump that differs is recorded as a T candidate, with what the dumps' RUN records say TBB reported. It writes `<work>/parity/neutral.json` and exits 1 when (a) or (b) fails, 0 when both pass. It needs `parity oracle`, and `build`, `smoke` and `stage` of this checkout. |
 
 ## Every engine runs as a client runs it
 
@@ -45,7 +47,8 @@ hidden, with stdin closed, and are ended when the smoke timeout runs out.
 ## Masks
 
 `masks.json` lists what may differ between two runs of the same job: only the clock and the
-entropy that reach the outputs, each mask with the source line that writes it and why.
+entropy that reach the outputs, and where in a program's own code a crash happened (any two builds
+place their code differently), each mask with the source line that writes it and why.
 
 | Mask | Kind | What it covers |
 | --- | --- | --- |
@@ -53,6 +56,7 @@ entropy that reach the outputs, each mask with the source line that writes it an
 | `3mf-metadata-dates` | text | A 3MF model's `CreationDate` and `ModificationDate` metadata (`bbs_3mf.cpp:6834-6836`). |
 | `3mf-gcode-md5` | md5-of | A plate G-code's `.md5` entry. It is masked only when each archive's MD5 is that of its own G-code, which is then compared on its own. |
 | `zip-entry-times` | zip-times | The DOS times of a `.3mf`'s entries, in the local headers and the central directory. |
+| `crash-location` | text | In a crash result (`result.json`), the program's file name and the offset in it where the crash happened (`cli/common.cpp:581`). The exception code and the stage stay compared. |
 
 A mask applies only to the files its `files` globs name. A glob names an output by its file name
 (`*.gcode`), or an archive's entry as `<archive>!<entry>`. `*` never matches across `/` or `!`.
@@ -63,7 +67,8 @@ part (`masks.ts`).
 
 Clock and entropy that the masks do not cover are differences: `PlaceholderParser`'s timestamp
 variables, the clock-seeded `mt19937` (`GCode.cpp:2705-2707`), and `random()` in a vendor's
-templates. Later tasks sort them out with the oracle.
+templates. The oracle pins them (`SKETCH_ORCA_ORACLE_TIME`, `SKETCH_ORCA_ORACLE_SEED`,
+`oracle/README.md`): with both set, two oracle runs need no mask at all (`parity neutral` (b)).
 
 ## The work folder
 
@@ -78,13 +83,19 @@ parity/corpus/                the jobs and meshes the families are certified on
 parity/goldens/               the C++ engine's outputs of the corpus
 parity/runs/                  one folder per comparison run; same/ holds parity same's cases
                               (cases/), and each engine's recorded runs (reference/, head/:
-                              <case>/<n>/ with stdout, stderr and files/)
+                              <case>/<n>/ with stdout, stderr and files/); neutral/ holds parity
+                              neutral's cases, its recorded runs (head/, oracle/, pinned-a/,
+                              pinned-b/, threads-1/, threads-8/) and the dumps of the thread runs
+                              (dumps-t1/, dumps-t8/: <case>/<n>/*.sop1)
 parity/probes/                the probe files the oracle records
 parity/envelope/              the shipped engine's own run-to-run variance
 parity/same.json              parity same's report
+parity/neutral.json           parity neutral's report
 oracle/src/                   the oracle's checkout (a separate C++ build that never ships)
-oracle/build/                 its build
-oracle/dist/                  its staged copy
+oracle/build/                 its build; the linker map is build/sketch-orca/sketch-orca.map
+oracle/state/                 what the checkout and the build were made from
+oracle/dist/                  its staged copy: bin/sketch-orca-oracle.exe, its map, the libraries
+                              it loads, resources/ and oracle.json
 ```
 
 On Windows each folder counts against the work folder's length limit (`WINDOWS_WORK_PATH_MAX`).
@@ -93,12 +104,15 @@ Its place below the work folder, plus room for files 150 characters deeper
 So any work folder `build` takes is one the harness can work in, and a command stops before
 writing if one does not fit.
 
-Only small data is committed here: `masks.json` now, and later `parity.json`, `corpus.json`, the
-front-end goldens and a probe subset, under 8 MB together. Meshes and slice goldens stay in the
+Only small data is committed here: `masks.json`, `SOP1.md` (the format of the oracle's dumps),
+`oracle/` (the oracle's patches and their README) now, and later `parity.json`, `corpus.json`,
+the front-end goldens and a probe subset, under 8 MB together. Meshes and slice goldens stay in the
 work folder.
 
 ## Tests
 
 `bun run test` covers the harness hermetically: fakes and fixtures only, never the work folder or
 the network. The tests are `test/parity-dispatch.test.ts`, `test/parity-reference.test.ts` (a fake
-GitHub and fetch), `test/parity-same.test.ts`, `test/github.test.ts` and `test/paths.test.ts`.
+GitHub and fetch), `test/parity-same.test.ts`, `test/parity-oracle.test.ts` (the oracle's patches
+and knobs, the refusals of `parity oracle`, the SOP1 reader and what `parity neutral` makes of runs
+and dumps), `test/github.test.ts` and `test/paths.test.ts`.

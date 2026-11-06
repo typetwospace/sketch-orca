@@ -49,15 +49,24 @@ describe('engine environment', () => {
 })
 
 describe('masks', () => {
-  test("parity/masks.json: the G-code header's time, the 3MF dates, the plate MD5 and the zip entry times, each with its source line", () => {
+  test("parity/masks.json: the G-code header's time, the 3MF dates, the plate MD5, the zip entry times and a crash's place in the program, each with its source line", () => {
     expect(MASKS_FILE.replace(/\\/g, '/')).toMatch(/\/parity\/masks\.json$/)
     expect(masks.map((m) => [m.id, m.kind])).toEqual([
       ['gcode-generated-on', 'text'],
       ['3mf-metadata-dates', 'text'],
       ['3mf-gcode-md5', 'md5-of'],
       ['zip-entry-times', 'zip-times'],
+      ['crash-location', 'text'],
     ])
     for (const m of masks) expect(m.source).toMatch(/\.(cpp|h)|miniz/)
+  })
+
+  test("a crash result's place in the program is masked; its exception code and stage are not", () => {
+    const result = (where: string, code = 'C0000005', stage = 'slice') => Buffer.from(`{\n  "message": "the engine crashed (exception 0x${code} at ${where}) during '${stage}', in Orca's code",\n}\n`)
+    expect(compareOutput('slice/result.json', result('sketch-orca.exe+0x77c95'), result('sketch-orca-oracle.exe+0x7a7e5'), masks)).toEqual({ status: 'masked', masks: ['crash-location'] })
+    expect(compareOutput('slice/result.json', result('sketch-orca.exe+0x77c95'), result('sketch-orca.exe+0x77c95', 'C0000094'), masks).status).toBe('different')
+    expect(compareOutput('slice/result.json', result('sketch-orca.exe+0x77c95'), result('sketch-orca.exe+0x1', 'C0000005', 'export'), masks).status).toBe('different')
+    expect(compareOutput('slice/out.gcode', result('sketch-orca.exe+0x77c95'), result('sketch-orca-oracle.exe+0x7a7e5'), masks).status).toBe('different')
   })
 
   test('parseMasks refuses a wrong format, ids given twice, no source, a pattern that matches empty text and unknown kinds', () => {

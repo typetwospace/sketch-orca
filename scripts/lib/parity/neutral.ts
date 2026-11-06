@@ -1,0 +1,485 @@
+// The neutrality gate: the oracle (oracle.ts) is the engine plus knobs that act only when set, and
+// parity neutral checks that, on every smoke case's jobs (smoke.ts SMOKE_CASES), run as parity same
+// runs them (same.ts runEngineCases, the environment a client gives the engine):
+//   (a) unset   with no knob set, the oracle's outputs equal those of the engine staged from this
+//               checkout (<work>/dist/engine) after parity/masks.json, as the reference's do;
+//   (b) pinned  with SKETCH_ORCA_ORACLE_TIME and SKETCH_ORCA_ORACLE_SEED set, two runs of the oracle
+//               are byte for byte the same, with no mask at all;
+//   (c) threads with SKETCH_ORCA_ORACLE_THREADS=1 and =8 (TIME and SEED pinned, and
+//               SKETCH_ORCA_ORACLE_DUMP set to a folder of each engine run's own), every run
+//               finishes, and every output or dump that differs between the two is recorded as a
+//               T candidate (a difference that comes from the thread count), not a failure.
+// (a) and (b) are the gate: parity neutral exits 1 when either fails. (c) also records what the
+// RUN record of each dump (parity/SOP1.md) says TBB reports, so whether the arena of patch 0003
+// reports P to the code that asks is read from the oracle itself, not assumed.
+// Everything goes in <work>/parity/neutral.json; the runs are kept in <work>/parity/runs/neutral.
+
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { basename, join } from 'node:path'
+import type { Platform } from '../env.ts'
+import type { OrcaLock } from '../lock.ts'
+import type { ParityPaths } from '../paths.ts'
+import { StepError } from '../run.ts'
+import { SMOKE_VERSION, type SmokeCase, type SmokePresetSets } from '../smoke.ts'
+import type { Mask, OutputStatus } from './masks.ts'
+import { ORACLE_KNOBS, type OracleUnderTest } from './oracle.ts'
+import { compareCases, runEngineCases, runHidden, type CaseRecord, type CaseReport, type EngineUnderTest, type RunProcess, type SameEngineInfo } from './same.ts'
+
+export const NEUTRAL_FORMAT = 'sketch-orca-parity-neutral/1'
+
+/** The time (b) and (c) pin: 2026-01-01 00:00:00 UTC, in seconds since 1970. */
+export const NEUTRAL_TIME = '1767225600'
+
+/** The seed (b) and (c) pin. */
+export const NEUTRAL_SEED = '1'
+
+/** The thread counts (c) compares. */
+export const NEUTRAL_THREADS = [1, 8] as const
+
+/** The knobs (b) and (c) set. */
+export const PINNED_KNOBS: Record<string, string> = { [ORACLE_KNOBS.time]: NEUTRAL_TIME, [ORACLE_KNOBS.seed]: NEUTRAL_SEED }
+
+// ---------------------------------------------------------------- SOP1 (parity/SOP1.md)
+
+export const SOP1_MAGIC = 'SOP1'
+export const SOP1_VERSION = 1
+
+export interface Sop1Record {
+  /** The four-letter kind, as written ('RUN ' and 'END ' end in a space). */
+  kind: string
+  payload: Buffer
+}
+
+export interface Sop1File {
+  version: number
+  /** Every record before END. */
+  records: Sop1Record[]
+}
+
+/** Reads an SOP1 container: the magic, the version, the records and the END record that counts them. Throws on anything else. */
+export function readSop1(bytes: Buffer): Sop1File {
+  if (bytes.length < 8 || bytes.toString('latin1', 0, 4) !== SOP1_MAGIC) throw new Error('not an SOP1 file (no SOP1 magic)')
+  const version = bytes.readUInt32LE(4)
+  if (version !== SOP1_VERSION) throw new Error(`SOP1 version ${version}, this reader knows ${SOP1_VERSION}`)
+  const records: Sop1Record[] = []
+  let at = 8
+  for (;;) {
+    if (at + 12 > bytes.length) throw new Error(`the file ends inside a record header at byte ${at} (no END record)`)
+    const kind = bytes.toString('latin1', at, at + 4)
+    const length = bytes.readBigUInt64LE(at + 4)
+    const start = at + 12
+    if (length > BigInt(bytes.length - start)) throw new Error(`the ${JSON.stringify(kind)} record at byte ${at} is longer than the file`)
+    const payload = bytes.subarray(start, start + Number(length))
+    at = start + Number(length)
+    if (kind === 'END ') {
+      if (payload.length !== 8) throw new Error('the END record is not a u64')
+      const count = payload.readBigUInt64LE(0)
+      if (count !== BigInt(records.length)) throw new Error(`the END record counts ${count} records, the file has ${records.length}`)
+      if (at !== bytes.length) throw new Error(`${bytes.length - at} bytes after the END record`)
+      return { version, records }
+    }
+    records.push({ kind, payload })
+  }
+}
+
+/** A cursor over a payload, reading as Payload in OracleDump.cpp writes. */
+export class Sop1Reader {
+  private at = 0
+  private readonly buf: Buffer
+  constructor(buf: Buffer) {
+    this.buf = buf
+  }
+  private need(n: number): number {
+    if (this.at + n > this.buf.length) throw new Error(`the payload ends at byte ${this.buf.length}, ${n} more were needed at ${this.at}`)
+    const at = this.at
+    this.at += n
+    return at
+  }
+  u8(): number {
+    return this.buf.readUInt8(this.need(1))
+  }
+  u32(): number {
+    return this.buf.readUInt32LE(this.need(4))
+  }
+  i32(): number {
+    return this.buf.readInt32LE(this.need(4))
+  }
+  u64(): bigint {
+    return this.buf.readBigUInt64LE(this.need(8))
+  }
+  i64(): bigint {
+    return this.buf.readBigInt64LE(this.need(8))
+  }
+  bool(): boolean {
+    const v = this.u8()
+    if (v > 1) throw new Error(`a boolean of ${v}`)
+    return v === 1
+  }
+  str(): string {
+    const n = this.u32()
+    return this.buf.toString('utf8', this.need(n), this.at)
+  }
+  done(): boolean {
+    return this.at === this.buf.length
+  }
+}
+
+export interface Sop1Head {
+  source: string
+  name: string
+  object: bigint
+  occurrence: number
+}
+
+export function parseHead(payload: Buffer): Sop1Head {
+  const r = new Sop1Reader(payload)
+  const head = { source: r.str(), name: r.str(), object: r.i64(), occurrence: r.u32() }
+  if (!r.done()) throw new Error('the HEAD record is longer than its fields')
+  return head
+}
+
+export interface Sop1Run {
+  knobs: { name: string; set: boolean; value: string }[]
+  /** tbb::this_task_arena::max_concurrency() at the boundary. */
+  maxConcurrency: number
+  /** tbb::global_control::active_value(max_allowed_parallelism) at the boundary. */
+  maxAllowedParallelism: number
+  /** _get_FMA3_enable(), or -1 where there is none. */
+  fma3Enable: number
+}
+
+export function parseRun(payload: Buffer): Sop1Run {
+  const r = new Sop1Reader(payload)
+  const n = Number(r.u64())
+  const knobs: Sop1Run['knobs'] = []
+  for (let i = 0; i < n; i++) knobs.push({ name: r.str(), set: r.bool(), value: r.str() })
+  const run = { knobs, maxConcurrency: r.i32(), maxAllowedParallelism: Number(r.u64()), fma3Enable: r.i32() }
+  if (!r.done()) throw new Error('the RUN record is longer than its fields')
+  return run
+}
+
+/** Where two dumps of one boundary differ, the RUN record left out (it names the knobs, which differ on purpose). */
+export function sop1Differences(a: Sop1File, b: Sop1File): string[] {
+  const keep = (f: Sop1File) => f.records.map((r, i) => ({ ...r, i })).filter((r) => r.kind !== 'RUN ')
+  const x = keep(a)
+  const y = keep(b)
+  const out: string[] = []
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const p = x[i]
+    const q = y[i]
+    if (!p || !q) out.push(`record ${(p ?? q)!.i} (${(p ?? q)!.kind.trim()}) is in one dump only`)
+    else if (p.kind !== q.kind) out.push(`record ${p.i} is ${p.kind.trim()} in one and ${q.kind.trim()} in the other`)
+    else if (!p.payload.equals(q.payload)) out.push(`record ${p.i} (${p.kind.trim()})`)
+  }
+  return out
+}
+
+// ---------------------------------------------------------------- running the oracle with knobs
+
+/**
+ * A RunProcess that runs the engine with `knobs` added to its environment and, with `dumps`, with
+ * SKETCH_ORCA_ORACLE_DUMP set to a new folder per engine run: <dumps>/<case>/<n>, n counting the
+ * case's runs from 0 as same.ts's run stores do.
+ */
+export function knobRunner(knobs: Record<string, string>, dumps?: string, run: RunProcess = runHidden): RunProcess {
+  const counts = new Map<string, number>()
+  return (exe, args, o) => {
+    const env = { ...o.env, ...knobs }
+    if (dumps !== undefined) {
+      const id = basename(o.cwd)
+      const n = counts.get(id) ?? 0
+      counts.set(id, n + 1)
+      const folder = join(dumps, id, String(n))
+      rmSync(folder, { recursive: true, force: true })
+      mkdirSync(folder, { recursive: true })
+      env[ORACLE_KNOBS.dump] = folder
+    }
+    return run(exe, args, { ...o, env })
+  }
+}
+
+// ---------------------------------------------------------------- the report
+
+export interface PairSummary {
+  cases: number
+  runs: number
+  outputs: number
+  identical: number
+  masked: number
+  different: number
+}
+
+export interface PairCase {
+  id: string
+  /** The smoke checks of each side, by its label. */
+  smoke: Record<string, { ok: boolean; problems: string[] }>
+  runs: CaseReport['runs']
+}
+
+export interface PairReport {
+  /** The two sides: the first is compared against the second. */
+  sides: [{ label: string; knobs: Record<string, string> }, { label: string; knobs: Record<string, string> }]
+  /** The masks file, or null when no mask applies. */
+  masks: string | null
+  summary: PairSummary
+  /** Every output that differs, as <case>/<run>/<output>. */
+  different: string[]
+  cases: PairCase[]
+}
+
+export interface ArenaReport {
+  /** The thread count the knob asked for. */
+  threads: number
+  /** The dumps read. */
+  dumps: number
+  /** Each distinct (max_concurrency, max_allowed_parallelism, FMA3) that a RUN record gave. */
+  seen: { maxConcurrency: number; maxAllowedParallelism: number; fma3Enable: number; dumps: number }[]
+  /** Every RUN record gave max_concurrency() = the thread count. */
+  reportsP: boolean
+  /** Every RUN record gave global_control's max_allowed_parallelism = 1: TBB had no worker thread. */
+  oneThread: boolean
+}
+
+export interface DumpComparison {
+  /** Dump files compared (in both folders of a run). */
+  compared: number
+  identical: number
+  /** <case>/<run>/<file>: where its records differ. */
+  different: { file: string; records: string[] }[]
+  /** <case>/<run>/<file> written in one folder only. */
+  only: string[]
+  /** Dumps that could not be read: <case>/<run>/<file>: why. */
+  unreadable: string[]
+}
+
+export interface NeutralReport {
+  format: typeof NEUTRAL_FORMAT
+  createdAt: string
+  smokeVersion: number
+  engines: { head: SameEngineInfo; oracle: { dir: string; exeSha256: string; oraclePatches: { name: string; sha256: string }[]; sourceDigest: string } }
+  masks: { file: string; sha256: string }
+  /** (a) and (b) passed: parity neutral exits 0. */
+  passed: boolean
+  unset: PairReport & { passed: boolean }
+  pinned: PairReport & { passed: boolean }
+  threads: PairReport & {
+    /** Every engine run of both ended by itself (none timed out). */
+    finished: boolean
+    /** <side>/<case>/<run> of each run that timed out. */
+    unfinished: string[]
+    /** The T candidates: each output and dump that differs between the thread counts. */
+    candidates: string[]
+    dumps: DumpComparison
+    arena: ArenaReport[]
+  }
+}
+
+export function pairReport(o: { a: CaseRecord[]; b: CaseRecord[]; stores: [string, string]; sides: PairReport['sides']; masks: Mask[]; masksFile: string | null }): PairReport {
+  const [la, lb] = [o.sides[0].label, o.sides[1].label]
+  const cases = compareCases(o.a, o.b, { reference: o.stores[0], head: o.stores[1] }, o.masks, { reference: la, head: lb })
+  const summary: PairSummary = { cases: cases.length, runs: 0, outputs: 0, identical: 0, masked: 0, different: 0 }
+  const different: string[] = []
+  for (const c of cases) {
+    for (const r of c.runs) {
+      summary.runs++
+      for (const out of r.outputs) {
+        summary.outputs++
+        summary[out.status as OutputStatus]++
+        if (out.status === 'different') different.push(`${c.id}/${r.index}/${out.name}`)
+      }
+    }
+  }
+  return {
+    sides: o.sides,
+    masks: o.masksFile,
+    summary,
+    different,
+    cases: cases.map((c) => ({ id: c.id, smoke: { [la]: c.smoke.reference, [lb]: c.smoke.head }, runs: c.runs })),
+  }
+}
+
+/** The runs of `cases` that timed out, as <label>/<case>/<run>. */
+export function unfinishedRuns(label: string, cases: CaseRecord[]): string[] {
+  return cases.flatMap((c) => c.runs.filter((r) => r.timedOut).map((r) => `${label}/${c.id}/${r.index}`))
+}
+
+function sop1Files(dir: string): string[] {
+  return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.sop1')).sort() : []
+}
+
+/** Each run's dump folder under `root` (<root>/<case>/<n>), as <case>/<n>. */
+function runFolders(root: string): string[] {
+  if (!existsSync(root)) return []
+  const out: string[] = []
+  for (const c of readdirSync(root).sort()) for (const n of readdirSync(join(root, c)).sort((x, y) => Number(x) - Number(y))) out.push(`${c}/${n}`)
+  return out
+}
+
+/** Compares the dumps of the same runs in two dump roots, file by file, record by record (sop1Differences). */
+export function compareDumps(a: string, b: string): DumpComparison {
+  const out: DumpComparison = { compared: 0, identical: 0, different: [], only: [], unreadable: [] }
+  for (const run of [...new Set([...runFolders(a), ...runFolders(b)])].sort()) {
+    const fa = sop1Files(join(a, run))
+    const fb = sop1Files(join(b, run))
+    for (const f of [...new Set([...fa, ...fb])].sort()) {
+      const name = `${run}/${f}`
+      if (!fa.includes(f) || !fb.includes(f)) {
+        out.only.push(name)
+        continue
+      }
+      out.compared++
+      const x = readFileSync(join(a, run, f))
+      const y = readFileSync(join(b, run, f))
+      let records: string[]
+      try {
+        records = sop1Differences(readSop1(x), readSop1(y))
+      } catch (err) {
+        out.unreadable.push(`${name}: ${(err as Error).message}`)
+        continue
+      }
+      if (records.length === 0) out.identical++
+      else out.different.push({ file: name, records: records.slice(0, 20) })
+    }
+  }
+  return out
+}
+
+/** What the RUN records of every dump under `root` say TBB and the CRT reported, for the thread count `threads`. */
+export function arenaReport(root: string, threads: number): ArenaReport & { unreadable: string[] } {
+  const seen = new Map<string, ArenaReport['seen'][number]>()
+  const unreadable: string[] = []
+  let dumps = 0
+  for (const run of runFolders(root)) {
+    for (const f of sop1Files(join(root, run))) {
+      try {
+        const file = readSop1(readFileSync(join(root, run, f)))
+        const rec = file.records.find((r) => r.kind === 'RUN ')
+        if (!rec) throw new Error('no RUN record')
+        const r = parseRun(rec.payload)
+        const key = `${r.maxConcurrency}/${r.maxAllowedParallelism}/${r.fma3Enable}`
+        const s = seen.get(key) ?? { maxConcurrency: r.maxConcurrency, maxAllowedParallelism: r.maxAllowedParallelism, fma3Enable: r.fma3Enable, dumps: 0 }
+        s.dumps++
+        seen.set(key, s)
+        dumps++
+      } catch (err) {
+        unreadable.push(`${run}/${f}: ${(err as Error).message}`)
+      }
+    }
+  }
+  const list = [...seen.values()]
+  return {
+    threads,
+    dumps,
+    seen: list,
+    reportsP: dumps > 0 && list.every((s) => s.maxConcurrency === threads),
+    oneThread: dumps > 0 && list.every((s) => s.maxAllowedParallelism === 1),
+    unreadable,
+  }
+}
+
+// ---------------------------------------------------------------- the gate
+
+/** <work>/parity/neutral.json and the folders parity neutral runs in (<work>/parity/runs/neutral). */
+export function neutralFiles(paths: Pick<ParityPaths, 'parity' | 'runs'>) {
+  const base = join(paths.runs, 'neutral')
+  return {
+    report: join(paths.parity, 'neutral.json'),
+    root: join(base, 'cases'),
+    stores: {
+      head: join(base, 'head'),
+      oracle: join(base, 'oracle'),
+      pinnedA: join(base, 'pinned-a'),
+      pinnedB: join(base, 'pinned-b'),
+      t1: join(base, 'threads-1'),
+      t8: join(base, 'threads-8'),
+    },
+    dumps: { t1: join(base, 'dumps-t1'), t8: join(base, 'dumps-t8') },
+  }
+}
+
+export interface NeutralOptions {
+  head: EngineUnderTest
+  headInfo: SameEngineInfo
+  oracle: OracleUnderTest
+  paths: Pick<ParityPaths, 'parity' | 'runs'>
+  cases: SmokeCase[]
+  sets: SmokePresetSets
+  lock: OrcaLock
+  orcaSource?: string
+  baseEnv: NodeJS.ProcessEnv
+  platform: Platform
+  timeoutMs: number
+  masks: Mask[]
+  masksFile: { file: string; sha256: string }
+  /** How engine runs start (runHidden; tests give their own). */
+  run?: RunProcess
+  log: (msg: string) => void
+}
+
+/** Runs (a), (b) and (c) and returns the report; the caller writes it. */
+export async function runNeutral(o: NeutralOptions): Promise<NeutralReport> {
+  const files = neutralFiles(o.paths)
+  const base = o.run ?? runHidden
+  const common = {
+    root: files.root,
+    cases: o.cases,
+    sets: o.sets,
+    lock: o.lock,
+    ...(o.orcaSource ? { orcaSource: o.orcaSource } : {}),
+    baseEnv: o.baseEnv,
+    platform: o.platform,
+    timeoutMs: o.timeoutMs,
+    log: o.log,
+  }
+  const oracle = (label: string) => ({ label, exe: o.oracle.exe, resources: o.oracle.resources, libraryPath: o.oracle.libraryPath })
+  const say = o.log
+
+  say(`(a) unset: the head engine and the oracle with no knob set, compared after ${o.masksFile.file}`)
+  const head = await runEngineCases(o.head, { ...common, store: files.stores.head, run: base })
+  const plain = await runEngineCases(oracle('oracle'), { ...common, store: files.stores.oracle, run: base })
+  const unset = pairReport({ a: head, b: plain, stores: [files.stores.head, files.stores.oracle], sides: [{ label: 'head', knobs: {} }, { label: 'oracle', knobs: {} }], masks: o.masks, masksFile: o.masksFile.file })
+
+  say(`(b) pinned: the oracle twice with ${Object.entries(PINNED_KNOBS).map(([k, v]) => `${k}=${v}`).join(' ')}, compared byte for byte`)
+  const a = await runEngineCases(oracle('oracle-pinned-a'), { ...common, store: files.stores.pinnedA, run: knobRunner(PINNED_KNOBS, undefined, base) })
+  const b = await runEngineCases(oracle('oracle-pinned-b'), { ...common, store: files.stores.pinnedB, run: knobRunner(PINNED_KNOBS, undefined, base) })
+  const pinned = pairReport({ a, b, stores: [files.stores.pinnedA, files.stores.pinnedB], sides: [{ label: 'oracle-pinned-a', knobs: PINNED_KNOBS }, { label: 'oracle-pinned-b', knobs: PINNED_KNOBS }], masks: [], masksFile: null })
+
+  const [n1, n8] = NEUTRAL_THREADS
+  const k1 = { ...PINNED_KNOBS, [ORACLE_KNOBS.threads]: String(n1) }
+  const k8 = { ...PINNED_KNOBS, [ORACLE_KNOBS.threads]: String(n8) }
+  say(`(c) threads: the oracle with ${ORACLE_KNOBS.threads}=${n1} and =${n8}, time and seed pinned, dumping each run`)
+  for (const d of [files.dumps.t1, files.dumps.t8]) rmSync(d, { recursive: true, force: true })
+  const t1 = await runEngineCases(oracle(`oracle-threads-${n1}`), { ...common, store: files.stores.t1, run: knobRunner(k1, files.dumps.t1, base) })
+  const t8 = await runEngineCases(oracle(`oracle-threads-${n8}`), { ...common, store: files.stores.t8, run: knobRunner(k8, files.dumps.t8, base) })
+  const threads = pairReport({ a: t1, b: t8, stores: [files.stores.t1, files.stores.t8], sides: [{ label: `oracle-threads-${n1}`, knobs: k1 }, { label: `oracle-threads-${n8}`, knobs: k8 }], masks: [], masksFile: null })
+  const unfinished = [...unfinishedRuns(`threads-${n1}`, t1), ...unfinishedRuns(`threads-${n8}`, t8)]
+  const dumps = compareDumps(files.dumps.t1, files.dumps.t8)
+  const arena1 = arenaReport(files.dumps.t1, n1)
+  const arena8 = arenaReport(files.dumps.t8, n8)
+  dumps.unreadable.push(...arena1.unreadable.map((u) => `dumps-t1/${u}`), ...arena8.unreadable.map((u) => `dumps-t8/${u}`))
+  const candidates = [...threads.different, ...dumps.different.map((d) => `dump/${d.file}`), ...dumps.only.map((f) => `dump/${f} (one thread count only)`)]
+  const strip = ({ unreadable: _u, ...rest }: ArenaReport & { unreadable: string[] }): ArenaReport => rest
+
+  const unsetPassed = unset.summary.different === 0
+  const pinnedPassed = pinned.summary.different === 0 && pinned.summary.identical === pinned.summary.outputs
+  return {
+    format: NEUTRAL_FORMAT,
+    createdAt: new Date().toISOString(),
+    smokeVersion: SMOKE_VERSION,
+    engines: {
+      head: o.headInfo,
+      oracle: { dir: o.oracle.dir, exeSha256: o.oracle.manifest.exe.sha256, oraclePatches: o.oracle.manifest.oraclePatches, sourceDigest: o.oracle.manifest.sourceDigest },
+    },
+    masks: o.masksFile,
+    passed: unsetPassed && pinnedPassed,
+    unset: { ...unset, passed: unsetPassed },
+    pinned: { ...pinned, passed: pinnedPassed },
+    threads: { ...threads, finished: unfinished.length === 0, unfinished, candidates, dumps, arena: [strip(arena1), strip(arena8)] },
+  }
+}
+
+/** Refuses a head engine or oracle staged for another platform. */
+export function checkPlatforms(head: EngineUnderTest, oracle: OracleUnderTest, platform: Platform): void {
+  if (head.manifest.platform !== platform) throw new StepError(`the head engine is for ${head.manifest.platform}, this is ${platform}`)
+  if (oracle.manifest.platform !== platform) throw new StepError(`the oracle is for ${oracle.manifest.platform}, this is ${platform}`)
+}

@@ -26,8 +26,8 @@
 //                    scripts/lib/parity/cmd-<name>.ts; `parity --help` lists the commands there are
 //
 // Exit codes: 0 done; check also 1 (a newer stable release is out) and 2 (the locked tag moved),
-// and update and release stop with 2 when the tag moved; 3 the command failed; 64 a command line
-// the pipeline does not take (run.ts, EXIT).
+// and update and release stop with 2 when the tag moved; parity also 1 (parity neutral: the oracle
+// is not neutral); 3 the command failed; 64 a command line the pipeline does not take (run.ts, EXIT).
 //
 // Work folder: %LOCALAPPDATA%\SketchDev\orca-engine (SKETCH_ORCA_HOME overrides). Every command
 // but env logs to <work>/logs/<command>.log (a parity command to logs/parity-<name>.log), and each
@@ -443,13 +443,15 @@ function usage(): string {
 }
 
 /**
- * A command's exit code as the pipeline gives it (EXIT): 0, check's 1 and 2, and the tag-moved 2
- * of update and release pass through; any other code a command returns is a failure (3).
+ * A command's exit code as the pipeline gives it (EXIT): 0, check's 1 and 2, the tag-moved 2 of
+ * update and release, and parity's 1 (a gate that ran and failed: parity neutral) pass through;
+ * any other code a command returns is a failure (3).
  */
 export function exitCodeFor(command: string, code: number): number {
   if (code === EXIT.ok) return EXIT.ok
   if (command === 'check' && (code === EXIT.newer || code === EXIT.tagMoved)) return code
   if ((command === 'update' || command === 'release') && code === EXIT.tagMoved) return code
+  if (command === 'parity' && code === 1) return code
   return EXIT.failed
 }
 

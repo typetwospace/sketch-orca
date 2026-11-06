@@ -204,8 +204,11 @@ export interface EngineCasesOptions {
   log: (msg: string) => void
 }
 
-/** Runs the cases with one engine, as smoke.ts runCases does, recording every engine run. */
-export async function runEngineCases(engine: Pick<EngineUnderTest, 'label' | 'exe' | 'resources' | 'libraryPath'>, o: EngineCasesOptions): Promise<CaseRecord[]> {
+/**
+ * Runs the cases with one engine, as smoke.ts runCases does, recording every engine run. The label
+ * names the engine in the log: reference or head here, the oracle's runs in parity neutral.
+ */
+export async function runEngineCases(engine: Pick<EngineUnderTest, 'exe' | 'resources' | 'libraryPath'> & { label: string }, o: EngineCasesOptions): Promise<CaseRecord[]> {
   rmSync(o.root, { recursive: true, force: true })
   rmSync(o.store, { recursive: true, force: true })
   mkdirSync(o.root, { recursive: true })
@@ -268,37 +271,45 @@ function readIf(path: string): Buffer | undefined {
   return existsSync(path) ? readFileSync(path) : undefined
 }
 
-/** Compares one engine run of each engine: exit code, stdout, stderr and every file either wrote or removed. */
-export function compareRun(ref: RecordedRun | undefined, head: RecordedRun | undefined, stores: { reference: string; head: string }, masks: Mask[]): RunReport {
+/** How the details of a comparison name its two sides: the reference and the head here; parity neutral names its own pairs. */
+export const SAME_LABELS = { reference: 'reference', head: 'head' } as const
+
+/**
+ * Compares one engine run of each engine: exit code, stdout, stderr and every file either wrote or
+ * removed. `labels` names the two sides in the details.
+ */
+export function compareRun(ref: RecordedRun | undefined, head: RecordedRun | undefined, stores: { reference: string; head: string }, masks: Mask[], labels: { reference: string; head: string } = SAME_LABELS): RunReport {
   const index = (ref ?? head)!.index
-  if (!ref || !head) return { index, args: (ref ?? head)!.args, outputs: [{ name: 'run', status: 'different', masks: [], detail: `only the ${ref ? 'reference' : 'head'} engine ran it` }] }
+  if (!ref || !head) return { index, args: (ref ?? head)!.args, outputs: [{ name: 'run', status: 'different', masks: [], detail: `only the ${ref ? labels.reference : labels.head} engine ran it` }] }
   const outputs: OutputReport[] = []
   const add = (name: string, c: { status: OutputStatus; masks: string[]; detail?: string }) => outputs.push({ name, status: c.status, masks: c.masks, ...(c.detail ? { detail: c.detail } : {}) })
   if (ref.args.join('\u0000') !== head.args.join('\u0000') || ref.extraEnv.join(',') !== head.extraEnv.join(',')) {
-    add('args', { status: 'different', masks: [], detail: `the reference ran ${JSON.stringify(ref.args)}, the head ${JSON.stringify(head.args)}` })
+    add('args', { status: 'different', masks: [], detail: `the ${labels.reference} ran ${JSON.stringify(ref.args)}, the ${labels.head} ${JSON.stringify(head.args)}` })
   }
   const exit = (r: RecordedRun) => (r.timedOut ? 'timed out' : String(r.code))
   add('exit', exit(ref) === exit(head) ? { status: 'identical', masks: [] } : { status: 'different', masks: [], detail: `${exit(ref)} against ${exit(head)}` })
   const rs = runStore(stores.reference, ref.index)
   const hs = runStore(stores.head, head.index)
-  add('stdout', compareOutput('stdout', readIf(rs.stdout) ?? Buffer.alloc(0), readIf(hs.stdout) ?? Buffer.alloc(0), masks))
-  add('stderr', compareOutput('stderr', readIf(rs.stderr) ?? Buffer.alloc(0), readIf(hs.stderr) ?? Buffer.alloc(0), masks))
+  const sides: [string, string] = [labels.reference, labels.head]
+  add('stdout', compareOutput('stdout', readIf(rs.stdout) ?? Buffer.alloc(0), readIf(hs.stdout) ?? Buffer.alloc(0), masks, sides))
+  add('stderr', compareOutput('stderr', readIf(rs.stderr) ?? Buffer.alloc(0), readIf(hs.stderr) ?? Buffer.alloc(0), masks, sides))
   for (const p of [...new Set([...ref.files, ...head.files])].sort()) {
-    add(`files/${p}`, compareOutput(p, ref.files.includes(p) ? readIf(nativePath(rs.files, p)) : undefined, head.files.includes(p) ? readIf(nativePath(hs.files, p)) : undefined, masks))
+    add(`files/${p}`, compareOutput(p, ref.files.includes(p) ? readIf(nativePath(rs.files, p)) : undefined, head.files.includes(p) ? readIf(nativePath(hs.files, p)) : undefined, masks, sides))
   }
   for (const p of [...new Set([...ref.gone, ...head.gone])].sort()) {
     const both = ref.gone.includes(p) && head.gone.includes(p)
-    add(`removed/${p}`, both ? { status: 'identical', masks: [] } : { status: 'different', masks: [], detail: `only the ${ref.gone.includes(p) ? 'reference' : 'head'} engine removed it` })
+    add(`removed/${p}`, both ? { status: 'identical', masks: [] } : { status: 'different', masks: [], detail: `only the ${ref.gone.includes(p) ? labels.reference : labels.head} engine removed it` })
   }
   return { index, args: ref.args, outputs }
 }
 
-export function compareCases(ref: CaseRecord[], head: CaseRecord[], stores: { reference: string; head: string }, masks: Mask[]): CaseReport[] {
+/** compareRun for each case's runs; `labels` names the two sides in the details. */
+export function compareCases(ref: CaseRecord[], head: CaseRecord[], stores: { reference: string; head: string }, masks: Mask[], labels: { reference: string; head: string } = SAME_LABELS): CaseReport[] {
   return ref.map((r) => {
     const h = head.find((c) => c.id === r.id)
     const runs: RunReport[] = []
     const n = Math.max(r.runs.length, h?.runs.length ?? 0)
-    for (let i = 0; i < n; i++) runs.push(compareRun(r.runs[i], h?.runs[i], { reference: join(stores.reference, r.id), head: join(stores.head, r.id) }, masks))
+    for (let i = 0; i < n; i++) runs.push(compareRun(r.runs[i], h?.runs[i], { reference: join(stores.reference, r.id), head: join(stores.head, r.id) }, masks, labels))
     return {
       id: r.id,
       smoke: { reference: { ok: r.ok, problems: r.problems }, head: { ok: h?.ok ?? false, problems: h ? h.problems : ['the case did not run'] } },

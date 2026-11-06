@@ -1,6 +1,6 @@
 {
   "format": "sketch-orca-parity-masks/1",
-  "about": "What the parity harness leaves out when two engines' outputs of one job are not byte for byte the same: only the clock and entropy that reach the outputs, each named with the source line that writes it. Outputs equal after these masks are 'masked'; any other difference is 'different' (scripts/lib/parity/masks.ts, parity/README.md).",
+  "about": "What the parity harness leaves out when two engines' outputs of one job are not byte for byte the same: only the clock and entropy that reach the outputs, and where in a program's own code a crash happened, each named with the source line that writes it. Outputs equal after these masks are 'masked'; any other difference is 'different' (scripts/lib/parity/masks.ts, parity/README.md).",
   "masks": [
     {
       "id": "gcode-generated-on",
@@ -34,6 +34,15 @@
       "files": ["*.3mf"],
       "source": "deps_src/miniz (mz_zip_writer_add_mem stamps each entry with the time it was added)",
       "why": "Each entry of a .gcode.3mf records the time it was written, in its local header and in the central directory."
+    },
+    {
+      "id": "crash-location",
+      "kind": "text",
+      "files": ["result.json"],
+      "pattern": "(the engine crashed \\(exception 0x[0-9A-F]{8}) at [A-Za-z0-9._-]+\\+0x[0-9a-f]+(?=\\))",
+      "replace": "$1 at <location>",
+      "source": "cli/common.cpp:581 (on_unhandled_exception)",
+      "why": "A crash result names where the crash happened: the program's file name and the offset in it. Any two builds place their code differently, the oracle (sketch-orca-oracle.exe) among them, so the place differs while the crash is the same. The exception code and the stage stay compared."
     }
   ]
 }

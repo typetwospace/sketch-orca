@@ -1,0 +1,1121 @@
+sketch-orca oracle patch 0005: the dump knob, SKETCH_ORCA_ORACLE_DUMP.
+Modified for Sketch, 2026-11-06.
+
+With SKETCH_ORCA_ORACLE_DUMP=<folder>, an existing folder, the oracle writes SOP1 files there
+(parity/SOP1.md) at step boundaries only, never inside a step:
+- after each PrintObject step, from PrintObjectBaseWithState::set_done (PrintBase.hpp):
+  object<i>-<step>-<n>.sop1, the object's layers, regions, surfaces, extrusions and support layers;
+- after each Print step, from PrintBaseWithState::set_done: print-<step>-<n>.sop1, the skirt,
+  the brims, the tool ordering, the wipe tower, the statistics and the conflict check;
+- in the front end once the objects are placed (after arranging and the build volume check):
+  front-objects-<n>.sop1, the model;
+- in the front end once the config is resolved and applied, before each slice:
+  front-config-<n>.sop1, the job's config, the print's, and each object's and region's.
+Print gets one friend, OracleDumpAccess, for the brims, the skirt's convex hull and the wipe tower
+data. Every dump has a RUN record with the knobs and what this_task_arena::max_concurrency(),
+global_control's max_allowed_parallelism and _get_FMA3_enable() report at that boundary. A folder
+that does not exist stops the oracle before it does anything else, with exit code 78. Unset,
+nothing is written and nothing changes.
+
+---
+diff --git a/sketch-orca/cli/main.cpp b/sketch-orca/cli/main.cpp
+index 4fde223d..a4be067c 100644
+--- a/sketch-orca/cli/main.cpp
++++ b/sketch-orca/cli/main.cpp
+@@ -46,6 +46,8 @@
+ #include "libslic3r/OracleSeed.hpp"
+ // sketch-orca oracle patch 0003 (2026-11-06): the thread knob.
+ #include "libslic3r/OracleThreads.hpp"
++// sketch-orca oracle patch 0005 (2026-11-06): the dump knob.
++#include "libslic3r/OracleDump.hpp"
+ #include "libslic3r/Platform.hpp"
+ #include "libslic3r/Utils.hpp"
+ 
+@@ -293,6 +295,9 @@ static int engine_main(int argc, char **argv)
+     // sketch-orca oracle patch 0002 (2026-11-06): SKETCH_ORCA_ORACLE_SEED, when set, must be a seed.
+     if (const std::string problem = Slic3r::Oracle::seed_knob_problem(); !problem.empty())
+         return oracle_knob_error(problem);
++    // sketch-orca oracle patch 0005 (2026-11-06): SKETCH_ORCA_ORACLE_DUMP, when set, must name an existing folder.
++    if (const std::string problem = Slic3r::Oracle::dump_knob_problem(); !problem.empty())
++        return oracle_knob_error(problem);
+     install_crash_handler();
+     // UTF-8 arguments on Windows, from the wide command line.
+     boost::nowide::args nowide_args(argc, argv);
+diff --git a/sketch-orca/cli/run.cpp b/sketch-orca/cli/run.cpp
+index f77232fc..a6ac5456 100644
+--- a/sketch-orca/cli/run.cpp
++++ b/sketch-orca/cli/run.cpp
+@@ -60,6 +60,8 @@
+ #include "libslic3r/Model.hpp"
+ #include "libslic3r/ModelArrange.hpp"
+ #include "libslic3r/Orient.hpp"
++// sketch-orca oracle patch 0005 (2026-11-06): the dump knob's front-end boundaries.
++#include "libslic3r/OracleDump.hpp"
+ #include "libslic3r/Preset.hpp"
+ #include "libslic3r/Print.hpp"
+ #include "libslic3r/PrintConfig.hpp"
+@@ -1696,6 +1698,9 @@ void run(const Job &job, json &result, Warnings &warnings, Progress &progress)
+         arrange_objects(model, cfg, tower);
+     }
+     check_build_volume(model, cfg);
++    // sketch-orca oracle patch 0005 (2026-11-06): the objects are placed; with SKETCH_ORCA_ORACLE_DUMP
++    // set, the model is dumped here.
++    Slic3r::Oracle::dump_front_objects(model);
+ 
+     // OrcaSlicer.cpp: the plate's print configuration.
+     DynamicPrintConfig new_cfg = cfg;
+@@ -1799,6 +1804,9 @@ void run(const Job &job, json &result, Warnings &warnings, Progress &progress)
+     Model::setExtruderParams(new_cfg, int(n));
+     Model::setPrintSpeedTable(new_cfg, print.config());
+     const auto slice_print = [&]() {
++        // sketch-orca oracle patch 0005 (2026-11-06): the config is resolved and applied, and no step has
++        // started; with SKETCH_ORCA_ORACLE_DUMP set, the configs are dumped here, before each slice.
++        Slic3r::Oracle::dump_front_config(print, new_cfg);
+         try {
+             print.process();
+         } catch (const Failure &) {
+diff --git a/src/libslic3r/CMakeLists.txt b/src/libslic3r/CMakeLists.txt
+index ee1757a9..159ca3dc 100644
+--- a/src/libslic3r/CMakeLists.txt
++++ b/src/libslic3r/CMakeLists.txt
+@@ -323,6 +323,9 @@ set(lisbslic3r_sources
+     # sketch-orca oracle patch 0001 (2026-11-06): the clock knob, SKETCH_ORCA_ORACLE_TIME.
+     OracleClock.cpp
+     OracleClock.hpp
++    # sketch-orca oracle patch 0005 (2026-11-06): the dump knob, SKETCH_ORCA_ORACLE_DUMP.
++    OracleDump.cpp
++    OracleDump.hpp
+     # sketch-orca oracle patch 0002 (2026-11-06): the seed knob, SKETCH_ORCA_ORACLE_SEED.
+     OracleSeed.cpp
+     OracleSeed.hpp
+diff --git a/src/libslic3r/OracleDump.cpp b/src/libslic3r/OracleDump.cpp
+new file mode 100644
+index 00000000..93239909
+--- /dev/null
++++ b/src/libslic3r/OracleDump.cpp
+@@ -0,0 +1,914 @@
++// Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
++// SPDX-License-Identifier: AGPL-3.0-only
++//
++// This file is part of sketch-orca, a modified version of OrcaSlicer. sketch-orca is free software:
++// you can redistribute it and/or modify it under the terms of the GNU Affero General Public
++// License, version 3, as published by the Free Software Foundation. It is distributed in the hope
++// that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++// (LICENSE) for more details.
++//
++// sketch-orca oracle patch 0005 (2026-11-06): the dump knob (OracleDump.hpp). The files are SOP1
++// containers, version 1, as parity/SOP1.md in sketch-orca specifies them: the magic "SOP1", a u32
++// version, then records (a four-letter kind, a u64 payload length, the payload) and an END record.
++// Every value is little-endian; floats are written as their exact bit patterns. The record kinds
++// written here (HEAD, RUN, CONF, MODL, OBJ, LAYR, SUPL, PRNT, TOOL, WIPE, STAT, CNFL, END) and their
++// payloads are listed there field by field, in the order this file writes them.
++#include "OracleDump.hpp"
++
++#include <algorithm>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <map>
++#include <mutex>
++#include <string>
++#include <typeinfo>
++#include <vector>
++
++#include <boost/filesystem.hpp>
++#include <boost/nowide/convert.hpp>
++#include <tbb/global_control.h>
++#include <tbb/task_arena.h>
++
++#if defined(_MSC_VER) && defined(_M_X64)
++#include <math.h>
++#endif
++
++#include "Config.hpp"
++#include "ExtrusionEntity.hpp"
++#include "ExtrusionEntityCollection.hpp"
++#include "Exception.hpp"
++#include "GCode/ToolOrdering.hpp"
++#include "GCode/WipeTower.hpp"
++#include "Layer.hpp"
++#include "Model.hpp"
++#include "Print.hpp"
++#include "PrintConfig.hpp"
++#include "Surface.hpp"
++
++namespace Slic3r {
++
++// The Print state the dumps read that Print keeps private (friend of Print, Print.hpp).
++struct OracleDumpAccess
++{
++    static const std::map<ObjectID, ExtrusionEntityCollection> &brim_map(const Print &print) { return print.m_brimMap; }
++    static const std::map<ObjectID, ExtrusionEntityCollection> &support_brim_map(const Print &print) { return print.m_supportBrimMap; }
++    static const Points        &skirt_convex_hull(const Print &print) { return print.m_skirt_convex_hull; }
++    static const WipeTowerData &wipe_tower_data(const Print &print) { return print.m_wipe_tower_data; }
++};
++
++namespace Oracle {
++
++namespace {
++
++const uint32_t SOP1_VERSION = 1;
++
++// A record's payload, built in memory.
++class Payload
++{
++public:
++    void u8(uint8_t v) { m_bytes.push_back(char(v)); }
++    void u16(uint16_t v) { this->le(v, 2); }
++    void u32(uint32_t v) { this->le(v, 4); }
++    void u64(uint64_t v) { this->le(v, 8); }
++    void i32(int32_t v) { this->u32(uint32_t(v)); }
++    void i64(int64_t v) { this->u64(uint64_t(v)); }
++    void boolean(bool v) { this->u8(v ? 1 : 0); }
++    void f32(float v)
++    {
++        uint32_t bits;
++        std::memcpy(&bits, &v, sizeof(bits));
++        this->u32(bits);
++    }
++    void f64(double v)
++    {
++        uint64_t bits;
++        std::memcpy(&bits, &v, sizeof(bits));
++        this->u64(bits);
++    }
++    void str(const std::string &s)
++    {
++        this->u32(uint32_t(s.size()));
++        m_bytes.append(s);
++    }
++    void count(size_t n) { this->u64(uint64_t(n)); }
++    const std::string &bytes() const { return m_bytes; }
++
++private:
++    void le(uint64_t v, int n)
++    {
++        for (int i = 0; i < n; ++i)
++            m_bytes.push_back(char(uint8_t(v >> (8 * i))));
++    }
++    std::string m_bytes;
++};
++
++// ---- The knob ----
++
++struct DumpKnob
++{
++    bool                    set   = false;
++    bool                    valid = false;
++    boost::filesystem::path folder;
++    std::string             problem;
++};
++
++DumpKnob read_dump_knob()
++{
++    DumpKnob    knob;
++    const char *text = std::getenv("SKETCH_ORCA_ORACLE_DUMP");
++    if (text == nullptr)
++        return knob;
++    knob.set = true;
++    if (*text == '\0') {
++        knob.problem = "SKETCH_ORCA_ORACLE_DUMP must name an existing folder; it is empty";
++        return knob;
++    }
++#ifdef _WIN32
++    knob.folder = boost::filesystem::path(boost::nowide::widen(text));
++#else
++    knob.folder = boost::filesystem::path(text);
++#endif
++    boost::system::error_code ec;
++    if (!boost::filesystem::is_directory(knob.folder, ec) || ec) {
++        knob.problem = std::string("SKETCH_ORCA_ORACLE_DUMP must name an existing folder; ") + text + " is not one";
++        return knob;
++    }
++    knob.valid = true;
++    return knob;
++}
++
++const DumpKnob &dump_knob()
++{
++    static const DumpKnob knob = read_dump_knob();
++    return knob;
++}
++
++// Dumps are written one at a time, whole; the boundary counts are per file name.
++std::mutex &dump_mutex()
++{
++    static std::mutex mutex;
++    return mutex;
++}
++
++std::map<std::string, unsigned> &boundary_counts()
++{
++    static std::map<std::string, unsigned> counts;
++    return counts;
++}
++
++// ---- Geometry and extrusions ----
++
++void put_point(Payload &p, const Point &pt)
++{
++    p.i64(int64_t(pt.x()));
++    p.i64(int64_t(pt.y()));
++}
++
++void put_points(Payload &p, const Points &pts)
++{
++    p.count(pts.size());
++    for (const Point &pt : pts)
++        put_point(p, pt);
++}
++
++void put_polygon(Payload &p, const Polygon &polygon) { put_points(p, polygon.points); }
++
++void put_polygons(Payload &p, const Polygons &polygons)
++{
++    p.count(polygons.size());
++    for (const Polygon &polygon : polygons)
++        put_polygon(p, polygon);
++}
++
++void put_expolygon(Payload &p, const ExPolygon &expolygon)
++{
++    put_polygon(p, expolygon.contour);
++    put_polygons(p, expolygon.holes);
++}
++
++void put_expolygons(Payload &p, const ExPolygons &expolygons)
++{
++    p.count(expolygons.size());
++    for (const ExPolygon &expolygon : expolygons)
++        put_expolygon(p, expolygon);
++}
++
++void put_fitting(Payload &p, const std::vector<PathFittingData> &fitting)
++{
++    p.count(fitting.size());
++    for (const PathFittingData &f : fitting) {
++        p.u64(uint64_t(f.start_point_index));
++        p.u64(uint64_t(f.end_point_index));
++        p.u8(uint8_t(f.path_type));
++        const ArcSegment &arc = f.arc_data;
++        p.boolean(arc.is_arc);
++        put_point(p, arc.center);
++        p.f64(arc.radius);
++        p.f64(arc.length);
++        p.f64(arc.angle_radians);
++        p.f64(arc.polar_start_theta);
++        p.f64(arc.polar_end_theta);
++        put_point(p, arc.start_point);
++        put_point(p, arc.end_point);
++        p.u8(uint8_t(arc.direction));
++    }
++}
++
++void put_polylines(Payload &p, const Polylines &polylines)
++{
++    p.count(polylines.size());
++    for (const Polyline &polyline : polylines) {
++        put_points(p, polyline.points);
++        put_fitting(p, polyline.fitting_result);
++    }
++}
++
++void put_surfaces(Payload &p, const Surfaces &surfaces)
++{
++    p.count(surfaces.size());
++    for (const Surface &s : surfaces) {
++        p.u32(uint32_t(s.surface_type));
++        put_expolygon(p, s.expolygon);
++        p.f64(s.thickness);
++        p.u16(uint16_t(s.thickness_layers));
++        p.f64(s.bridge_angle);
++        p.u16(uint16_t(s.extra_perimeters));
++    }
++}
++
++// Entity kinds, the first byte of each entity.
++enum EntityKind : uint8_t {
++    ekUnknown        = 0,
++    ekPath           = 1,
++    ekPathContoured  = 2,
++    ekPathSloped     = 3,
++    ekPathOriented   = 4,
++    ekMultiPath      = 5,
++    ekLoop           = 6,
++    ekLoopSloped     = 7,
++    ekCollection     = 8,
++};
++
++void put_entity(Payload &p, const ExtrusionEntity &entity);
++
++void put_path_fields(Payload &p, const ExtrusionPath &path)
++{
++    p.u8(uint8_t(path.role()));
++    p.i32(int32_t(path.inset_idx));
++    p.count(path.polyline.points.size());
++    for (const Point3 &pt : path.polyline.points) {
++        p.i64(int64_t(pt.x()));
++        p.i64(int64_t(pt.y()));
++        p.i64(int64_t(pt.z()));
++    }
++    put_fitting(p, path.polyline.fitting_result);
++    p.f64(path.overhang_degree);
++    p.i32(int32_t(path.curve_degree));
++    p.f64(path.mm3_per_mm);
++    p.f32(path.width);
++    p.f32(path.height);
++    p.f64(path.smooth_speed);
++    p.boolean(path.z_contoured);
++    p.boolean(path.is_force_no_extrusion());
++    p.boolean(path.can_reverse());
++}
++
++void put_slope(Payload &p, const ExtrusionPathSloped &path)
++{
++    p.f64(path.slope_begin.z_ratio);
++    p.f64(path.slope_begin.e_ratio);
++    p.f64(path.slope_end.z_ratio);
++    p.f64(path.slope_end.e_ratio);
++}
++
++void put_loop_fields(Payload &p, const ExtrusionLoop &loop)
++{
++    p.i32(int32_t(loop.inset_idx));
++    p.u8(uint8_t(loop.loop_role()));
++    p.count(loop.paths.size());
++    for (const ExtrusionPath &path : loop.paths)
++        put_entity(p, path);
++}
++
++void put_entity(Payload &p, const ExtrusionEntity &entity)
++{
++    const std::type_info &type = typeid(entity);
++    if (type == typeid(ExtrusionPath)) {
++        p.u8(ekPath);
++        put_path_fields(p, static_cast<const ExtrusionPath &>(entity));
++    } else if (type == typeid(ExtrusionPathContoured)) {
++        const auto &path = static_cast<const ExtrusionPathContoured &>(entity);
++        p.u8(ekPathContoured);
++        put_path_fields(p, path);
++        p.count(path.z_diffs.size());
++        for (double z : path.z_diffs)
++            p.f64(z);
++    } else if (type == typeid(ExtrusionPathSloped)) {
++        const auto &path = static_cast<const ExtrusionPathSloped &>(entity);
++        p.u8(ekPathSloped);
++        put_path_fields(p, path);
++        put_slope(p, path);
++    } else if (type == typeid(ExtrusionPathOriented)) {
++        p.u8(ekPathOriented);
++        put_path_fields(p, static_cast<const ExtrusionPath &>(entity));
++    } else if (type == typeid(ExtrusionMultiPath)) {
++        const auto &multi = static_cast<const ExtrusionMultiPath &>(entity);
++        p.u8(ekMultiPath);
++        p.i32(int32_t(multi.inset_idx));
++        p.boolean(multi.can_reverse());
++        p.count(multi.paths.size());
++        for (const ExtrusionPath &path : multi.paths)
++            put_entity(p, path);
++    } else if (type == typeid(ExtrusionLoop)) {
++        p.u8(ekLoop);
++        put_loop_fields(p, static_cast<const ExtrusionLoop &>(entity));
++    } else if (type == typeid(ExtrusionLoopSloped)) {
++        const auto &loop = static_cast<const ExtrusionLoopSloped &>(entity);
++        p.u8(ekLoopSloped);
++        put_loop_fields(p, loop);
++        p.count(loop.starts.size());
++        for (const ExtrusionPathSloped &path : loop.starts)
++            put_entity(p, path);
++        p.count(loop.ends.size());
++        for (const ExtrusionPathSloped &path : loop.ends)
++            put_entity(p, path);
++    } else if (type == typeid(ExtrusionEntityCollection)) {
++        const auto &collection = static_cast<const ExtrusionEntityCollection &>(entity);
++        p.u8(ekCollection);
++        p.i32(int32_t(collection.inset_idx));
++        p.boolean(collection.no_sort);
++        p.boolean(collection.can_reverse());
++        p.count(collection.entities.size());
++        for (const ExtrusionEntity *child : collection.entities)
++            put_entity(p, *child);
++    } else {
++        p.u8(ekUnknown);
++        p.str(type.name());
++    }
++}
++
++void put_matrix(Payload &p, const Transform3d &t)
++{
++    // Column-major, as Eigen stores it.
++    for (int c = 0; c < 4; ++c)
++        for (int r = 0; r < 4; ++r)
++            p.f64(t.matrix()(r, c));
++}
++
++// ---- Configs ----
++
++void put_option_floats(Payload &p, const ConfigOption &opt)
++{
++    std::vector<double> values;
++    if (const auto *v = dynamic_cast<const ConfigOptionSingle<double> *>(&opt))
++        values.push_back(v->value);
++    else if (const auto *v = dynamic_cast<const ConfigOptionVector<double> *>(&opt))
++        values = v->values;
++    else if (const auto *v = dynamic_cast<const ConfigOptionVector<FloatOrPercent> *>(&opt))
++        for (const FloatOrPercent &x : v->values)
++            values.push_back(x.value);
++    else if (const auto *v = dynamic_cast<const ConfigOptionSingle<Vec2d> *>(&opt))
++        values = {v->value.x(), v->value.y()};
++    else if (const auto *v = dynamic_cast<const ConfigOptionVector<Vec2d> *>(&opt))
++        for (const Vec2d &x : v->values) {
++            values.push_back(x.x());
++            values.push_back(x.y());
++        }
++    else if (const auto *v = dynamic_cast<const ConfigOptionSingle<Vec3d> *>(&opt))
++        values = {v->value.x(), v->value.y(), v->value.z()};
++    p.count(values.size());
++    for (double x : values)
++        p.f64(x);
++}
++
++// CONF: where the config is from, then every option, by key.
++Payload config_record(const std::string &scope, int64_t object, int64_t part, const ConfigBase &config)
++{
++    Payload p;
++    p.str(scope);
++    p.i64(object);
++    p.i64(part);
++    t_config_option_keys keys = config.keys();
++    std::sort(keys.begin(), keys.end());
++    p.count(keys.size());
++    for (const std::string &key : keys) {
++        p.str(key);
++        const ConfigOption *opt = config.option(key);
++        if (opt == nullptr) {
++            p.u32(0);
++            p.str(std::string());
++            p.count(0);
++            continue;
++        }
++        p.u32(uint32_t(opt->type()));
++        p.str(opt->serialize());
++        put_option_floats(p, *opt);
++    }
++    return p;
++}
++
++// ---- The container ----
++
++class Dump
++{
++public:
++    // HEAD: what the dump is of. The file is object<i>-<step>, print-<step> or front-<name>, then the
++    // boundary's count for that name.
++    Dump(const std::string &source, const std::string &name, int64_t object)
++    {
++        const std::string file = source == "object" ? "object" + std::to_string(object) + "-" + name : source + "-" + name;
++        m_occurrence           = ++boundary_counts()[file];
++        m_file       = file + "-" + std::to_string(m_occurrence) + ".sop1";
++
++        m_bytes.append("SOP1", 4);
++        Payload version;
++        version.u32(SOP1_VERSION);
++        m_bytes.append(version.bytes());
++
++        Payload head;
++        head.str(source);
++        head.str(name);
++        head.i64(object);
++        head.u32(m_occurrence);
++        this->record("HEAD", head);
++        this->record("RUN ", run_record());
++    }
++
++    void record(const char (&kind)[5], const Payload &payload)
++    {
++        m_bytes.append(kind, 4);
++        Payload length;
++        length.u64(uint64_t(payload.bytes().size()));
++        m_bytes.append(length.bytes());
++        m_bytes.append(payload.bytes());
++        ++m_records;
++    }
++
++    void write()
++    {
++        Payload end;
++        end.u64(m_records);
++        this->record("END ", end);
++        const boost::filesystem::path path = dump_knob().folder / m_file;
++#ifdef _WIN32
++        std::FILE *f = _wfopen(path.wstring().c_str(), L"wb");
++#else
++        std::FILE *f = std::fopen(path.string().c_str(), "wb");
++#endif
++        bool ok = f != nullptr;
++        if (ok) {
++            ok = std::fwrite(m_bytes.data(), 1, m_bytes.size(), f) == m_bytes.size();
++            ok = std::fclose(f) == 0 && ok;
++        }
++        if (!ok)
++            throw Slic3r::RuntimeError("sketch-orca-oracle: could not write the dump " + m_file + " in SKETCH_ORCA_ORACLE_DUMP");
++    }
++
++private:
++    // RUN: the knobs as set, and what TBB and the CRT report at this boundary.
++    static Payload run_record()
++    {
++        Payload p;
++        static const char *const knobs[] = {"SKETCH_ORCA_ORACLE_TIME", "SKETCH_ORCA_ORACLE_SEED", "SKETCH_ORCA_ORACLE_THREADS",
++                                            "SKETCH_ORCA_ORACLE_FMA3"};
++        p.count(sizeof(knobs) / sizeof(knobs[0]));
++        for (const char *knob : knobs) {
++            const char *value = std::getenv(knob);
++            p.str(knob);
++            p.boolean(value != nullptr);
++            p.str(value != nullptr ? std::string(value) : std::string());
++        }
++        p.i32(int32_t(tbb::this_task_arena::max_concurrency()));
++        p.u64(uint64_t(tbb::global_control::active_value(tbb::global_control::max_allowed_parallelism)));
++#if defined(_MSC_VER) && defined(_M_X64)
++        p.i32(int32_t(_get_FMA3_enable()));
++#else
++        p.i32(-1);
++#endif
++        return p;
++    }
++
++    std::string m_file;
++    unsigned    m_occurrence = 0;
++    std::string m_bytes;
++    uint64_t    m_records = 0;
++};
++
++// ---- Print state ----
++
++int64_t object_index(const Print &print, const PrintObject *object)
++{
++    const auto objects = print.objects();
++    for (size_t i = 0; i < objects.size(); ++i)
++        if (objects[i] == object)
++            return int64_t(i);
++    return -1;
++}
++
++int64_t object_index(const Print &print, const ObjectID &id)
++{
++    const auto objects = print.objects();
++    for (size_t i = 0; i < objects.size(); ++i)
++        if (objects[i]->id() == id)
++            return int64_t(i);
++    return -1;
++}
++
++void put_object_ids(Payload &p, const Print &print, const std::vector<ObjectID> &ids)
++{
++    p.count(ids.size());
++    for (const ObjectID &id : ids)
++        p.i64(object_index(print, id));
++}
++
++void put_entity_map(Payload &p, const Print &print, const std::map<ObjectID, ExtrusionEntityCollection> &map)
++{
++    // By object index, then by id, so that the order does not depend on the ids' values.
++    std::vector<std::pair<int64_t, const std::pair<const ObjectID, ExtrusionEntityCollection> *>> items;
++    for (const auto &item : map)
++        items.emplace_back(object_index(print, item.first), &item);
++    std::stable_sort(items.begin(), items.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
++    p.count(items.size());
++    for (const auto &item : items) {
++        p.i64(item.first);
++        put_entity(p, item.second->second);
++    }
++}
++
++Payload object_record(const PrintObject &object, int64_t index)
++{
++    Payload p;
++    p.i64(index);
++    p.str(object.model_object() != nullptr ? object.model_object()->name : std::string());
++    p.i64(int64_t(object.size().x()));
++    p.i64(int64_t(object.size().y()));
++    p.i64(int64_t(object.size().z()));
++    put_point(p, object.center_offset());
++    put_matrix(p, object.trafo());
++    p.f64(object.max_z());
++    p.count(object.instances().size());
++    for (const PrintInstance &instance : object.instances()) {
++        put_point(p, instance.shift);
++        p.u64(uint64_t(instance.id));
++    }
++    p.count(object.layers().size());
++    p.count(object.support_layers().size());
++    return p;
++}
++
++Payload layer_record(const Layer &layer, size_t position)
++{
++    Payload p;
++    p.u64(uint64_t(position));
++    p.u64(uint64_t(layer.id()));
++    p.f64(layer.slice_z);
++    p.f64(layer.print_z);
++    p.f64(layer.height);
++    p.boolean(layer.slicing_errors);
++    put_expolygons(p, layer.lslices);
++    put_expolygons(p, layer.lslices_extrudable);
++    put_expolygons(p, layer.loverhangs);
++    put_expolygons(p, layer.sharp_tails);
++    put_expolygons(p, layer.cantilevers);
++    p.count(layer.sharp_tails_height.size());
++    for (float h : layer.sharp_tails_height)
++        p.f32(h);
++    p.count(layer.regions().size());
++    for (const LayerRegion *region : layer.regions()) {
++        p.i32(int32_t(region->region().print_region_id()));
++        put_surfaces(p, region->slices.surfaces);
++        put_expolygons(p, region->raw_slices);
++        put_surfaces(p, region->fill_surfaces.surfaces);
++        put_expolygons(p, region->fill_expolygons);
++        put_expolygons(p, region->fill_no_overlap_expolygons);
++        put_polylines(p, region->unsupported_bridge_edges);
++        put_entity(p, region->thin_fills);
++        put_entity(p, region->perimeters);
++        put_entity(p, region->fills);
++    }
++    return p;
++}
++
++Payload support_layer_record(const SupportLayer &layer, size_t position)
++{
++    Payload p;
++    p.u64(uint64_t(position));
++    p.u64(uint64_t(layer.id()));
++    p.f64(layer.slice_z);
++    p.f64(layer.print_z);
++    p.f64(layer.height);
++    p.u32(uint32_t(layer.support_type));
++    p.u64(uint64_t(layer.interface_id()));
++    put_expolygons(p, layer.lslices);
++    put_expolygons(p, layer.support_islands);
++    put_expolygons(p, layer.base_areas);
++    put_entity(p, layer.support_fills);
++    return p;
++}
++
++void put_tool_change(Payload &p, const WipeTower::ToolChangeResult &t)
++{
++    p.f32(t.print_z);
++    p.f32(t.layer_height);
++    p.str(t.gcode);
++    p.count(t.extrusions.size());
++    for (const WipeTower::Extrusion &e : t.extrusions) {
++        p.f32(e.pos.x());
++        p.f32(e.pos.y());
++        p.f32(e.width);
++        p.u32(uint32_t(e.tool));
++    }
++    p.f32(t.start_pos.x());
++    p.f32(t.start_pos.y());
++    p.f32(t.end_pos.x());
++    p.f32(t.end_pos.y());
++    p.f32(t.elapsed_time);
++    p.boolean(t.priming);
++    p.boolean(t.is_tool_change);
++    p.boolean(t.is_contact);
++    p.f32(t.tool_change_start_pos.x());
++    p.f32(t.tool_change_start_pos.y());
++    p.count(t.wipe_path.size());
++    for (const Vec2f &pt : t.wipe_path) {
++        p.f32(pt.x());
++        p.f32(pt.y());
++    }
++    p.f32(t.purge_volume);
++    p.i32(int32_t(t.initial_tool));
++    p.i32(int32_t(t.new_tool));
++    p.boolean(t.is_finish_first);
++}
++
++void write_print_dump(const Print &print, const std::string &step)
++{
++    Dump dump("print", step, -1);
++
++    Payload prnt;
++    put_entity(prnt, print.skirt());
++    prnt.count(print.skirt_brim_groups().size());
++    for (const Print::SkirtBrimGroup &group : print.skirt_brim_groups()) {
++        put_entity(prnt, group.skirt);
++        put_object_ids(prnt, print, group.object_ids);
++        prnt.count(group.brims.size());
++        for (const Print::SkirtBrimGroup::Brim &brim : group.brims) {
++            put_entity(prnt, brim.brim);
++            put_object_ids(prnt, print, brim.object_ids);
++        }
++    }
++    prnt.boolean(print.has_shared_per_object_skirt());
++    put_entity_map(prnt, print, OracleDumpAccess::brim_map(print));
++    put_entity_map(prnt, print, OracleDumpAccess::support_brim_map(print));
++    put_polygon(prnt, print.first_layer_convex_hull());
++    put_points(prnt, OracleDumpAccess::skirt_convex_hull(print));
++    for (bool first_layer : {false, true}) {
++        const std::vector<unsigned int> used = print.get_slice_used_filaments(first_layer);
++        prnt.count(used.size());
++        for (unsigned int f : used)
++            prnt.u32(f);
++    }
++    prnt.boolean(print.is_support_used());
++    dump.record("PRNT", prnt);
++
++    const ToolOrdering &ordering = print.tool_ordering();
++    Payload             tool;
++    tool.u32(ordering.first_extruder());
++    tool.u32(ordering.last_extruder());
++    tool.count(ordering.all_extruders().size());
++    for (unsigned int e : ordering.all_extruders())
++        tool.u32(e);
++    tool.count(size_t(ordering.end() - ordering.begin()));
++    for (auto it = ordering.begin(); it != ordering.end(); ++it) {
++        const LayerTools &lt = *it;
++        tool.f64(lt.print_z);
++        tool.boolean(lt.has_object);
++        tool.boolean(lt.has_support);
++        tool.count(lt.extruders.size());
++        for (unsigned int e : lt.extruders)
++            tool.u32(e);
++        tool.u32(lt.extruder_override);
++        tool.boolean(lt.has_skirt);
++        tool.boolean(lt.has_wipe_tower);
++        tool.u64(uint64_t(lt.wipe_tower_partitions));
++        tool.f64(lt.wipe_tower_layer_height);
++        tool.boolean(lt.custom_gcode != nullptr);
++    }
++    dump.record("TOOL", tool);
++
++    // WipeTowerData::height is left out: Orca sets it on one of its two wipe tower paths only.
++    const WipeTowerData &wt = OracleDumpAccess::wipe_tower_data(print);
++    Payload              wipe;
++    wipe.i32(int32_t(wt.number_of_toolchanges));
++    wipe.f32(wt.depth);
++    wipe.f32(wt.brim_width);
++    wipe.count(wt.used_filament.size());
++    for (float f : wt.used_filament)
++        wipe.f32(f);
++    wipe.count(wt.z_and_depth_pairs.size());
++    for (const std::pair<float, float> &zd : wt.z_and_depth_pairs) {
++        wipe.f32(zd.first);
++        wipe.f32(zd.second);
++    }
++    wipe.boolean(wt.bbx.defined);
++    wipe.f64(wt.bbx.min.x());
++    wipe.f64(wt.bbx.min.y());
++    wipe.f64(wt.bbx.max.x());
++    wipe.f64(wt.bbx.max.y());
++    wipe.f32(wt.rib_offset.x());
++    wipe.f32(wt.rib_offset.y());
++    wipe.boolean(wt.priming != nullptr);
++    if (wt.priming != nullptr) {
++        wipe.count(wt.priming->size());
++        for (const WipeTower::ToolChangeResult &t : *wt.priming)
++            put_tool_change(wipe, t);
++    }
++    wipe.count(wt.tool_changes.size());
++    for (const std::vector<WipeTower::ToolChangeResult> &layer : wt.tool_changes) {
++        wipe.count(layer.size());
++        for (const WipeTower::ToolChangeResult &t : layer)
++            put_tool_change(wipe, t);
++    }
++    wipe.boolean(wt.final_purge != nullptr);
++    if (wt.final_purge != nullptr)
++        put_tool_change(wipe, *wt.final_purge);
++    dump.record("WIPE", wipe);
++
++    const PrintStatistics &st = print.print_statistics();
++    Payload                stat;
++    stat.str(st.estimated_normal_print_time);
++    stat.str(st.estimated_silent_print_time);
++    stat.f64(st.total_used_filament);
++    stat.f64(st.total_extruded_volume);
++    stat.f64(st.total_cost);
++    stat.i32(int32_t(st.total_toolchanges));
++    stat.f64(st.total_weight);
++    stat.f64(st.total_wipe_tower_cost);
++    stat.f64(st.total_wipe_tower_filament);
++    stat.u32(st.initial_tool);
++    stat.count(st.filament_stats.size());
++    for (const auto &fs : st.filament_stats) {
++        stat.u64(uint64_t(fs.first));
++        stat.f64(fs.second);
++    }
++    dump.record("STAT", stat);
++
++    const auto conflict = print.get_conflict_result();
++    Payload    cnfl;
++    cnfl.boolean(conflict.has_value());
++    if (conflict.has_value()) {
++        cnfl.str(conflict->_objName1);
++        cnfl.str(conflict->_objName2);
++        cnfl.f64(conflict->_height);
++        cnfl.i32(int32_t(conflict->layer));
++    }
++    dump.record("CNFL", cnfl);
++
++    dump.write();
++}
++
++void write_object_dump(const PrintObject &object, int64_t index, const std::string &step)
++{
++    Dump dump("object", step, index);
++    dump.record("OBJ ", object_record(object, index));
++    size_t position = 0;
++    for (const Layer *layer : object.layers())
++        dump.record("LAYR", layer_record(*layer, position++));
++    position = 0;
++    for (const SupportLayer *layer : object.support_layers())
++        dump.record("SUPL", support_layer_record(*layer, position++));
++    dump.write();
++}
++
++const char *print_step_name(int step)
++{
++    switch (step) {
++    case psWipeTower: return "psWipeTower";
++    case psSkirtBrim: return "psSkirtBrim";
++    case psGCodeExport: return "psGCodeExport";
++    case psConflictCheck: return "psConflictCheck";
++    default: return nullptr;
++    }
++}
++
++const char *object_step_name(int step)
++{
++    static const char *const names[] = {"posSlice",
++                                        "posPerimeters",
++                                        "posEstimateCurledExtrusions",
++                                        "posPrepareInfill",
++                                        "posInfill",
++                                        "posIroning",
++                                        "posContouring",
++                                        "posSupportMaterial",
++                                        "posSimplifyPath",
++                                        "posSimplifySupportPath",
++                                        "posDetectOverhangsForLift",
++                                        "posSimplifyWall",
++                                        "posSimplifyInfill"};
++    static_assert(sizeof(names) / sizeof(names[0]) == size_t(posCount), "a name for every PrintObjectStep");
++    return step >= 0 && step < int(posCount) ? names[step] : nullptr;
++}
++
++} // namespace
++
++bool dump_enabled() { return dump_knob().valid; }
++
++std::string dump_knob_problem() { return dump_knob().problem; }
++
++void dump_print_step(const PrintBase &base, int step)
++{
++    if (!dump_enabled())
++        return;
++    const auto *print = dynamic_cast<const Print *>(&base);
++    const char *name  = print_step_name(step);
++    if (print == nullptr || name == nullptr)
++        return;
++    std::lock_guard<std::mutex> lock(dump_mutex());
++    write_print_dump(*print, name);
++}
++
++void dump_object_step(const PrintObjectBase &base, int step)
++{
++    if (!dump_enabled())
++        return;
++    const auto *object = dynamic_cast<const PrintObject *>(&base);
++    const char *name   = object_step_name(step);
++    if (object == nullptr || name == nullptr || object->print() == nullptr)
++        return;
++    std::lock_guard<std::mutex> lock(dump_mutex());
++    write_object_dump(*object, object_index(*object->print(), object), name);
++}
++
++void dump_front_objects(const Model &model)
++{
++    if (!dump_enabled())
++        return;
++    std::lock_guard<std::mutex> lock(dump_mutex());
++    Dump dump("front", "objects", -1);
++    for (size_t i = 0; i < model.objects.size(); ++i) {
++        const ModelObject *object = model.objects[i];
++        Payload            modl;
++        modl.i64(int64_t(i));
++        modl.str(object->name);
++        modl.boolean(object->printable);
++        const std::vector<coordf_t> profile = object->layer_height_profile.get();
++        modl.count(profile.size());
++        for (coordf_t v : profile)
++            modl.f64(double(v));
++        modl.count(object->instances.size());
++        for (const ModelInstance *instance : object->instances) {
++            put_matrix(modl, instance->get_matrix());
++            modl.boolean(instance->printable);
++        }
++        modl.count(object->volumes.size());
++        for (const ModelVolume *volume : object->volumes) {
++            modl.str(volume->name);
++            modl.i32(int32_t(volume->type()));
++            put_matrix(modl, volume->get_matrix());
++            const indexed_triangle_set &its = volume->mesh().its;
++            modl.count(its.vertices.size());
++            for (const stl_vertex &v : its.vertices) {
++                modl.f32(v.x());
++                modl.f32(v.y());
++                modl.f32(v.z());
++            }
++            modl.count(its.indices.size());
++            for (const stl_triangle_vertex_indices &f : its.indices) {
++                modl.i32(int32_t(f(0)));
++                modl.i32(int32_t(f(1)));
++                modl.i32(int32_t(f(2)));
++            }
++        }
++        dump.record("MODL", modl);
++        dump.record("CONF", config_record("model-object", int64_t(i), -1, object->config.get()));
++        for (size_t v = 0; v < object->volumes.size(); ++v)
++            dump.record("CONF", config_record("model-volume", int64_t(i), int64_t(v), object->volumes[v]->config.get()));
++    }
++    dump.write();
++}
++
++void dump_front_config(const Print &print, const DynamicPrintConfig &config)
++{
++    if (!dump_enabled())
++        return;
++    std::lock_guard<std::mutex> lock(dump_mutex());
++    Dump dump("front", "config", -1);
++    dump.record("CONF", config_record("job", -1, -1, config));
++    dump.record("CONF", config_record("print-full", -1, -1, print.full_print_config()));
++    dump.record("CONF", config_record("print", -1, -1, print.config()));
++    const auto objects = print.objects();
++    for (size_t i = 0; i < objects.size(); ++i) {
++        const PrintObject *object = objects[i];
++        dump.record("CONF", config_record("object", int64_t(i), -1, object->config()));
++        if (object->shared_regions() == nullptr)
++            continue;
++        for (size_t r = 0; r < object->num_printing_regions(); ++r)
++            dump.record("CONF", config_record("region", int64_t(i), int64_t(r), object->printing_region(r).config()));
++    }
++    dump.write();
++}
++
++} // namespace Oracle
++} // namespace Slic3r
+diff --git a/src/libslic3r/OracleDump.hpp b/src/libslic3r/OracleDump.hpp
+new file mode 100644
+index 00000000..9b78076a
+--- /dev/null
++++ b/src/libslic3r/OracleDump.hpp
+@@ -0,0 +1,56 @@
++// Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
++// SPDX-License-Identifier: AGPL-3.0-only
++//
++// This file is part of sketch-orca, a modified version of OrcaSlicer. sketch-orca is free software:
++// you can redistribute it and/or modify it under the terms of the GNU Affero General Public
++// License, version 3, as published by the Free Software Foundation. It is distributed in the hope
++// that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++// (LICENSE) for more details.
++//
++// sketch-orca oracle patch 0005 (2026-11-06): the dump knob of the parity oracle, a build that never
++// ships. SKETCH_ORCA_ORACLE_DUMP=<folder>, an existing folder, makes the oracle write the state it
++// has at step boundaries, and only there, as SOP1 files (parity/SOP1.md in sketch-orca):
++// - after each PrintObject step (PrintObjectBaseWithState::set_done, PrintBase.hpp):
++//   object<i>-<step>-<n>.sop1, the object's layers, regions, surfaces, extrusions and support layers;
++// - after each Print step (PrintBaseWithState::set_done): print-<step>-<n>.sop1, the skirt, brims,
++//   tool ordering, wipe tower, statistics and conflict check;
++// - in the front end once the objects are placed: front-objects-<n>.sop1, the model;
++// - in the front end once the config is resolved, before each slice: front-config-<n>.sop1, the
++//   front end's config, the print's, and each object's and region's.
++// <i> is the object's index in the print, <step> the step's name in Print.hpp (posSlice,
++// psWipeTower, ...) and <n> counts the boundaries of that name from 1. Writing is serialised, so
++// objects whose steps run at the same time (the supports) write their own files whole. Unset,
++// nothing is written and nothing else changes.
++#ifndef slic3r_OracleDump_hpp_
++#define slic3r_OracleDump_hpp_
++
++#include <string>
++
++namespace Slic3r {
++
++class DynamicPrintConfig;
++class Model;
++class Print;
++class PrintBase;
++class PrintObjectBase;
++
++namespace Oracle {
++
++// Whether SKETCH_ORCA_ORACLE_DUMP is set to an existing folder.
++bool dump_enabled();
++// Why SKETCH_ORCA_ORACLE_DUMP is refused, or "" when it is not set or names an existing folder.
++std::string dump_knob_problem();
++
++// The step boundaries; each does nothing unless dump_enabled(). A Print or PrintObject of another
++// printer technology (SLA) is not dumped.
++void dump_print_step(const PrintBase &print, int step);
++void dump_object_step(const PrintObjectBase &object, int step);
++// The front end's two boundaries.
++void dump_front_objects(const Model &model);
++void dump_front_config(const Print &print, const DynamicPrintConfig &config);
++
++} // namespace Oracle
++} // namespace Slic3r
++
++#endif // slic3r_OracleDump_hpp_
+diff --git a/src/libslic3r/Print.hpp b/src/libslic3r/Print.hpp
+index fb6e6fab..24340d38 100644
+--- a/src/libslic3r/Print.hpp
++++ b/src/libslic3r/Print.hpp
+@@ -1219,6 +1219,9 @@ private:
+     friend class GCode;
+     // Allow PrintObject to access m_mutex and m_cancel_callback.
+     friend class PrintObject;
++    // sketch-orca oracle patch 0005 (2026-11-06): the oracle's dumps read the brims, the skirt's convex
++    // hull and the wipe tower data (OracleDump.cpp).
++    friend struct OracleDumpAccess;
+ 
+ public:
+     //BBS: this was a print config and now seems to be useless so we move it to here
+diff --git a/src/libslic3r/PrintBase.hpp b/src/libslic3r/PrintBase.hpp
+index 4158c230..6ad9f7ac 100644
+--- a/src/libslic3r/PrintBase.hpp
++++ b/src/libslic3r/PrintBase.hpp
+@@ -13,6 +13,8 @@
+ #include "Model.hpp"
+ #include "PlaceholderParser.hpp"
+ #include "PrintConfig.hpp"
++// sketch-orca oracle patch 0005 (2026-11-06): the dump knob, SKETCH_ORCA_ORACLE_DUMP.
++#include "OracleDump.hpp"
+ 
+ namespace Slic3r {
+ 
+@@ -601,6 +603,10 @@ protected:
+ 		std::pair<PrintStateBase::TimeStamp, bool> status = m_state.set_done(step, this->state_mutex(), [this](){ this->throw_if_canceled(); });
+         if (status.second)
+             this->status_update_warnings(static_cast<int>(step), PrintStateBase::WarningLevel::NON_CRITICAL, std::string());
++        // sketch-orca oracle patch 0005 (2026-11-06): a Print step's boundary; with SKETCH_ORCA_ORACLE_DUMP
++        // set, the Print's state is dumped here.
++        if (Oracle::dump_enabled())
++            Oracle::dump_print_step(*this, static_cast<int>(step));
+         return status.first;
+ 	}
+     bool            invalidate_step(PrintStepEnum step)
+@@ -642,6 +648,10 @@ protected:
+ 		std::pair<PrintStateBase::TimeStamp, bool> status = m_state.set_done(step, PrintObjectBase::state_mutex(m_print), [this](){ this->throw_if_canceled(); });
+         if (status.second)
+             this->status_update_warnings(m_print, static_cast<int>(step), PrintStateBase::WarningLevel::NON_CRITICAL, std::string());
++        // sketch-orca oracle patch 0005 (2026-11-06): a PrintObject step's boundary; with
++        // SKETCH_ORCA_ORACLE_DUMP set, the object's state is dumped here.
++        if (Oracle::dump_enabled())
++            Oracle::dump_object_step(*this, static_cast<int>(step));
+         return status.first;
+ 	}
+ 

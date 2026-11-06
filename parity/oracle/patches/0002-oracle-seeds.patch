@@ -1,0 +1,210 @@
+sketch-orca oracle patch 0002: the seed knob, SKETCH_ORCA_ORACLE_SEED.
+Modified for Sketch, 2026-11-06.
+
+With SKETCH_ORCA_ORACLE_SEED set to a whole number from 0 to 4294967295, the oracle seeds the two
+generators the engine seeds from entropy with it:
+- fuzzy skin's thread_local std::mt19937 (Feature/FuzzySkin/FuzzySkin.cpp:24-30), in place of
+  std::random_device (or the thread id's hash);
+- the placeholder parser's std::mt19937 (GCode.cpp:2707), in place of high_resolution_clock.
+rand() keeps the UCRT's default seed of 1 on each thread: no srand call is added. The srand of
+Fill/Lightning/Generator.cpp:34 follows the clock knob (patch 0001). A value that is not such a
+number stops the oracle before it does anything else, with exit code 78. Unset, nothing changes.
+
+---
+diff --git a/sketch-orca/cli/main.cpp b/sketch-orca/cli/main.cpp
+index a1978536..5c8d2590 100644
+--- a/sketch-orca/cli/main.cpp
++++ b/sketch-orca/cli/main.cpp
+@@ -39,6 +39,8 @@
+ 
+ // sketch-orca oracle patch 0001 (2026-11-06): the clock knob.
+ #include "libslic3r/OracleClock.hpp"
++// sketch-orca oracle patch 0002 (2026-11-06): the seed knob.
++#include "libslic3r/OracleSeed.hpp"
+ #include "libslic3r/Platform.hpp"
+ #include "libslic3r/Utils.hpp"
+ 
+@@ -279,6 +281,9 @@ int main(int argc, char **argv)
+     // sketch-orca oracle patch 0001 (2026-11-06): SKETCH_ORCA_ORACLE_TIME, when set, must be a time.
+     if (const std::string problem = Slic3r::Oracle::clock_knob_problem(); !problem.empty())
+         return oracle_knob_error(problem);
++    // sketch-orca oracle patch 0002 (2026-11-06): SKETCH_ORCA_ORACLE_SEED, when set, must be a seed.
++    if (const std::string problem = Slic3r::Oracle::seed_knob_problem(); !problem.empty())
++        return oracle_knob_error(problem);
+     install_crash_handler();
+     // UTF-8 arguments on Windows, from the wide command line.
+     boost::nowide::args nowide_args(argc, argv);
+diff --git a/src/libslic3r/CMakeLists.txt b/src/libslic3r/CMakeLists.txt
+index d6af0b8e..eff1881a 100644
+--- a/src/libslic3r/CMakeLists.txt
++++ b/src/libslic3r/CMakeLists.txt
+@@ -323,6 +323,9 @@ set(lisbslic3r_sources
+     # sketch-orca oracle patch 0001 (2026-11-06): the clock knob, SKETCH_ORCA_ORACLE_TIME.
+     OracleClock.cpp
+     OracleClock.hpp
++    # sketch-orca oracle patch 0002 (2026-11-06): the seed knob, SKETCH_ORCA_ORACLE_SEED.
++    OracleSeed.cpp
++    OracleSeed.hpp
+     Orient.cpp
+     Orient.hpp
+     ParameterUtils.cpp
+diff --git a/src/libslic3r/Feature/FuzzySkin/FuzzySkin.cpp b/src/libslic3r/Feature/FuzzySkin/FuzzySkin.cpp
+index 11e2d081..efb6b303 100644
+--- a/src/libslic3r/Feature/FuzzySkin/FuzzySkin.cpp
++++ b/src/libslic3r/Feature/FuzzySkin/FuzzySkin.cpp
+@@ -10,6 +10,8 @@
+ #include "libslic3r/Polygon.hpp"
+ #include "libslic3r/Print.hpp"
+ #include "libslic3r/PrintConfig.hpp"
++// sketch-orca oracle patch 0002 (2026-11-06): SKETCH_ORCA_ORACLE_SEED seeds the fuzzy skin noise.
++#include "libslic3r/OracleSeed.hpp"
+ 
+ #include "FuzzySkin.hpp"
+ 
+@@ -25,7 +27,9 @@ namespace Slic3r::Feature::FuzzySkin {
+ static double random_value() {
+     thread_local std::random_device rd;
+     // Hash thread ID for random number seed if no hardware rng seed is available
+-    thread_local std::mt19937 gen(rd.entropy() > 0 ? rd() : std::hash<std::thread::id>()(std::this_thread::get_id()));
++    // sketch-orca oracle patch 0002 (2026-11-06): with SKETCH_ORCA_ORACLE_SEED set, that seed in place of random_device.
++    thread_local std::mt19937 gen(Oracle::seed_set() ? size_t(Oracle::seed()) :
++                                  rd.entropy() > 0 ? rd() : std::hash<std::thread::id>()(std::this_thread::get_id()));
+     thread_local std::uniform_real_distribution<double> dist(0.0, 1.0);
+     return dist(gen);
+ }
+diff --git a/src/libslic3r/GCode.cpp b/src/libslic3r/GCode.cpp
+index b9a81c54..fa6187fb 100644
+--- a/src/libslic3r/GCode.cpp
++++ b/src/libslic3r/GCode.cpp
+@@ -6,6 +6,8 @@
+ #include "libslic3r.h"
+ #include "I18N.hpp"
+ #include "GCode.hpp"
++// sketch-orca oracle patch 0002 (2026-11-06): SKETCH_ORCA_ORACLE_SEED seeds the placeholder parser's rng.
++#include "OracleSeed.hpp"
+ #include "Exception.hpp"
+ #include "ExtrusionEntity.hpp"
+ #include "EdgeGrid.hpp"
+@@ -2704,6 +2706,10 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
+     m_placeholder_parser_integration.parser = print.placeholder_parser();
+     m_placeholder_parser_integration.parser.update_timestamp();
+     m_placeholder_parser_integration.parser.update_user_name();
++    // sketch-orca oracle patch 0002 (2026-11-06): with SKETCH_ORCA_ORACLE_SEED set, that seed in place of the clock.
++    if (Oracle::seed_set())
++        m_placeholder_parser_integration.context.rng = std::mt19937(Oracle::seed());
++    else
+     m_placeholder_parser_integration.context.rng = std::mt19937(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+     // Enable passing global variables between PlaceholderParser invocations.
+     m_placeholder_parser_integration.context.global_config = std::make_unique<DynamicConfig>();
+diff --git a/src/libslic3r/OracleSeed.cpp b/src/libslic3r/OracleSeed.cpp
+new file mode 100644
+index 00000000..26b2aae6
+--- /dev/null
++++ b/src/libslic3r/OracleSeed.cpp
+@@ -0,0 +1,63 @@
++// Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
++// SPDX-License-Identifier: AGPL-3.0-only
++//
++// This file is part of sketch-orca, a modified version of OrcaSlicer. sketch-orca is free software:
++// you can redistribute it and/or modify it under the terms of the GNU Affero General Public
++// License, version 3, as published by the Free Software Foundation. It is distributed in the hope
++// that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++// (LICENSE) for more details.
++//
++// sketch-orca oracle patch 0002 (2026-11-06): the seed knob (OracleSeed.hpp).
++#include "OracleSeed.hpp"
++
++#include <cstdlib>
++
++namespace Slic3r {
++namespace Oracle {
++
++namespace {
++
++// 1 set and valid (*out is the seed), 0 not set, -1 set to something that is not a seed.
++int read_seed(uint32_t *out)
++{
++    const char *text = std::getenv("SKETCH_ORCA_ORACLE_SEED");
++    if (text == nullptr)
++        return 0;
++    unsigned long long value  = 0;
++    int                digits = 0;
++    for (; *text != '\0'; ++text) {
++        if (*text < '0' || *text > '9' || ++digits > 10)
++            return -1;
++        value = value * 10 + unsigned(*text - '0');
++    }
++    if (digits == 0 || value > 4294967295ull)
++        return -1;
++    if (out != nullptr)
++        *out = uint32_t(value);
++    return 1;
++}
++
++} // namespace
++
++bool seed_set()
++{
++    return read_seed(nullptr) == 1;
++}
++
++uint32_t seed()
++{
++    uint32_t value = 0;
++    read_seed(&value);
++    return value;
++}
++
++std::string seed_knob_problem()
++{
++    if (read_seed(nullptr) >= 0)
++        return std::string();
++    return "SKETCH_ORCA_ORACLE_SEED must be a whole number from 0 to 4294967295, with nothing else in it";
++}
++
++} // namespace Oracle
++} // namespace Slic3r
+diff --git a/src/libslic3r/OracleSeed.hpp b/src/libslic3r/OracleSeed.hpp
+new file mode 100644
+index 00000000..68ac6012
+--- /dev/null
++++ b/src/libslic3r/OracleSeed.hpp
+@@ -0,0 +1,37 @@
++// Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
++// SPDX-License-Identifier: AGPL-3.0-only
++//
++// This file is part of sketch-orca, a modified version of OrcaSlicer. sketch-orca is free software:
++// you can redistribute it and/or modify it under the terms of the GNU Affero General Public
++// License, version 3, as published by the Free Software Foundation. It is distributed in the hope
++// that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++// (LICENSE) for more details.
++//
++// sketch-orca oracle patch 0002 (2026-11-06): the seed knob of the parity oracle, a build that
++// never ships. SKETCH_ORCA_ORACLE_SEED, when set, is a whole number from 0 to 4294967295 that seeds
++// the two generators whose seeds come from entropy: fuzzy skin's thread_local mt19937
++// (Feature/FuzzySkin/FuzzySkin.cpp, in place of std::random_device) and the placeholder parser's
++// mt19937 (GCode.cpp, in place of the high-resolution clock). Each thread's fuzzy skin generator
++// gets the same seed. rand() keeps the C runtime's default seed of 1 on each thread, as in the
++// engine; nothing here calls srand. Unset, both generators are seeded as before.
++#ifndef slic3r_OracleSeed_hpp_
++#define slic3r_OracleSeed_hpp_
++
++#include <cstdint>
++#include <string>
++
++namespace Slic3r {
++namespace Oracle {
++
++// Whether SKETCH_ORCA_ORACLE_SEED is set to a valid seed.
++bool seed_set();
++// The seed; only when seed_set().
++uint32_t seed();
++// Why SKETCH_ORCA_ORACLE_SEED is refused, or "" when it is not set or valid.
++std::string seed_knob_problem();
++
++} // namespace Oracle
++} // namespace Slic3r
++
++#endif // slic3r_OracleSeed_hpp_

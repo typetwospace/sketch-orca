@@ -1,0 +1,230 @@
+sketch-orca oracle patch 0003: the thread knob, SKETCH_ORCA_ORACLE_THREADS.
+Modified for Sketch, 2026-11-06.
+
+With SKETCH_ORCA_ORACLE_THREADS=P, a whole number from 1 to 256, the front end's main runs the
+whole run inside a tbb::task_arena of concurrency P, while a
+tbb::global_control(max_allowed_parallelism, 1), held until the run ends, leaves TBB no worker
+thread. TBB then splits the work as for P threads (this_task_arena::max_concurrency() reports P to
+TreeSupport3D.cpp:2385, TreeModelVolumes.cpp and the partitioners) and does all of it on the main
+thread, in one order, the same on every run. All P of the arena's slots are reserved for
+application threads, so it asks TBB for no worker: asking for P - 1 under that limit would make
+TBB print a warning to stderr on a machine without P hardware threads. utils.cpp:196-204 is left
+as it is: its disable_multi_threading builds a temporary global_control, which does nothing.
+name_tbb_thread_pool_threads_set_locale (Thread.cpp), which Print::process calls, returns at once
+when the knob is set: there are no worker threads to name, and its barrier, which waits until
+max_concurrency() tasks run at the same time, would wait forever on one thread. Whether the arena
+reports P is recorded at every dump (patch 0005, the RUN record) and by parity neutral. A value
+that is not such a number stops the oracle before it does anything else, with exit code 78.
+Unset, nothing changes.
+
+---
+diff --git a/sketch-orca/cli/main.cpp b/sketch-orca/cli/main.cpp
+index 5c8d2590..7e8b3c94 100644
+--- a/sketch-orca/cli/main.cpp
++++ b/sketch-orca/cli/main.cpp
+@@ -36,11 +36,16 @@
+ #include <boost/nowide/filesystem.hpp>
+ #include <boost/nowide/iostream.hpp>
+ #include <boost/shared_ptr.hpp>
++// sketch-orca oracle patch 0003 (2026-11-06): the thread knob's arena and parallelism limit.
++#include <tbb/global_control.h>
++#include <tbb/task_arena.h>
+ 
+ // sketch-orca oracle patch 0001 (2026-11-06): the clock knob.
+ #include "libslic3r/OracleClock.hpp"
+ // sketch-orca oracle patch 0002 (2026-11-06): the seed knob.
+ #include "libslic3r/OracleSeed.hpp"
++// sketch-orca oracle patch 0003 (2026-11-06): the thread knob.
++#include "libslic3r/OracleThreads.hpp"
+ #include "libslic3r/Platform.hpp"
+ #include "libslic3r/Utils.hpp"
+ 
+@@ -276,7 +281,9 @@ int command_run(const std::vector<std::string> &args)
+ 
+ } // namespace
+ 
+-int main(int argc, char **argv)
++// sketch-orca oracle patch 0003 (2026-11-06): the front end's main, renamed; main below runs it, inside
++// the thread knob's arena when SKETCH_ORCA_ORACLE_THREADS is set.
++static int engine_main(int argc, char **argv)
+ {
+     // sketch-orca oracle patch 0001 (2026-11-06): SKETCH_ORCA_ORACLE_TIME, when set, must be a time.
+     if (const std::string problem = Slic3r::Oracle::clock_knob_problem(); !problem.empty())
+@@ -323,3 +330,22 @@ int main(int argc, char **argv)
+     }
+     return usage_error("unknown command " + command);
+ }
++
++// sketch-orca oracle patch 0003 (2026-11-06): with SKETCH_ORCA_ORACLE_THREADS=P the whole run happens
++// inside a tbb::task_arena of concurrency P, so this_task_arena::max_concurrency() and the partitioners
++// see P, while a tbb::global_control(max_allowed_parallelism, 1), held until the run ends, leaves TBB no
++// worker thread: every task runs on this thread, in one order, the same on every run. All P slots are
++// reserved for application threads, so the arena asks TBB for no worker (asking for P - 1 under that
++// limit would make TBB print a warning to stderr on a machine without P hardware threads). Unset, main
++// is the front end's main as it was.
++int main(int argc, char **argv)
++{
++    if (const std::string problem = Slic3r::Oracle::threads_knob_problem(); !problem.empty())
++        return oracle_knob_error(problem);
++    if (!Slic3r::Oracle::threads_set())
++        return engine_main(argc, argv);
++    const unsigned      threads = Slic3r::Oracle::threads();
++    tbb::global_control one_thread(tbb::global_control::max_allowed_parallelism, 1);
++    tbb::task_arena     arena{static_cast<int>(threads), threads};
++    return arena.execute([&]() -> int { return engine_main(argc, argv); });
++}
+diff --git a/src/libslic3r/CMakeLists.txt b/src/libslic3r/CMakeLists.txt
+index eff1881a..ee1757a9 100644
+--- a/src/libslic3r/CMakeLists.txt
++++ b/src/libslic3r/CMakeLists.txt
+@@ -326,6 +326,9 @@ set(lisbslic3r_sources
+     # sketch-orca oracle patch 0002 (2026-11-06): the seed knob, SKETCH_ORCA_ORACLE_SEED.
+     OracleSeed.cpp
+     OracleSeed.hpp
++    # sketch-orca oracle patch 0003 (2026-11-06): the thread knob, SKETCH_ORCA_ORACLE_THREADS.
++    OracleThreads.cpp
++    OracleThreads.hpp
+     Orient.cpp
+     Orient.hpp
+     ParameterUtils.cpp
+diff --git a/src/libslic3r/OracleThreads.cpp b/src/libslic3r/OracleThreads.cpp
+new file mode 100644
+index 00000000..2f98d7f6
+--- /dev/null
++++ b/src/libslic3r/OracleThreads.cpp
+@@ -0,0 +1,65 @@
++// Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
++// SPDX-License-Identifier: AGPL-3.0-only
++//
++// This file is part of sketch-orca, a modified version of OrcaSlicer. sketch-orca is free software:
++// you can redistribute it and/or modify it under the terms of the GNU Affero General Public
++// License, version 3, as published by the Free Software Foundation. It is distributed in the hope
++// that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++// (LICENSE) for more details.
++//
++// sketch-orca oracle patch 0003 (2026-11-06): the thread knob (OracleThreads.hpp).
++#include "OracleThreads.hpp"
++
++#include <cstdlib>
++
++namespace Slic3r {
++namespace Oracle {
++
++namespace {
++
++const unsigned THREADS_MAX = 256;
++
++// 1 set and valid (*out is P), 0 not set, -1 set to something that is not a P.
++int read_threads(unsigned *out)
++{
++    const char *text = std::getenv("SKETCH_ORCA_ORACLE_THREADS");
++    if (text == nullptr)
++        return 0;
++    unsigned value  = 0;
++    int      digits = 0;
++    for (; *text != '\0'; ++text) {
++        if (*text < '0' || *text > '9' || ++digits > 3)
++            return -1;
++        value = value * 10 + unsigned(*text - '0');
++    }
++    if (digits == 0 || value < 1 || value > THREADS_MAX)
++        return -1;
++    if (out != nullptr)
++        *out = value;
++    return 1;
++}
++
++} // namespace
++
++bool threads_set()
++{
++    return read_threads(nullptr) == 1;
++}
++
++unsigned threads()
++{
++    unsigned value = 0;
++    read_threads(&value);
++    return value;
++}
++
++std::string threads_knob_problem()
++{
++    if (read_threads(nullptr) >= 0)
++        return std::string();
++    return "SKETCH_ORCA_ORACLE_THREADS must be a whole number from 1 to 256, with nothing else in it";
++}
++
++} // namespace Oracle
++} // namespace Slic3r
+diff --git a/src/libslic3r/OracleThreads.hpp b/src/libslic3r/OracleThreads.hpp
+new file mode 100644
+index 00000000..a3cd8ec3
+--- /dev/null
++++ b/src/libslic3r/OracleThreads.hpp
+@@ -0,0 +1,40 @@
++// Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
++// SPDX-License-Identifier: AGPL-3.0-only
++//
++// This file is part of sketch-orca, a modified version of OrcaSlicer. sketch-orca is free software:
++// you can redistribute it and/or modify it under the terms of the GNU Affero General Public
++// License, version 3, as published by the Free Software Foundation. It is distributed in the hope
++// that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
++// (LICENSE) for more details.
++//
++// sketch-orca oracle patch 0003 (2026-11-06): the thread knob of the parity oracle, a build that
++// never ships. SKETCH_ORCA_ORACLE_THREADS=P, a whole number from 1 to 256, runs the whole run
++// inside a tbb::task_arena of concurrency P, while a tbb::global_control(max_allowed_parallelism,
++// 1), held for the run, keeps every task on the main thread (the front end's main does both). TBB
++// then splits the work as it does for P threads (this_task_arena::max_concurrency() reports P to
++// TreeSupport3D.cpp:2385 and to the partitioners) and does it in one thread's order, so the output
++// is the engine's at P, the same on every run. utils.cpp's disable_multi_threading is left as it is:
++// it builds a temporary global_control, which does nothing. With the knob set, Thread.cpp's
++// name_tbb_thread_pool_threads_set_locale returns at once: there are no worker threads to name, and
++// its barrier, which waits until max_concurrency() tasks run at the same time, would wait forever
++// on one thread. Unset, nothing changes.
++#ifndef slic3r_OracleThreads_hpp_
++#define slic3r_OracleThreads_hpp_
++
++#include <string>
++
++namespace Slic3r {
++namespace Oracle {
++
++// Whether SKETCH_ORCA_ORACLE_THREADS is set to a valid P.
++bool threads_set();
++// P; only when threads_set().
++unsigned threads();
++// Why SKETCH_ORCA_ORACLE_THREADS is refused, or "" when it is not set or valid.
++std::string threads_knob_problem();
++
++} // namespace Oracle
++} // namespace Slic3r
++
++#endif // slic3r_OracleThreads_hpp_
+diff --git a/src/libslic3r/Thread.cpp b/src/libslic3r/Thread.cpp
+index 3030b6d1..375505ce 100644
+--- a/src/libslic3r/Thread.cpp
++++ b/src/libslic3r/Thread.cpp
+@@ -15,6 +15,8 @@
+ 
+ #include "Thread.hpp"
+ #include "Utils.hpp"
++// sketch-orca oracle patch 0003 (2026-11-06): the thread knob, SKETCH_ORCA_ORACLE_THREADS.
++#include "OracleThreads.hpp"
+ 
+ namespace Slic3r {
+ 
+@@ -215,6 +217,10 @@ void name_tbb_thread_pool_threads_set_locale()
+ 	if (initialized)
+ 		return;
+ 	initialized = true;
++	// sketch-orca oracle patch 0003 (2026-11-06): with SKETCH_ORCA_ORACLE_THREADS set, every task runs on the
++	// main thread: there is no worker thread to name, and the barrier below would wait forever for the others.
++	if (Oracle::threads_set())
++		return;
+ 
+ 	// see GH issue #5661 PrusaSlicer hangs on Linux when run with non standard task affinity
+ 	// TBB will respect the task affinity mask on Linux and spawn less threads than std::thread::hardware_concurrency().

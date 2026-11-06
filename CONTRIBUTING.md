@@ -12,6 +12,10 @@ The maintainers follow these rules for their own changes:
 
 - Run `bun run test` and `bun run typecheck`. A change to `cli/` or `patches/` also needs a build
   and a passing `bun run engine smoke`.
+- Parity work never changes `patches/`. The oracle's changes go in `parity/oracle/patches`, each
+  headed `sketch-orca oracle patch NNNN: ...` and "Modified for Sketch, <date>.", each acting only
+  when its knob is set (`parity/oracle/README.md`). A change there, or to `cli/`, needs
+  `bun run engine parity oracle` and a `bun run engine parity neutral` that exits 0.
 - Keep each file's line endings (`.gitattributes` holds `* -text`; the scripts, `cli/` and the
   patches use LF).
 - Date every change to OrcaSlicer's files, as section 5(a) of the licence asks: a patch's header

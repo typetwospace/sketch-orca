@@ -101,8 +101,9 @@ build, and after the engine's build, a `CompilerIdFortran` folder or a `.vfproj`
 `<work>/deps` or `<work>/build` fails the build and names them (`scripts/lib/noide.ts`). A failed
 dependency build is not recorded as finished; remove the cause and run `build --fresh`. On Windows,
 MSBuild runs with `MSBUILDDISABLENODEREUSE=1`, so no MSBuild worker outlives the build. Any other
-C++ build made from this repository (an oracle, a second work folder) configures its dependencies
-the same way and runs the same check.
+C++ build made from this repository (a second work folder) configures its dependencies the same way
+and runs the same check; the parity oracle builds on the engine's dependency build, with Ninja, and
+runs the check on its own build folder (see "The parity oracle").
 
 ## The Rust translation
 
@@ -133,6 +134,44 @@ found is not the pinned one, naming which. A first build of a new dependency set
 from crates.io once: run `cargo generate-lockfile` (or `cargo update -p <crate>`) when a
 dependency pin changes, which is a task of its own (`CONTRIBUTING.md`), and commit `Cargo.lock`.
 Builds go to `target/`.
+
+## The parity oracle
+
+The oracle is the engine with the knobs of `parity/oracle/patches` (`parity/oracle/README.md`): a
+C++ build for the parity harness that never ships. It is built on Windows x64 only, after the
+engine's `build`:
+
+```
+bun run engine build            # the dependencies and the engine's checkout the oracle builds on
+bun run engine parity oracle    # the oracle, staged in <work>/oracle/dist
+bun run engine smoke            # then stage: parity neutral compares the oracle with dist/engine
+bun run engine stage
+bun run engine parity neutral   # exit 0 when the oracle is neutral, 1 when it is not
+```
+
+`parity oracle` refuses to start with less than 40 GB free on the work folder's drive
+(`ORACLE_MIN_FREE_BYTES` in `scripts/lib/parity/oracle.ts`), or in a work folder longer than the 65
+characters `build` takes (or one where a parity folder leaves no room below it). The 40 GB leave
+room for what it writes, about 6 GB for OrcaSlicer 2.4.2 (the clone, about 0.5 GB, its build, about
+5.4 GB, and the staged copy), with the margin a failed or repeated build and the parity runs need.
+
+It clones `<work>/src` at the locked commit into `<work>/oracle/src` (a local clone: git shares the
+objects), copies `cli/` to `sketch-orca/cli` there, and applies `patches/` and then the oracle's
+patches. It builds against the engine's dependency build, `<work>/deps`, which it shares and never
+rebuilds: when `build` would build the dependencies again (other patches of `deps/`, another
+configuration, CMake or compiler settings, a changed prefix), it stops and says to run `build`. It
+configures `<work>/oracle/build` as `build` configures the engine (Ninja, Release, the same
+toolchain, MSVC's static runtime `/MT`, precompiled headers), plus the linker's map
+(`-DCMAKE_EXE_LINKER_FLAGS_INIT=/MAP`, checked in the cache), and builds it with at most 8 Ninja
+jobs (`SKETCH_ORCA_JOBS` lowers that). It is held to "No window, no IDE" as the engine is: after
+configuring and after building, a `CompilerIdFortran` folder or a `.vfproj` file in
+`<work>/oracle/build` fails it. It stages `<work>/oracle/dist`: `bin/sketch-orca-oracle.exe`,
+`bin/sketch-orca-oracle.map`, the libraries the program loads, `resources/` (profiles, info, flush)
+and `oracle.json`, which records what it was built from.
+
+Run again, it keeps what still holds: a change to the patches or to `cli/` makes the new tree
+beside the clone and writes only the files that differ into it, so Ninja rebuilds only what they
+touch; another compiler environment or dependency build starts `<work>/oracle/build` over.
 
 ## OpenSSL
 

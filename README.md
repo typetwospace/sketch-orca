@@ -77,7 +77,7 @@ bun run rs:build | rs:test | rs:clippy | rs:fmt:check   # the Rust translation (
 | `source [--no-deps] [--allow-missing]` | The engine's complete corresponding source, in `<work>/dist/source/<name>`. It takes the staged engine only when its manifest's `deps` are the dependency inputs `build` works out now, so the MinGW-w64 toolchain `bundle.json` names is the one that built GMP and MPFR. `--no-deps` leaves the dependency packages out (they stay listed with URL and SHA-256, and `bundle.json` says `complete: false`); `--allow-missing` makes the bundle even when a built dependency has no pinned source, the Orca archive keeps a binary, a dependency package holds a binary `PACKAGE_BINARIES` does not name, or the engine ships a binary of Orca's tree (`bundle.json` then says `complete: false`, and `BUILDING.md` what is missing). |
 | `release [--offline] [--no-deps] [--allow-missing]` | `check`, `update` (only to a newer stable release), `fetch`, `build`, `smoke`, `stage` and `source`, in order, stopping at the first failure. `--offline` leaves out `check` and `update`. |
 | `env` | Prints the toolchain found and the cleaned build PATH. |
-| `parity <command> [options]` | The parity harness, which holds the Rust translation to the C++ engine (`parity/README.md`). Each command is a module, `scripts/lib/parity/cmd-<name>.ts`; `parity --help` lists them. So far: `parity reference` downloads the published 0.1.0 engine zip (never the source zip), checks it against the release's `SHA256SUMS` and unpacks it to `<work>/parity/reference/0.1.0`; `parity same` runs that reference and the engine staged from this checkout on every smoke case's jobs, in the environment a client gives the engine, and writes `<work>/parity/same.json`, with each output identical, identical after `parity/masks.json`, or different. Both hold the run lock and log to `<work>/logs/parity-<name>.log`. |
+| `parity <command> [options]` | The parity harness, which holds the Rust translation to the C++ engine (`parity/README.md`). Each command is a module, `scripts/lib/parity/cmd-<name>.ts`; `parity --help` lists them. So far: `parity reference` downloads the published 0.1.0 engine zip (never the source zip), checks it against the release's `SHA256SUMS` and unpacks it to `<work>/parity/reference/0.1.0`; `parity same` runs that reference and the engine staged from this checkout on every smoke case's jobs, in the environment a client gives the engine, and writes `<work>/parity/same.json`, with each output identical, identical after `parity/masks.json`, or different; `parity oracle` builds the oracle, the engine plus the knobs of `parity/oracle/patches` (`parity/oracle/README.md`), on the engine's dependency build and stages it in `<work>/oracle/dist` (it never ships); `parity neutral` checks that the oracle is the engine with no knob set, that two runs with the clock and seed pinned are byte for byte the same, and records what differs between 1 and 8 threads, in `<work>/parity/neutral.json` (exit 1 when either of the first two fails). Each holds the run lock and logs to `<work>/logs/parity-<name>.log`. |
 
 `release` is the workflow for a new engine. After a failure, fix the cause and run it again: the
 finished steps skip. When a newer release is out it rewrites `orca.lock.json` in the repository;
@@ -88,8 +88,9 @@ Visual Studio's IDE: on Windows `build` configures every dependency so that no C
 (`BUILDING.md`, "No window, no IDE").
 
 Exit codes (`EXIT` in `scripts/lib/run.ts`): 0 when the command did its work; `check` also exits 1
-(a newer stable release is out) and 2 (the locked tag moved), and `update` and `release` stop with
-2 when the locked tag moved; 3 when the command failed; 64 for a command line the pipeline does not
+(a newer stable release is out) and 2 (the locked tag moved), `update` and `release` stop with 2
+when the locked tag moved, and `parity neutral` exits 1 when the oracle is not neutral; 3 when the
+command failed; 64 for a command line the pipeline does not
 take (an unknown command, or `--step` with another value). The commands that write (all but
 `check` and `env`) hold `<work>/run.lock.d`, which names their process, while they run: a second
 run on the same work folder stops with exit 3 and names the first, and a lock whose process is
@@ -163,7 +164,8 @@ crates/          the Rust translation: the crates of one Cargo workspace (Cargo.
                  rust-toolchain.toml, .cargo/, rustfmt.toml and clippy.toml are in the root)
 protocol/        the engine's command line and files: specification, JSON Schemas, examples (MIT)
 licenses/        licence texts we supply for dependencies and package binaries whose packages lack them
-parity/          the parity harness's committed data (masks.json) and its README
+parity/          the parity harness's committed data (masks.json), its README, SOP1.md (the oracle's
+                 dump format) and oracle/ (the oracle's patches and their README)
 scripts/         orca.ts and its modules in lib/ (the parity harness in lib/parity/); rust.ts, the
                  cargo runner, and lib/rust.ts
 test/            unit tests and their fixtures
@@ -188,8 +190,9 @@ smoke/          the smoke run: presets, one folder per case, report.json
 dist/engine/    the staged engine
 dist/source/    the source bundle
 parity/         the parity harness: published references, corpus, goldens, runs, probes, the
-                envelope and same.json (parity/README.md lists them)
-oracle/         the parity oracle's checkout, build and staged copy (a C++ build that never ships)
+                envelope, same.json and neutral.json (parity/README.md lists them)
+oracle/         the parity oracle's checkout, build, records and staged copy (a C++ build that
+                never ships; parity/oracle/README.md)
 logs/           one log per command
 state/          what each step last did, and from which inputs
 run.lock.d/     the lock; its newest record: the command that writes, its process id and start time
