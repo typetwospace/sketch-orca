@@ -126,10 +126,16 @@ dependencies = [
 [[package]]
 name = "orca-crt"
 version = "0.1.0"
+dependencies = [
+ "orca-probe",
+]
 
 [[package]]
 name = "orca-fmt"
 version = "0.1.0"
+dependencies = [
+ "orca-probe",
+]
 
 [[package]]
 name = "orca-json"
@@ -142,11 +148,15 @@ version = "0.1.0"
 [[package]]
 name = "orca-stl"
 version = "0.1.0"
+dependencies = [
+ "orca-probe",
+]
 
 [[package]]
 name = "orca-tbb"
 version = "0.1.0"
 dependencies = [
+ "orca-probe",
  "rayon",
  "windows-sys",
 ]

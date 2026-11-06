@@ -13,6 +13,8 @@ The Microsoft STL code is under Apache-2.0 WITH LLVM-exception (`licenses/Apache
 
 `tests/fmt.rs` holds the crate to the UCRT linked into the test program: printf against `__stdio_common_vsprintf` and `__stdio_common_vsnprintf_s` on millions of seeded values and formats, the parsers against the UCRT's own functions (exact ties and long inputs among the texts), `ostream` against the UCRT's `sprintf_s` of MSVC's format, and round trips of every form; and to 25 streams that a program built with MSVC 14.42 printed. The crate's `to_chars`, `from_chars`, `sto*`, `ostream` and `to_string` were also compared with such a program on 300,000 seeded cases of each kind, with no difference.
 
+`tests/probes.rs` replays every record of the probe program's `fmt.sop1` (`parity/SOP1.md`): `snprintf`'s text and count, `to_chars` with its `errc`, `ostream` output under every flag, width, fill and locale, `to_string`, and the parsers' values, lengths and statuses, byte for byte; the committed subset by default, the full set with `SKETCH_ORCA_PROBES_DEEP` (`crates/orca-probe/README.md`).
+
 Part of the Rust translation of sketch-orca (the workspace in the repository root; see the
 repository's `README.md`, `BUILDING.md` and `CONTRIBUTING.md`). Licence: AGPL-3.0-only.
 

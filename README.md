@@ -120,7 +120,7 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | `orca-fmt` | `printf`, `to_chars`, `iostream` double output and number parsing, with the C++ engine's digits. |
 | `orca-stl` | The C++ standard library's sorts, selections, heaps, `min` and `max`, hash containers and `mt19937`, in Microsoft's order of operations. |
 | `orca-tbb` | oneTBB's concurrency and partitioners as fixed split trees, run on rayon. |
-| `orca-probe` | A scaffold until task O1.8a fills it: it will read the probe files (SOP1) the probe program records, for the gate that holds the crates above to the C++ engine. |
+| `orca-probe` | Reads the probe files (SOP1) the probe program records, for the probe gate: each crate above has a `tests/probes.rs` that replays every record of its file, the committed subset by default and the full set with `SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes`. |
 | `orca-json` | A scaffold until task O1.8b fills it: JSON with `nlohmann::json`'s semantics. |
 | `orca-config` | A scaffold until task O1.8b fills it: Orca's configuration, the definition of every setting, legacy keys, serialisation. |
 | `orca-cli` | The program, `sketch-orca-rs`. |
@@ -131,6 +131,7 @@ C++ engine is built in, so `link.exe` takes the same static `libucrt` (`BUILDING
 ```
 bun run rs:build                       # bun scripts/rust.ts build: cargo build --locked
 bun run rs:test                        # cargo test --locked
+SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes bun run rs:test   # the probe tests on the full set
 bun run rs:clippy -- -D warnings       # cargo clippy --locked --all-targets -- -D warnings
 bun run rs:fmt:check                   # cargo fmt --all --check
 bun scripts/rust.ts <build|test|clippy|fmt> [args]   # the same with other arguments

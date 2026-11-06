@@ -1,12 +1,30 @@
 # orca-probe
 
-A scaffold: the crate holds only its name until task O1.8a of the translation's plan fills it.
+Reads the SOP1 probe files the oracle records, for the probe gate.
 
-It is to read the SOP1 files (`parity/SOP1.md`) that the probe program (`parity/oracle/probe/`) writes, so the foundation crates can be held to the C++ engine's recorded behaviour, on the committed probe subset and on the full set.
+SOP1 (`parity/SOP1.md`) is the container of the oracle's dumps and of the probe program's records (`parity/oracle/probe/`, run by `bun scripts/orca.ts parity probe`): the magic `SOP1`, a `u32` version, then records of a four-letter kind and a payload, ending with `END `. `parse` and `read_file` refuse anything else, as the harness's reader does (`scripts/lib/parity/neutral.ts`); a `Reader` walks a payload's little-endian values, strings and vectors, and `finish` refuses a payload with bytes left over.
+
+`load_probe(name)` reads `<folder>/<name>.sop1` and checks its HEAD (`probe`, the file's name) and its PRUN (the set): the committed subset in the repository's `parity/probes/` by default, or the full set from the folder `SKETCH_ORCA_PROBES_DEEP` names (`<work>/parity/probes`). A committed file found where the full set is asked for, or the other way round, is an error, so a deep run never passes on the small set. `Mismatches` counts the comparisons of a test and lists the first that differ, so a failing probe test shows its cases together.
+
+The probe gate is the foundation crates' `tests/probes.rs`, which replay every record of their file with this crate:
+
+| Test | File | Records |
+| --- | --- | --- |
+| `crates/orca-crt/tests/probes.rs` | `crt.sop1` | MATH (with FMA3 on and off), MATS, CAST, RAND |
+| `crates/orca-fmt/tests/probes.rs` | `fmt.sop1` | PRTF, TOCH, OSTR, TOST, PARS |
+| `crates/orca-stl/tests/probes.rs` | `stl.sop1` | SORT (every comparator call), VALS, HASH, UMAP, USET, RNGS, SSEQ, SHUF |
+| `crates/orca-tbb/tests/probes.rs` | `tbb.sop1` | TBBA, TBBF, TBBR, TBBO, in serial arenas of each recorded P |
+
+```
+bun run rs:test -p orca-crt -p orca-fmt -p orca-stl -p orca-tbb
+SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes bun run rs:test -p orca-crt -p orca-fmt -p orca-stl -p orca-tbb
+```
+
+Every record of both sets passed on 2026-11-06. One record depends on the machine that made it: TBBA `outside` is oneTBB's `max_concurrency()` outside any arena, which is the recording machine's processor count, so the test compares it only on a machine with as many processors and otherwise checks that `max_concurrency()` there is `default_concurrency()` (`parity/HAZARDS.md`, "Threads").
 
 Part of the Rust translation of sketch-orca (the workspace in the repository root; see the
 repository's `README.md`, `BUILDING.md` and `CONTRIBUTING.md`). Licence: AGPL-3.0-only.
 
 ## Dependencies
 
-None.
+None. It is a development dependency of `orca-crt`, `orca-fmt`, `orca-stl` and `orca-tbb`.

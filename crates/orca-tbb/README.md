@@ -17,6 +17,8 @@ A panic in a task is oneTBB's exception: the first one cancels the task's group 
 
 `tests/tbb.rs` holds the crate to what a program built with MSVC 14.42 and linked with the engine's static oneTBB 2021.5.0 recorded with one thread in arenas of concurrency 1 to 64: the leaves of every partitioner over `long long`, `size_t`, `int` (past `INT_MAX` included) and two-dimensional ranges, the strings of every split and join of `parallel_reduce` and `parallel_deterministic_reduce`, the order of the integer forms and of `parallel_for_each`, and the order of `parallel_invoke` and of task groups with nested tasks and loops, 13,520 lines in all, compared through the FNV-1a digest of each kind of line and a few lines in full. It also checks that a parallel arena runs the same leaves once each and gives the same reductions, and how panics and cancellation travel.
 
+`tests/probes.rs` replays every record of the probe program's `tbb.sop1` (`parity/SOP1.md`), recorded with the engine's oneTBB as the oracle runs it, in `Arena::serial` arenas of each recorded P: `max_concurrency()`, the leaves of every loop in the order they ran, the reduction trees, and the order of the integer loops, `parallel_for_each`, `parallel_invoke` and task groups; the committed subset by default, the full set with `SKETCH_ORCA_PROBES_DEEP` (`crates/orca-probe/README.md`).
+
 Part of the Rust translation of sketch-orca (the workspace in the repository root; see the
 repository's `README.md`, `BUILDING.md` and `CONTRIBUTING.md`). Licence: AGPL-3.0-only.
 

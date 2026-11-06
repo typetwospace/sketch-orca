@@ -18,6 +18,8 @@ The reference is MSVC 14.42 (Visual Studio 2022 17.12), whose headers come from 
 
 `tests/stl.rs` holds every function to what a program built with MSVC 14.42 (`cl /O2 /MT /EHsc /std:c++17`) recorded for the same inputs: the comparator call log and the result of every sort, selection, heap and search, the NaN and zero cases of `min`, `max`, `clamp` and the element searches, `std::hash`, the iteration order and bucket counts of the unordered containers through every operation, and the random number sequences. Each kind of line is compared through the FNV-1a digest of all its lines, and a few lines in full.
 
+`tests/probes.rs` replays every record of the probe program's `stl.sop1` (`parity/SOP1.md`), built with the C++ engine's own compile and link lines: every comparator call of every sort, selection, heap, queue, search and `unique` in order, with the result; `min`, `max`, `clamp` and the element searches; `std::hash`; the unordered containers' scripts; the engines, distributions, `seed_seq` and `shuffle`; the committed subset by default, the full set with `SKETCH_ORCA_PROBES_DEEP` (`crates/orca-probe/README.md`).
+
 Part of the Rust translation of sketch-orca (the workspace in the repository root; see the
 repository's `README.md`, `BUILDING.md` and `CONTRIBUTING.md`). Licence: AGPL-3.0-only.
 

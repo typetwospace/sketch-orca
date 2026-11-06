@@ -16,9 +16,11 @@ The classes:
 | **P** pin | The C++ result varies from run to run (a clock, an unseeded generator, the user's name). The oracle pins it with a knob (`parity/oracle/README.md`); the translation takes the same pinned value, and the parity masks (`parity/masks.json`) cover it for the shipped engine. |
 | **O** out of reach | Code the front end never reaches (the GUI's, SLA's, debug output, timing logs): listed so that a change in what the front end reaches is noticed. |
 
-Status is what holds the translation to the C++ today: **probed** (a probe record covers it;
-the crates' probe tests replay it, task O1.8a), **pinned** (an oracle knob), **open** (nothing yet;
-the task that reaches the code must), **n/a** (class O).
+Status is what holds the translation to the C++ today: **probed** (a probe record covers it and
+the crates' probe tests, `crates/orca-{crt,fmt,stl,tbb}/tests/probes.rs`, replay it: every record
+of the committed subset and of the full set gave the same bits, outputs, orders and comparator
+calls on 2026-11-06), **pinned** (an oracle knob), **open** (nothing yet; the task that reaches the
+code must), **n/a** (class O).
 
 ## The C runtime's maths (class R)
 
@@ -164,7 +166,7 @@ work runs in one order. `orca-tbb` reproduces the partitioners' split decisions:
 
 | Site | What | Status |
 | --- | --- | --- |
-| `src/libslic3r/Support/TreeSupport3D.cpp:2385` | `num_threads = this_task_arena::max_concurrency()` sizes per-thread buffers whose merge order reaches the output | probed (TBBA) |
+| `src/libslic3r/Support/TreeSupport3D.cpp:2385` | `num_threads = this_task_arena::max_concurrency()` sizes per-thread buffers whose merge order reaches the output | probed (TBBA in each arena; outside any arena oneTBB answers the machine's processor count, which the record holds as the recording machine's, 32) |
 | `src/libslic3r/Thread.cpp:222` | `max_concurrency()` for the thread names | n/a (logs) |
 | `src/libslic3r/Support/TreeModelVolumes.cpp:112` | a grain size from `max_concurrency()` | probed (TBBA, TBBF) |
 | `src/libslic3r/Execution/ExecutionTBB.hpp:60-72` | `execution::reduce` is `tbb::parallel_reduce` (a reduction tree with P), `max_concurrency()` | probed (TBBR) |
@@ -212,6 +214,21 @@ folded; other file systems: no order).
 | `src/libslic3r/PresetBundle.cpp:268`, `:480`, `:962`, `:998`, `:2205`, `:2322`, `:2357`, `src/libslic3r/Preset.cpp:1608`, `:4120` | preset folders | n/a (O: the front end loads presets by file, not by folder) |
 | `src/libslic3r/Format/bbs_3mf.cpp:8541` | a 3MF's temporary folder | open (check) |
 | `src/libslic3r/utils.cpp:950`, `:1633`, `src/libslic3r/CutSurface.cpp:3629`, `src/libslic3r/Emboss.cpp:1011` | copies, removals, fonts | n/a (O) |
+
+## What the probe gate and the first record found (2026-11-06)
+
+- `__vdecl_floor2` gives each lane's UCRT `floor` on every recorded case of both sets, so
+  `orca-crt`'s `floor2` calls `floor` per lane; no `asm!` shim into SVML is needed.
+- No symbol of Rust's `compiler-builtins` shadows the UCRT's: every MATH record, FMA3 on and off,
+  matches through `orca-crt`'s `#![no_builtins]` wrappers.
+- TBBA `outside` is the recording machine's processor count (see "Threads"); the probe test
+  compares it only on a machine with as many processors.
+- `parity record` found two outputs of class R (`scripts/lib/parity/classes.ts`): `out.gcode` and
+  `result.json` of `family-infill-lightning` and `family-fuzzy-skin` differ between the shipped
+  engine's own runs. They are the `srand(time(NULL))` of `Fill/Lightning/Generator.cpp:34` and
+  fuzzy skin's `random_device` (`Feature/FuzzySkin/FuzzySkin.cpp:26-29`): pinned in the oracle,
+  but `parity/masks.json` does not cover them for the shipped engine, so the translation of those
+  families is compared with the oracle's pinned output only.
 
 ## Keeping this list
 

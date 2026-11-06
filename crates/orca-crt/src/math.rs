@@ -35,6 +35,12 @@
 //!   [`sqrtf`] are Rust's own, which compile to the same instructions. For a negative argument
 //!   MSVC calls the UCRT's `sqrt` instead of `sqrtsd` (for `errno`); its NaN is the instruction's,
 //!   which `tests/crt.rs` checks.
+//! - A loop of `std::floor` that MSVC vectorises calls SVML's `__vdecl_floor2` on two lanes:
+//!   [`floor2`]. Microsoft's `_copysign`, `_finite`, `_fpclass`, `_hypot` and `_isnan`, which the
+//!   oracle's linker map lists too, are in [`ms`].
+//!
+//! `tests/probes.rs` replays the probe program's `crt.sop1` (`parity/SOP1.md`): every function
+//! the oracle's linker map lists, with FMA3 on and off.
 //!
 //! The UCRT picks code paths that use FMA3 instructions when the processor has them, unless
 //! `_set_FMA3_enable(0)` turned them off: [`set_fma3_enable`] and [`get_fma3_enable`] pass the call
@@ -136,11 +142,91 @@ mod ucrt {
         pub safe fn fminf(x: f32, y: f32) -> f32;
         pub safe fn fmaxf(x: f32, y: f32) -> f32;
 
+        pub safe fn nexttoward(x: f64, y: f64) -> f64;
+        pub unsafe fn nan(tag: *const core::ffi::c_char) -> f64;
+        #[link_name = "_copysign"]
+        pub safe fn ms_copysign(x: f64, y: f64) -> f64;
+        #[link_name = "_finite"]
+        pub safe fn ms_finite(x: f64) -> i32;
+        #[link_name = "_fpclass"]
+        pub safe fn ms_fpclass(x: f64) -> i32;
+        #[link_name = "_hypot"]
+        pub safe fn ms_hypot(x: f64, y: f64) -> f64;
+        #[link_name = "_isnan"]
+        pub safe fn ms_isnan(x: f64) -> i32;
+
         #[link_name = "_set_FMA3_enable"]
         pub safe fn set_fma3_enable(flag: i32) -> i32;
         #[link_name = "_get_FMA3_enable"]
         pub safe fn get_fma3_enable() -> i32;
     }
+}
+
+/// Microsoft's own maths functions of the static UCRT (`float.h`, `corecrt_math.h`), which the C++
+/// engine's linker map lists: `_copysign`, `_finite`, `_fpclass`, `_hypot` and `_isnan`, each one
+/// `#[inline(never)]` wrapper as the standard functions are.
+pub mod ms {
+    use super::ucrt;
+
+    /// `_copysign` of the static UCRT.
+    #[inline(never)]
+    #[must_use]
+    pub fn copysign(x: f64, y: f64) -> f64 {
+        ucrt::ms_copysign(x, y)
+    }
+
+    /// `_finite` of the static UCRT: non-zero for a finite value.
+    #[inline(never)]
+    #[must_use]
+    pub fn finite(x: f64) -> i32 {
+        ucrt::ms_finite(x)
+    }
+
+    /// `_fpclass` of the static UCRT: the `_FPCLASS_*` bit of the value's class.
+    #[inline(never)]
+    #[must_use]
+    pub fn fpclass(x: f64) -> i32 {
+        ucrt::ms_fpclass(x)
+    }
+
+    /// `_hypot` of the static UCRT.
+    #[inline(never)]
+    #[must_use]
+    pub fn hypot(x: f64, y: f64) -> f64 {
+        ucrt::ms_hypot(x, y)
+    }
+
+    /// `_isnan` of the static UCRT: non-zero for a NaN.
+    #[inline(never)]
+    #[must_use]
+    pub fn isnan(x: f64) -> i32 {
+        ucrt::ms_isnan(x)
+    }
+}
+
+/// `nexttoward` of the static UCRT. Its second argument is a `long double`, which is a `double` in
+/// MSVC, so the function takes two doubles.
+#[inline(never)]
+#[must_use]
+pub fn nexttoward(x: f64, y: f64) -> f64 {
+    ucrt::nexttoward(x, y)
+}
+
+/// `nan(tag)` of the static UCRT: a quiet NaN, its payload read from `tag`.
+#[inline(never)]
+#[must_use]
+pub fn nan(tag: &core::ffi::CStr) -> f64 {
+    // SAFETY: `tag` is a valid NUL-terminated string for the length of the call.
+    unsafe { ucrt::nan(tag.as_ptr()) }
+}
+
+/// What MSVC's vectorised `floor` over two doubles (`__vdecl_floor2`, which it calls from loops it
+/// vectorises) gives: each lane's `floor`. `floor` is exact, so the lanes are the UCRT's `floor`
+/// of each; `tests/probes.rs` holds the two to the oracle's recorded `__vdecl_floor2`.
+#[inline(never)]
+#[must_use]
+pub fn floor2(a: f64, b: f64) -> (f64, f64) {
+    (ucrt::floor(a), ucrt::floor(b))
 }
 
 /// One wrapper per UCRT function that takes and returns floating-point values by value.
