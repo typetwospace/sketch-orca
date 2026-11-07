@@ -3,7 +3,7 @@
 
 [package]
 name = "orca-crt"
-description = "The C runtime the C++ engine links, called as it is: maths, float-to-integer conversions, rand"
+description = "The C runtime the C++ engine links, called as it is: maths, float-to-integer conversions, rand, qsort"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

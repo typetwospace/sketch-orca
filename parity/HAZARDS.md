@@ -223,6 +223,206 @@ folded; other file systems: no order).
 | `src/libslic3r/Format/bbs_3mf.cpp:8541` | a 3MF's temporary folder | open (check) |
 | `src/libslic3r/utils.cpp:950`, `:1633`, `src/libslic3r/CutSurface.cpp:3629`, `src/libslic3r/Emboss.cpp:1011` | copies, removals, fonts | n/a (O) |
 
+## O2 sources (2026-11-07)
+
+What phase O2's code hangs on, found by reading its sources (o2-geom's foundation audit): Clipper
+6.4.2 (`deps_src/clipper`); libslic3r's `ClipperUtils`, `Point`, `Polygon`, `Polyline`,
+`MultiPoint`, `Line`, `ExPolygon`, `BoundingBox`, `Geometry` and `Geometry/ConvexHull`; Qhull's
+`libqhull_r` and `libqhullcpp`; admesh and `TriangleMesh`; libnest2d, `Arrange.cpp` and
+`ModelArrange.cpp`; Boost 1.84.0's R*-tree, `rational` and `multiprecision`; NLopt 2.5.0
+(`<work>/deps/dep_NLopt-prefix/src/dep_NLopt/src`, "NLopt src/" below); `Model`, `BuildVolume`,
+the STL, OBJ and 3MF readers, `miniz_extension.cpp` and miniz; expat 2.5.0
+(`src/deps/EXPAT/expat`); `PlaceholderParser.cpp`; `cli/run.cpp:250-1068` and `cli/presets.cpp`.
+Every line was searched for sorts, heaps, selections, searches, `qsort`, float `min` and `max`,
+ordered and unordered containers, TBB, clocks, generators, maths calls and float-to-integer
+conversions, and each hit was read where it stands. "Covered by" names what the translation calls
+there. What the foundations lacked was `qsort`: `orca-crt` now calls the static UCRT's own
+(`crates/orca-crt/src/search.rs`), **probed** (`crt.sop1` QSRT). Nothing else was missing: the
+sorts, heaps, selections, searches and generators below are `orca-stl`'s, the loops `orca-tbb`'s,
+the maths and conversions `orca-crt`'s.
+
+### Orders
+
+| Site | What decides the order | Class | Covered by |
+| --- | --- | --- | --- |
+| `deps_src/clipper/clipper.cpp:975` | `std::sort` of the local minima by `Y`, taken from the back (`PopLocalMinima`): equal `Y`s come out as the sort left them | R | `orca_stl::sort_by` |
+| `clipper.cpp:1062`, `clipper.hpp:467` | the scanbeam, a `std::priority_queue<cInt>`; popping drops repeats, so only the values count | R | `orca_stl::PriorityQueue` |
+| `clipper.cpp:2458-2509` | `BuildIntersectList`: a bubble sort of the active edges by `Curr.x` that records each swap as an intersection | R | translated as written |
+| `clipper.cpp:2517`, `:2511-2533` | `std::sort` of the intersections by `Pt.y`, descending (equal `y`s as the sort leaves them), then `FixupIntersectionOrder`'s swaps | R | `orca_stl::sort_by` |
+| `clipper.cpp:2652` | `std::sort(m_Maxima)`, `cInt`s | R | `orca_stl::sort` |
+| `src/libslic3r/Point.cpp:133`, `:142` | `std::sort` of points, x then y | R | `orca_stl::sort` |
+| `Polygon.cpp:505`, `Polyline.cpp:540`, `libslic3r.h:220-221` | `std::unique`, after a sort in `sort_remove_duplicates` | R | `orca_stl::unique_vec`, `orca_stl::sort` |
+| `libslic3r.h:261` | `binary_find`: `std::lower_bound` | R | `orca_stl::lower_bound_by` |
+| `MultiPoint.cpp:290-319` | Visvalingam's heap of areas, which tie: `make_heap`, `pop_heap` | R | `orca_stl::make_heap_by`, `pop_heap_by` |
+| `Geometry.cpp:136` | `std::sort` of `arrange`'s grid cells by squared distance, then position | R | `orca_stl::sort` |
+| `Geometry/ConvexHull.cpp:13-14`, `:44` | `convex_hull`: `std::sort` by x then y and `std::unique`; for `Vec3d` on `double` keys | R | `orca_stl::sort_by`, `unique_vec_by` |
+| `Geometry/ConvexHull.cpp:342-343`, `:384-385` | `min_element` and `max_element` with a lexicographic comparator, `lower_bound` in the hull's chains | R | `orca_stl::min_element_by`, `max_element_by`, `lower_bound_by` |
+| `ClipperUtils.cpp:1143` | `std::max_element` of `double` deltas | R | `orca_stl::max_element_f64` |
+| `ClipperUtils.cpp:1186`, `Point.cpp:344` | `std::clamp` of a `double` | R | `orca_stl::clamp` |
+| `MultiPoint.cpp:305`, `:388`, `:410`, `:418`, `:555-558`, `Polygon.cpp:550`, `BoundingBox.cpp:243`, `:279-280` | `std::min`, `std::max` of `double`s | R | `orca_stl::min`, `orca_stl::max` |
+| `clipper.cpp:521-522`, `:1015-1029`, `:2873-2879`, `:3762`, `Line.cpp:84-89` | `std::min`, `std::max` of integers | R | the C++ expression (`a < b ? b : a`) |
+| `deps_src/qhull/src/libqhull_r/mem_r.c:362` | `qsort` of the memory sizes, `qh_intcompare` (a difference) | R | `orca_crt::qsort` (QSRT comparator 0) |
+| `merge_r.c:809` | `qsort` of vertices by `visitid` (`qh_comparevisit`, an unsigned difference) | R | `orca_crt::qsort` |
+| `merge_r.c:1184`, `:1186`, `:1249`, `:1251` | `qsort` of the merge set: `qh_compareangle` never returns 0, so equal angles land where `qsort`'s calls put them; `qh_comparemerge` a difference | R | `orca_crt::qsort` (QSRT comparators 1 and 0) |
+| `io_r.c:494`, `:904`, `:915`, `:3347`, `:3447` | `qsort` for output and for `PFn`, `PAn` (`qh_compare_facetvisit`, `qh_compare_facetarea`, `qh_compare_facetmerge`) | O (TriangleMesh runs `Qt`, prints nothing) | `orca_crt::qsort` if reached |
+| `deps_src/admesh/connect.cpp:170` | `std::upper_bound` in the primes table | R | `orca_stl::upper_bound` |
+| `TriangleMesh.cpp:558` | `std::sort` of edge pairs | R | `orca_stl::sort` |
+| `TriangleMesh.cpp:680` | `std::sort` of vertex indices by x, y, z, then index (total) | R | `orca_stl::sort_by` |
+| `TriangleMesh.cpp:807` | `std::map<size_t, size_t>` | R | `BTreeMap` (integer keys, the same order) |
+| `deps_src/libnest2d/include/libnest2d/geometry_traits.hpp:1070` | `std::sort` of points, x then y | R | `orca_stl::sort_by` |
+| `geometry_traits_nfp.hpp:285` | `std::sort` of edges by angle (`double` keys, ties) | R | `orca_stl::sort_by` |
+| `geometry_traits_nfp.hpp:586`, `:588`, `:713` | `std::stable_sort` and `std::sort` of edge references by slope | R | `orca_stl::stable_sort_by`, `orca_stl::sort_by` |
+| `selections/djd_heuristic.hpp:135`, `filler.hpp:64` | `std::sort` of items by area, descending: equal areas tie | R | `orca_stl::sort_by` |
+| `selections/firstfit.hpp:85` | `std::sort` of items by priority, bed temperature, height, area: equal items tie | R | `orca_stl::sort_by` |
+| `placers/nfpplacer.hpp:254`, `utils/rotcalipers.hpp:215` | `std::lower_bound` | R | `orca_stl::lower_bound_by` |
+| `placers/nfpplacer.hpp:886`, `:933` | `std::min_element` of the starting points' scores: the first of equals | R | `orca_stl::min_element_by` |
+| `src/libslic3r/Arrange.cpp:78`, `:530-537`, `:741-753` | Boost's `rtree<..., rstar<16, 4>>`: its inserts split and reinsert by `std::sort` (`rstar/redistribute_elements.hpp:144`), `std::nth_element` (`:385`, `rstar/choose_next_node.hpp:143`) and `std::partial_sort` (`rstar/insert.hpp:140`), and the `intersects` query returns values in tree order, which the objective function then sums over | R | `orca_stl::sort_by`, `nth_element_by`, `partial_sort_by`; the R*-tree translated as written (orca-arrange) |
+| `Arrange.cpp:663`, `:675`, `ModelArrange.cpp:154`, `nfpplacer.hpp:1118` | `std::set<int>` | R | `BTreeSet` |
+| NLopt src/`algs/neldermead/sbplx.c:119` | `nlopt_qsort_r` of the subspace indices by `abs(dx)` (ties give 0): NLopt's own quicksort (`util/qsort_r.c:68-104`; `HAVE_QSORT_R_damn_it_use_my_own` is defined nowhere, so it never calls the CRT's `qsort_s` or `qsort_r`) | R | translated with NLopt (orca-arrange), not `orca_crt::qsort` |
+| NLopt src/`algs/neldermead/nldrmd.c:38-42`, `:128`, `:262` | the simplex's red-black tree (`util/redblack.c`) keyed by function value, ties broken by the key's address, `k1 - k2`: the vertex's place in the simplex array | R | translated with NLopt: ties by index |
+| `src/libslic3r/Model.cpp:1370`, `:1375` | `std::stable_sort` of volumes by type | R | `orca_stl::stable_sort_by` |
+| `Model.hpp:1229`, `Model.cpp:3418`, `Format/bbs_3mf.cpp:559-560` | `std::sort` by id, `std::unique` | R | `orca_stl::sort_by`, `unique_vec` |
+| `Model.cpp:3549` | `std::lower_bound` in a `TriangleSelector`'s triangles | R | `orca_stl::lower_bound_by` |
+| `Format/bbs_3mf.cpp:918-949`, `:1139`, `:1149`, `:2044-2045`, `:2645`, `:2677`, `:6812`, `Model.hpp:121-123`, `:1505`, `:1534`, `:1563`, `:1731`, `PlaceholderParser.cpp:836`, `:1856` | `std::map` keyed by `int`, ids or `std::string` | R | `BTreeMap` (`String` orders by bytes, as `std::string` does) |
+| `Format/bbs_3mf.cpp:5819`, `:5832`, `:5847-5848` | the 3MF writer's `std::map`s keyed by pointers; `objects_data` is iterated at `:7794` into `model_settings.config`, in address order | R, order by address | open (o2-model): an order that is not an address, said at the site |
+| `cli/run.cpp:599`, `:601` | `std::max_element` of `double`s | R | `orca_stl::max_element_f64` |
+| `cli/run.cpp:790` | `std::stable_sort` of corners by squared distance | R | `orca_stl::stable_sort_by` |
+| `cli/presets.cpp:682` | `std::sort` of vendor names | R | `orca_stl::sort` |
+
+No container in these sources is keyed by a float, and none of them iterates an unordered
+container: `Point.hpp:631`'s `unordered_multimap` (`ClosestPointInRadiusLookup`) serves only code
+that phase O2 does not reach (infill, supports, the slicer).
+
+### Threads
+
+| Site | What | Class | Covered by |
+| --- | --- | --- | --- |
+| `deps_src/libnest2d/include/libnest2d/parallel.hpp:33` (`LIBNEST2D_THREADING_tbb`, `deps_src/libnest2d/CMakeLists.txt:28`), called at `placers/nfpplacer.hpp:601`, `:622`, `:855`, `:905` | `tbb::parallel_for<size_t>(0, N, ...)`; each body writes its own slot (`nfps[n]`, `results[n]`), read after the loop | R, order-free | `orca_tbb::parallel_for_index` |
+| `src/libslic3r/Format/bbs_3mf.cpp:1788-1800` | the 3MF reader's object importers, results combined with `&=` under a mutex | R, order-free | `orca_tbb::parallel_for` |
+| `Format/bbs_3mf.cpp:7021`, `:8419` | the 3MF writer's objects and plates | R, order-free (each writes its own entry) | `orca_tbb::parallel_for` |
+| `clipper.hpp:119`, `Point.hpp:61` | `tbb::scalable_allocator` for paths and points | O (memory only) | `Vec` |
+
+### Clocks and generators
+
+| Site | What | Class | Status |
+| --- | --- | --- | --- |
+| `PlaceholderParser.cpp:78-100`, `Model.cpp:965-966`, miniz's writer | the time in placeholders, the backup folder's name, 3MF entries | P | pinned (`SKETCH_ORCA_ORACLE_TIME`), as listed in "Random engines, thread-local generators, the time and the user" |
+| `PlaceholderParser.cpp:647-657`, `PlaceholderParser.hpp:23` | `random(a, b)` on a `std::mt19937`, default-constructed (seed 5489) for the presets' conditions; `GCode.cpp:2707` seeds it from the clock only for G-code | R | `orca_stl::Mt19937`, `UniformIntDistribution`, `UniformRealDistribution` (probed, RNGS) |
+| `deps_src/qhull/src/libqhull_r/global_r.c:1864-1866` | `time()` seeds `qh_rand` to draw `qh->run_id`, which only `FO` prints | O | the translation sets `run_id` without the clock |
+| `global_r.c:1589-1615` | reseeds `qh_rand` with `ROTATErandom` (1 unless `QRn`) and draws 1000 numbers to check the generator | R | Qhull's `qh_rand` (`random_r.c:148`, Park and Miller, `qh_RANDOMtype` 5) translated with Qhull |
+| `geom_r.c:73`, `:651`, `poly2_r.c:1905`, `libqhull_r.c:712`, `geom2_r.c:912-922` | `qh_rand` draws for `Rn`, `Qr` and `QJ` | O (`TriangleMesh.cpp:1356`, `:1363` run `Qt`) | n/a |
+| `user_r.h:219` (`qh_CPUclock`, `clock()`), `libqhull_r.c:446-447`, `:468-469`, `merge_r.c:3467-3468` | timing statistics and trace output | O | n/a |
+| `rboxlib_r.c` | rbox, which the engine never calls | O | n/a |
+| NLopt src/`api/optimize.c:414`, `api/general.c:121-136`, `util/timer.c:78-91` | `nlopt_srand_time_default`: a thread's first optimisation seeds NLopt's `mt19937ar` from `time(NULL)` (no `gettimeofday`: `nlopt_config.h`) and the thread id; subplex, the one algorithm arrange runs (`nfpplacer.hpp:390`, `:650`), draws nothing from it | O | n/a |
+| NLopt src/`api/optimize.c:433`, `util/stop.c:90` | `stop.start = nlopt_seconds()`; compared only when `maxtime > 0`, which libnest2d never sets (`optimizers/nlopt/nlopt_boilerplate.hpp:151-159`) | O | n/a |
+| `libnest2d/utils/rotfinder.hpp:15`, `optimizers/nlopt/genetic.hpp:18` | ESCH, a genetic search that draws random numbers | O (`Arrange.cpp:945-1005` rotates by rotating calipers instead) | n/a |
+| `src/deps/EXPAT/expat/xmlparse.c:832-847`, `:873` | the hash salt from `rand_s`, else `gettimeofday` | O: the salt moves names between buckets of lookup tables; what the parser reports does not change | the translation uses a fixed salt |
+| `deps_src/libnest2d/tools/benchmark.h:27` | a benchmark tool, not compiled | O | n/a |
+
+### Maths calls
+
+Each call is the static UCRT's function of the same name through `orca-crt` (class R; `sqrt`,
+`sqrtf` and `fabs` are the IEEE operations there, as MSVC compiles them): **probed** for every
+function the oracle's linker map lists (`crt.sop1` MATH).
+
+| File | Function and lines |
+| --- | --- |
+| `deps_src/clipper/clipper.cpp` | `acos` 3552; `atan2` 3739, 3760; `cos` 3556; `fabs` 392, 402, 409, 509, 512, 516, 519, 3548-3549, 3552-3554, 3697, 3762; `floor` 92; `sin` 3555; `sqrt` 3352; `tan` 3739 |
+| `src/libslic3r/ClipperUtils.cpp` | `atan2` 1204; `tan` 1204 |
+| `src/libslic3r/Point.cpp` | `atan2` 84-85; `cos` 54; `sin` 53 |
+| `src/libslic3r/Point.hpp` | `atan2` 132; `cos` 236, 340; `round` 197, 199, 240-241, 280, 344-345; `sin` 236, 340 |
+| `src/libslic3r/Polygon.cpp` | `acos` 745; `ceil` 746; `cos` 287, 757; `floor` 345; `nextafter` 287; `sin` 757 |
+| `src/libslic3r/Polygon.hpp` | `cos` 164; `sin` 165 |
+| `src/libslic3r/Polyline.cpp` | `sqrt` 67, 71, 698, 702 |
+| `src/libslic3r/MultiPoint.cpp` | `cos` 40, 544, 592; `round` 32-33, 43-44, 548-549, 553-554, 583-584, 595-596; `sin` 39, 543, 591; `sqrt` 410, 418 |
+| `src/libslic3r/MultiPoint.hpp` | `cos` 31, 132; `sin` 31, 132 |
+| `src/libslic3r/Line.cpp` | `fabs` 29, 63 |
+| `src/libslic3r/Line.hpp` | `atan2` 176; `fabs` 130, 133; `sqrt` 82, 120, 188, 193 |
+| `src/libslic3r/ExPolygon.cpp` | `fmaxf` 281 |
+| `src/libslic3r/Geometry.cpp` | `fabs` 31, 33, 38, 40, 209-210, 217; `floor` 104-105, 181-182; `pow` 632; `sqrt` 291 |
+| `src/libslic3r/Geometry.hpp` | `fmod` 536; `round` 322 |
+| `src/libslic3r/libslic3r.h` | `fabs` 296, 309; `floor` 419 |
+| `deps_src/qhull/src/libqhull_r/geom2_r.c` | `sqrt` 203, 231-232, 244, 380, 772, 1294, 1308, 1331 |
+| `deps_src/qhull/src/libqhull_r/geom_r.c` | `sqrt` 814, 816, 818, 825, 853 |
+| `deps_src/qhull/src/libqhull_r/global_r.c` | `fabs` 1923 |
+| `deps_src/qhull/src/libqhull_r/io_r.c` | `fabs` 2784-2786; `sqrt` 856, 1428 |
+| `deps_src/qhull/src/libqhull_r/libqhull_r.c` | `floor` 714 |
+| `deps_src/qhull/src/libqhull_r/poly2_r.c` | `floor` 1907; `sqrt` 2212, 2283 |
+| `deps_src/qhull/src/libqhull_r/rboxlib_r.c` | `asin` 294; `cos` 295, 521, 549, 552, 578, 656; `floor` 273; `ldexp` 273; `pow` 473; `sin` 522, 551, 579, 657; `sqrt` 232, 528, 535, 576, 615, 675, 691 |
+| `deps_src/qhull/src/libqhull_r/stat_r.c` | `sqrt` 671 |
+| `deps_src/qhull/src/libqhullcpp/QhullHyperplane.cpp` | `fabs` 71, 77; `sqrt` 150 |
+| `deps_src/qhull/src/libqhullcpp/QhullPoint.cpp` | `sqrt` 109, 161 |
+| `deps_src/qhull/src/libqhullcpp/functionObjects.h` | `fabs` 35 |
+| `deps_src/admesh/util.cpp` | `cos` 129, 141, 153, 165, 174, 183; `sin` 130, 142, 154, 166, 175, 184 |
+| `src/libslic3r/TriangleMesh.cpp` | `acos` 1238-1239; `ceil` 923, 965, 1018-1019, 1114-1115; `cos` 1031, 1035, 1076, 1125, 1133, 1180, 1188; `sin` 1032, 1036, 1076, 1126, 1133, 1181, 1183, 1188, 1275; `sqrtf` 1277 |
+| `deps_src/libnest2d/include/libnest2d/common.hpp` | `cos` 132, 138, 140; `sin` 130, 133, 141 |
+| `deps_src/libnest2d/include/libnest2d/geometry_traits.hpp` | `atan2` 461; `sqrt` 344 |
+| `deps_src/libnest2d/include/libnest2d/nester.hpp` | `ceil` 863 |
+| `deps_src/libnest2d/include/libnest2d/placers/nfpplacer.hpp` | `cos` 264; `floor` 654; `fmod` 245; `pow` 207, 712; `round` 207, 264-265, 396-397, 418-419, 982, 984; `sin` 265; `sqrt` 166, 461 |
+| `deps_src/libnest2d/include/libnest2d/selections/djd_heuristic.hpp` | `ceil` 576 |
+| `deps_src/libnest2d/include/libnest2d/utils/rotcalipers.hpp` | `atan2` 40; `sqrt` 28, 32 |
+| `deps_src/libnest2d/include/libnest2d/utils/rotfinder.hpp` | `sqrt` 22 |
+| `deps_src/libnest2d/tools/svgtools.hpp` | `round` 61 |
+| `src/libslic3r/Arrange.cpp` | `atan2` 246; `sqrt` 553, 703, 1027 |
+| `NLopt src/algs/neldermead/sbplx.c` | `copysign` 231; `fabs` 41, 122, 128, 132, 146, 200-201, 220-221 |
+| `NLopt src/algs/neldermead/nldrmd.c` | `fabs` 49, 141, 144, 147, 150, 183, 209, 216 |
+| `NLopt src/api/optimize.c` | `fabs` 119-120; `pow` 466 |
+| `NLopt src/util/stop.c` | `fabs` 36, 168, 179, 199 |
+| `NLopt src/util/mt19937ar.c` | `log` 230; `sqrt` 230 |
+| `src/libslic3r/Model.cpp` | `acos` 3143, 3146; `fabs` 2465; `sqrt` 3292 |
+| `src/libslic3r/Format/bbs_3mf.cpp` | `fabs` 9265, 9268 |
+| `src/libslic3r/PlaceholderParser.cpp` | `ceil` 404, 410, 2077; `floor` 389, 395, 2075; `fmod` 524; `round` 275, 371, 380, 2073 |
+| `cli/run.cpp` | `llround` 758; `sqrt` 609, 615 |
+| `cli/presets.cpp` | `fabs` 355 |
+
+`rboxlib_r.c` is rbox (class O). `ExPolygon.cpp:281` is the medial axis's, which phase O2 leaves
+out.
+
+### Float-to-integer conversions
+
+Each is MSVC 14.42's conversion through `orca-crt`'s `convert` (class R, **probed**, `crt.sop1`
+CAST): `f64_to_i64` for `coord_t`, `cInt` and `int64_t`, `f64_to_i32` for `int`, `f64_to_u64` for
+`size_t`, and the same of each coefficient for an Eigen `.cast<coord_t>()`. Clipper's `Round<T>`
+(`clipper.cpp:95-106`) truncates `FRound(v)` (`:88-93`: `floor(v + 0.5)`, except that
+0.49999999999999994 gives 0); `round`, `floor` and `ceil` before a conversion are the UCRT's
+(above). The lines found:
+
+| File | Lines |
+| --- | --- |
+| `deps_src/clipper/clipper.cpp` | 353, 376, 384, 391, 393-394, 3579-3580, 3592-3593, 3646, 3648, 3673, 3675, 3703-3704, 3714-3715, 3717-3718, 3742-3743, 3745-3746, 3753-3754, 3762, 3768-3769, 3775-3776 |
+| `src/libslic3r/Point.cpp` | 125 |
+| `src/libslic3r/Point.hpp` | 193-197, 199, 204, 206, 240-241, 278-280, 289, 292, 295, 344-345, 423, 429, 483 |
+| `src/libslic3r/Polygon.cpp` | 345, 473, 746 |
+| `src/libslic3r/Polyline.cpp` | 67, 107, 139, 182, 698 |
+| `src/libslic3r/MultiPoint.cpp` | 32-33, 43-44, 548-549, 553-554, 583-584, 595-596 |
+| `src/libslic3r/MultiPoint.hpp` | 29, 129 |
+| `src/libslic3r/Line.cpp` | 39, 115-116, 123 |
+| `src/libslic3r/ExPolygon.cpp` | 303, 313 |
+| `src/libslic3r/ExPolygon.hpp` | 41 |
+| `src/libslic3r/Geometry.cpp` | 104-105, 865-868 |
+| `src/libslic3r/Geometry.hpp` | 134-136, 322 |
+| `deps_src/qhull/src/libqhull_r/libqhull_r.c` | 714 |
+| `deps_src/qhull/src/libqhull_r/poly2_r.c` | 1907 |
+| `deps_src/qhull/src/libqhull_r/rboxlib_r.c` | 273 |
+| `src/libslic3r/TriangleMesh.cpp` | 923, 965, 1018-1019, 1114-1115 |
+| `deps_src/libnest2d/include/libnest2d/placers/nfpplacer.hpp` | 654 |
+| `deps_src/libnest2d/include/libnest2d/selections/djd_heuristic.hpp` | 576 |
+| `src/libslic3r/Model.cpp` | 2638 |
+| `src/libslic3r/PlaceholderParser.cpp` | 275, 380, 395, 410 |
+| `cli/run.cpp` | 1019 |
+
+A conversion the C++ writes without a cast (a `double` assigned to a `coord_t`) is not in this
+table; the task that translates the function finds it there.
+
+### Exact integer arithmetic
+
+| Site | What | Covered by |
+| --- | --- | --- |
+| `deps_src/clipper/clipper.cpp:319` and `src/libslic3r/Int128.hpp:62-244` | Clipper's `sign_determinant_2x2_filtered` and `Int128::multiply`: MSVC takes `_mul128` | `i128` (orca-geom) |
+| `src/libslic3r/Point.cpp:252-257` | 128-bit products | `i128` (orca-geom) |
+| `Geometry/ConvexHull.cpp`'s `rotcalip::cmp_angles` | `boost::multiprecision::int128_t` and `int256_t` products | exact integers (orca-geom, with orca-exact's `int128_t` where Boost's signed magnitude decides a result) |
+| `Arrange.cpp:29`, `MinAreaBoundingBox.cpp` | `boost::multiprecision::int128_t` and `boost::rational<int128_t>` | orca-exact (o2-arrange) |
+
 ## Phase O2's crates (2026-11-07)
 
 Phase O2 reads models, places them and answers info jobs. Each of its ten crates has a section

@@ -308,7 +308,7 @@ describe('the committed probe files', () => {
 
   test('each SOP1 file reads whole and starts with the probe\'s HEAD and PRUN for the committed set; every record kind is in SOP1.md', () => {
     const foundations: Record<string, string[]> = {
-      'crt.sop1': ['MATH', 'MATS', 'CAST', 'RAND'],
+      'crt.sop1': ['MATH', 'MATS', 'CAST', 'RAND', 'QSRT'],
       'fmt.sop1': ['PRTF', 'TOCH', 'OSTR', 'TOST', 'PARS'],
       'stl.sop1': ['SORT', 'VALS', 'HASH', 'UMAP', 'USET', 'RNGS', 'SSEQ', 'SHUF'],
       'tbb.sop1': ['TBBA', 'TBBF', 'TBBR', 'TBBO'],

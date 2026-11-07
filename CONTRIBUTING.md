@@ -62,7 +62,7 @@ The maintainers follow these rules for their own changes:
     translated or ported from other code and has no block.
   - Every sort, selection, heap, search (`lower_bound`, `upper_bound`), `unique` and float `min`
     or `max` goes through `orca-stl`, every maths call (`sin`, `cos`, `pow`, `exp`, `ln` and the
-    rest, for `f64` and `f32`) through `orca-crt`, and no engine crate uses `std`'s `HashMap` or
+    rest, for `f64` and `f32`) and every C `qsort` (Qhull's) through `orca-crt`, and no engine crate uses `std`'s `HashMap` or
     `HashSet`: `clippy.toml` refuses them with `disallowed-methods` and `disallowed-types`. It
     also refuses Rust's `max` of two and its iterator `max`, `max_by`, `max_by_key` and
     `min_by_key` (which keep another of equal elements than `std::max` and `std::max_element`),

@@ -19,6 +19,9 @@
 // - CAST: every float-to-integer conversion, static_cast<T>(double) and static_cast<T>(float) for
 //   the eight integer types, as MSVC 14.42 compiles them in out-of-line functions.
 // - RAND: rand() on a new thread, which starts from the UCRT's default seed, and after srand.
+// - QSRT: qsort, as Qhull calls it (added 2026-11-07): every comparator call in order, with the
+//   two elements' ids, their places in the array and the result, then the order qsort left, for
+//   keys with ties, Qhull's three kinds of comparator and elements of 4, 8 and 16 bytes.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -400,6 +403,165 @@ void record_rand(Sets &sets)
     add("per-thread", 99, other);
 }
 
+// QSRT. Qhull sorts with qsort: mem_r.c its memory sizes (int, qh_intcompare: a difference),
+// merge_r.c and io_r.c arrays of pointers (qh_comparemerge: a difference; qh_compareangle: never
+// 0, so equal angles land where qsort's calls put them; qh_compare_facetarea: -1, 0 or 1). C's
+// qsort passes its comparator no context, so the comparators record into qsort_run.
+struct QsortCall
+{
+    uint32_t a, b, at_a, at_b;
+    int32_t  result;
+};
+struct QsortRun
+{
+    const char            *base = nullptr;
+    size_t                 n    = 0;
+    size_t                 size = 0;
+    uint32_t               kind = 0;
+    std::vector<QsortCall> calls;
+};
+QsortRun *qsort_run = nullptr;
+
+// The place recorded for a pointer that is not at an element of the array.
+constexpr uint32_t QSORT_OUTSIDE = 0xFFFF;
+
+uint32_t qsort_place(const void *p)
+{
+    const char *c = static_cast<const char *>(p);
+    if (c < qsort_run->base)
+        return QSORT_OUTSIDE;
+    const size_t off = size_t(c - qsort_run->base);
+    if (off % qsort_run->size != 0 || off / qsort_run->size >= qsort_run->n)
+        return QSORT_OUTSIDE;
+    return uint32_t(off / qsort_run->size);
+}
+
+// An element of Size bytes: 4, a uint32_t with the key in the high 16 bits and the id in the low
+// 16 (an int's size); 8, an int32_t key and a uint32_t id (a pointer's size); 16, those and a
+// uint64_t made from the id.
+template<size_t Size> int32_t qsort_key(const void *p)
+{
+    if (Size == 4) {
+        uint32_t v;
+        std::memcpy(&v, p, 4);
+        return int32_t(v >> 16);
+    }
+    int32_t k;
+    std::memcpy(&k, p, 4);
+    return k;
+}
+template<size_t Size> uint32_t qsort_id(const void *p)
+{
+    uint32_t v;
+    if (Size == 4) {
+        std::memcpy(&v, p, 4);
+        return v & 0xFFFF;
+    }
+    std::memcpy(&v, static_cast<const char *>(p) + 4, 4);
+    return v;
+}
+template<size_t Size> void qsort_element(char *at, int32_t key, uint32_t id)
+{
+    if (Size == 4) {
+        const uint32_t v = (uint32_t(key) << 16) | id;
+        std::memcpy(at, &v, 4);
+        return;
+    }
+    std::memcpy(at, &key, 4);
+    std::memcpy(at + 4, &id, 4);
+    if (Size == 16) {
+        const uint64_t pad = uint64_t(id) * 0x9E3779B97F4A7C15ull;
+        std::memcpy(at + 8, &pad, 8);
+    }
+}
+
+int32_t qsort_compare_keys(uint32_t kind, int32_t a, int32_t b)
+{
+    if (kind == 0)
+        return a - b;
+    if (kind == 1)
+        return a > b ? 1 : -1;
+    return (a > b) - (a < b);
+}
+
+template<size_t Size> int __cdecl qsort_compare(const void *a, const void *b)
+{
+    const int32_t r = qsort_compare_keys(qsort_run->kind, qsort_key<Size>(a), qsort_key<Size>(b));
+    qsort_run->calls.push_back({qsort_id<Size>(a), qsort_id<Size>(b), qsort_place(a), qsort_place(b), r});
+    return r;
+}
+
+template<size_t Size> Payload qsort_case(uint32_t kind, const std::vector<int32_t> &keys)
+{
+    std::vector<uint64_t> storage(keys.size() * Size / 8 + 1);
+    char                 *base = reinterpret_cast<char *>(storage.data());
+    for (size_t i = 0; i < keys.size(); ++i)
+        qsort_element<Size>(base + i * Size, keys[i], uint32_t(i));
+    QsortRun run;
+    run.base  = base;
+    run.n     = keys.size();
+    run.size  = Size;
+    run.kind  = kind;
+    qsort_run = &run;
+    ::qsort(base, keys.size(), Size, qsort_compare<Size>);
+    qsort_run = nullptr;
+    Payload p;
+    p.u32(kind).u32(uint32_t(Size)).i32s(keys).u64(run.calls.size());
+    for (const QsortCall &c : run.calls)
+        p.u16(uint16_t(c.a)).u16(uint16_t(c.b)).u16(uint16_t(c.at_a)).u16(uint16_t(c.at_b)).u16(uint16_t(int16_t(c.result)));
+    std::vector<uint32_t> ids;
+    for (size_t i = 0; i < keys.size(); ++i)
+        ids.push_back(qsort_id<Size>(base + i * Size));
+    p.u32s(ids);
+    return p;
+}
+
+// Nine key arrays of each size, with ties: seeded keys below 1, 2, 3, 7 and 1000, and runs that
+// rise in pairs, fall in pairs, rise and fall, and alternate. Elements of 8 bytes take every
+// size (the committed set up to 33), of 4 and 16 bytes up to 257 (the committed set up to 13).
+void record_qsort(Sets &sets)
+{
+    const size_t sizes[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 16, 17, 31, 32, 33, 64, 100, 257, 1000};
+    SplitMix     g(0x05027ull);
+    for (size_t n : sizes) {
+        std::vector<std::vector<int32_t>> inputs;
+        for (uint64_t bound : {1ull, 2ull, 3ull, 7ull, 1000ull}) {
+            std::vector<int32_t> keys;
+            for (size_t i = 0; i < n; ++i)
+                keys.push_back(int32_t(g.below(bound)));
+            inputs.push_back(keys);
+        }
+        std::vector<int32_t> pairs_up, pairs_down, up_down, alternate;
+        for (size_t i = 0; i < n; ++i) {
+            pairs_up.push_back(int32_t(i / 2));
+            pairs_down.push_back(int32_t((n - i) / 2));
+            up_down.push_back(int32_t(i < n - i ? i : n - i));
+            alternate.push_back(int32_t(i % 2));
+        }
+        inputs.push_back(pairs_up);
+        inputs.push_back(pairs_down);
+        inputs.push_back(up_down);
+        inputs.push_back(alternate);
+        for (const std::vector<int32_t> &keys : inputs)
+            for (uint32_t kind = 0; kind < 3; ++kind) {
+                const Payload p8 = qsort_case<8>(kind, keys);
+                if (n <= 33)
+                    sets.committed.add("QSRT", p8);
+                sets.full.add("QSRT", p8);
+                if (n > 257)
+                    continue;
+                const Payload p4  = qsort_case<4>(kind, keys);
+                const Payload p16 = qsort_case<16>(kind, keys);
+                if (n <= 13) {
+                    sets.committed.add("QSRT", p4);
+                    sets.committed.add("QSRT", p16);
+                }
+                sets.full.add("QSRT", p4);
+                sets.full.add("QSRT", p16);
+            }
+    }
+}
+
 } // namespace
 
 bool record_crt(Sets &sets, const std::vector<std::string> &crt_symbols, std::string &error)
@@ -431,6 +593,7 @@ bool record_crt(Sets &sets, const std::vector<std::string> &crt_symbols, std::st
     record_casts(sets, "f64", ds);
     record_casts(sets, "f32", fs);
     record_rand(sets);
+    record_qsort(sets);
     return true;
 }
 

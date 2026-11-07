@@ -8,7 +8,8 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
 // (LICENSE) for more details.
 
-//! The C runtime the C++ engine links, called as it is: maths, float-to-integer conversions, rand.
+//! The C runtime the C++ engine links, called as it is: maths, float-to-integer conversions, rand,
+//! qsort.
 //!
 //! The home of every call into the static UCRT that the C++ engine makes:
 //!
@@ -19,6 +20,8 @@
 //! - [`convert`]: MSVC 14.42's float-to-integer conversions for every integer width, with
 //!   `cvttsd2si`'s indefinite value for NaN and out-of-range input and the unsigned sequences.
 //! - [`rand`]: `rand` and `srand`, the UCRT's generator with its per-thread state.
+//! - [`search`]: `qsort`, the UCRT's own function called on the elements in place, for the C code
+//!   that sorts with it (Qhull), whose comparators can tie or contradict themselves.
 //!
 //! The crate is `#![no_builtins]`, so the compiler cannot replace a call with its own
 //! implementation or fold it into a constant: the answer is the one the C++ program gets from the
@@ -32,6 +35,7 @@
 pub mod convert;
 pub mod math;
 pub mod rand;
+pub mod search;
 
 pub use convert::{
     f32_to_i8, f32_to_i16, f32_to_i32, f32_to_i64, f32_to_u8, f32_to_u16, f32_to_u32, f32_to_u64,
@@ -39,6 +43,7 @@ pub use convert::{
 };
 pub use math::*;
 pub use rand::{RAND_MAX, rand, srand};
+pub use search::qsort;
 
 /// The crate's name, as Cargo has it.
 pub const NAME: &str = "orca-crt";

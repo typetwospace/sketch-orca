@@ -17,6 +17,9 @@
 //! - MATS: `nan(tag)`'s bits for every tag.
 //! - CAST: each `double` and `float` to integer conversion, on every recorded value.
 //! - RAND: `rand` on a fresh thread, after `srand` on a fresh thread, and per thread.
+//! - QSRT: `qsort` on keys with ties, with Qhull's three kinds of comparator and elements of 4, 8
+//!   and 16 bytes: every comparator call in order (the two elements and their places in the
+//!   array, and the result), and the order it left.
 //!
 //! The committed subset (`parity/probes/`) runs by default; `SKETCH_ORCA_PROBES_DEEP=<folder>`
 //! replays the full set from that folder (`<work>/parity/probes`).
@@ -337,4 +340,156 @@ fn rand_is_the_ucrts_per_thread() {
         });
     }
     m.assert_none("RAND");
+}
+
+/// One comparator call of a QSRT record: the two elements' ids, their places in the array (65535
+/// for a pointer that is not at an element) and the result's low 16 bits.
+type QsortCall = (u16, u16, u16, u16, u16);
+
+/// The place of a pointer that is not at an element of the array.
+const QSORT_OUTSIDE: u16 = 0xFFFF;
+
+/// An element of a QSRT record's array, laid out as the probe program's (`parity/SOP1.md`, QSRT).
+trait QsortElem: Copy {
+    fn new(key: i32, id: u32) -> Self;
+    fn key(&self) -> i32;
+    fn id(&self) -> u32;
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct Q4(u32);
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct Q8 {
+    key: i32,
+    id: u32,
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct Q16 {
+    key: i32,
+    id: u32,
+    pad: u64,
+}
+
+impl QsortElem for Q4 {
+    #[allow(clippy::cast_sign_loss)]
+    fn new(key: i32, id: u32) -> Self {
+        Q4(((key as u32) << 16) | id)
+    }
+    #[allow(clippy::cast_possible_wrap)]
+    fn key(&self) -> i32 {
+        (self.0 >> 16) as i32
+    }
+    fn id(&self) -> u32 {
+        self.0 & 0xFFFF
+    }
+}
+
+impl QsortElem for Q8 {
+    fn new(key: i32, id: u32) -> Self {
+        Q8 { key, id }
+    }
+    fn key(&self) -> i32 {
+        self.key
+    }
+    fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+impl QsortElem for Q16 {
+    fn new(key: i32, id: u32) -> Self {
+        Q16 {
+            key,
+            id,
+            pad: u64::from(id).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+        }
+    }
+    fn key(&self) -> i32 {
+        self.key
+    }
+    fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+/// The C comparators the probe program sorts with, Qhull's three kinds.
+fn qsort_compare_keys(kind: u32, a: i32, b: i32) -> i32 {
+    match kind {
+        0 => a - b,
+        1 => {
+            if a > b {
+                1
+            } else {
+                -1
+            }
+        }
+        _ => i32::from(a > b) - i32::from(a < b),
+    }
+}
+
+/// Sorts `keys` as elements `E` with orca-crt's `qsort`: the comparator calls and the ids left.
+#[allow(clippy::cast_possible_truncation)]
+fn qsort_replay<E: QsortElem>(kind: u32, keys: &[i32]) -> (Vec<QsortCall>, Vec<u32>) {
+    let mut v: Vec<E> = keys.iter().zip(0..).map(|(&k, id)| E::new(k, id)).collect();
+    let (base, n, size) = (v.as_ptr() as usize, v.len(), size_of::<E>());
+    let place = |p: *const E| {
+        let p = p as usize;
+        if p < base || !(p - base).is_multiple_of(size) || (p - base) / size >= n {
+            QSORT_OUTSIDE
+        } else {
+            ((p - base) / size) as u16
+        }
+    };
+    let mut calls = Vec::new();
+    crt::qsort(&mut v, |a, b| {
+        let result = qsort_compare_keys(kind, a.key(), b.key());
+        calls.push((
+            a.id() as u16,
+            b.id() as u16,
+            place(std::ptr::from_ref(a)),
+            place(std::ptr::from_ref(b)),
+            result as u16,
+        ));
+        result
+    });
+    (calls, v.iter().map(QsortElem::id).collect())
+}
+
+#[test]
+fn qsort_makes_the_ucrts_comparator_calls() {
+    let file = file();
+    let mut m = Mismatches::default();
+    for rec in file.of_kind("QSRT") {
+        let mut r = rec.reader();
+        let kind = r.u32().unwrap();
+        let size = r.u32().unwrap();
+        let keys = r.vec(Reader::i32).unwrap();
+        let want_calls = r
+            .vec(|r| Ok((r.u16()?, r.u16()?, r.u16()?, r.u16()?, r.u16()?)))
+            .unwrap();
+        let want_ids = r.vec(Reader::u32).unwrap();
+        r.finish("QSRT").unwrap();
+        let got = match size {
+            4 => qsort_replay::<Q4>(kind, &keys),
+            8 => qsort_replay::<Q8>(kind, &keys),
+            16 => qsort_replay::<Q16>(kind, &keys),
+            _ => panic!("a QSRT record of {size}-byte elements"),
+        };
+        m.check(got.0 == want_calls && got.1 == want_ids, || {
+            let first = got.0.iter().zip(&want_calls).position(|(g, w)| g != w);
+            format!(
+                "QSRT comparator {kind}, {size} bytes, keys {keys:?}: {} calls, the UCRT {} \
+                 (first difference at {first:?}); ids {:?}, the UCRT {want_ids:?}",
+                got.0.len(),
+                want_calls.len(),
+                got.1
+            )
+        });
+    }
+    m.assert_none("QSRT");
 }

@@ -20,7 +20,11 @@
 //! - the float-to-integer conversions equal `cvttsd2si`, `cvttss2si` and MSVC's unsigned 64-bit
 //!   sequence, run here as those instructions, on seeded random values, and the values a program
 //!   built with MSVC 14.42 (`/O2`, x64) printed for the edge cases;
-//! - `rand` and `srand` equal the UCRT's on fresh threads, and the values that program printed.
+//! - `rand` and `srand` equal the UCRT's on fresh threads, and the values that program printed;
+//! - `qsort` makes the UCRT's own comparator calls, in the same order, as `qsort` called directly;
+//!   the UCRT passes its comparator only elements of the array, calls it no time for fewer than
+//!   two elements, and makes the same calls for elements of 4, 8 and 16 bytes; and a comparator
+//!   may sort again.
 //!
 //! Every case runs with a seeded generator, and each test asserts its count of cases.
 //!
@@ -138,6 +142,16 @@ mod ucrt {
 
         pub safe fn rand() -> i32;
         pub safe fn srand(seed: u32);
+
+        pub unsafe fn qsort(
+            base: *mut core::ffi::c_void,
+            count: usize,
+            size: usize,
+            compare: unsafe extern "C" fn(
+                *const core::ffi::c_void,
+                *const core::ffi::c_void,
+            ) -> i32,
+        );
     }
 }
 
@@ -956,4 +970,340 @@ fn rand_state_restarts_a_thread() {
     })
     .join()
     .unwrap();
+}
+
+/// One comparator call of `qsort`: the ids of the two elements, their places in the array
+/// ([`OUTSIDE`] for a pointer that is not one of its elements) and what the comparator returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Call {
+    a: u32,
+    b: u32,
+    at_a: u32,
+    at_b: u32,
+    result: i32,
+}
+
+/// The place recorded for a pointer that is not an element of the array.
+const OUTSIDE: u32 = u32::MAX;
+
+/// An element to sort: a key the comparator reads and the id of the place it started at. The
+/// three sizes are Qhull's: `int`s (`mem_r.c`), pointers (`merge_r.c`, `io_r.c`) and a struct.
+trait Elem: Copy {
+    fn new(key: i32, id: u32) -> Self;
+    fn key(&self) -> i32;
+    fn id(&self) -> u32;
+}
+
+/// 4 bytes: the key in the high 16 bits, the id in the low 16.
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct E4(u32);
+
+/// 8 bytes, a pointer's size.
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct E8 {
+    key: i32,
+    id: u32,
+}
+
+/// 16 bytes.
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct E16 {
+    key: i32,
+    id: u32,
+    pad: u64,
+}
+
+impl Elem for E4 {
+    fn new(key: i32, id: u32) -> Self {
+        assert!((0..0x8000).contains(&key) && id < 0x1_0000);
+        E4(((key as u32) << 16) | id)
+    }
+    fn key(&self) -> i32 {
+        (self.0 >> 16) as i32
+    }
+    fn id(&self) -> u32 {
+        self.0 & 0xFFFF
+    }
+}
+
+impl Elem for E8 {
+    fn new(key: i32, id: u32) -> Self {
+        E8 { key, id }
+    }
+    fn key(&self) -> i32 {
+        self.key
+    }
+    fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+impl Elem for E16 {
+    fn new(key: i32, id: u32) -> Self {
+        E16 {
+            key,
+            id,
+            pad: u64::from(id).wrapping_mul(0x9E37_79B9_7F4A_7C15),
+        }
+    }
+    fn key(&self) -> i32 {
+        self.key
+    }
+    fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+/// Qhull's three kinds of comparator: 0, a difference (`qh_intcompare`, `qh_comparemerge`); 1, one
+/// that never returns 0 (`qh_compareangle`); 2, -1, 0 or 1 (`qh_compare_facetarea`).
+fn compare_keys(kind: u32, a: i32, b: i32) -> i32 {
+    match kind {
+        0 => a - b,
+        1 => {
+            if a > b {
+                1
+            } else {
+                -1
+            }
+        }
+        _ => i32::from(a > b) - i32::from(a < b),
+    }
+}
+
+/// The place of the element at address `p` in an array of `n` elements of `size` bytes at `base`.
+fn place(base: usize, n: usize, size: usize, p: usize) -> u32 {
+    if p < base || !(p - base).is_multiple_of(size) || (p - base) / size >= n {
+        OUTSIDE
+    } else {
+        ((p - base) / size) as u32
+    }
+}
+
+fn elements<E: Elem>(keys: &[i32]) -> Vec<E> {
+    keys.iter().zip(0..).map(|(&k, id)| E::new(k, id)).collect()
+}
+
+/// Sorts `keys` with orca-crt's `qsort`: its comparator calls and the ids it left, in order.
+fn qsort_ours<E: Elem>(kind: u32, keys: &[i32]) -> (Vec<Call>, Vec<u32>) {
+    let mut v = elements::<E>(keys);
+    let (base, n, size) = (v.as_ptr() as usize, v.len(), size_of::<E>());
+    let mut calls = Vec::new();
+    orca_crt::qsort(&mut v, |a, b| {
+        let result = compare_keys(kind, a.key(), b.key());
+        calls.push(Call {
+            a: a.id(),
+            b: b.id(),
+            at_a: place(base, n, size, a as *const E as usize),
+            at_b: place(base, n, size, b as *const E as usize),
+            result,
+        });
+        result
+    });
+    (calls, v.iter().map(Elem::id).collect())
+}
+
+/// What the comparator the UCRT calls directly works from and records.
+struct Direct {
+    base: usize,
+    n: usize,
+    kind: u32,
+    calls: Vec<Call>,
+}
+
+thread_local! {
+    static DIRECT: std::cell::RefCell<Direct> = const {
+        std::cell::RefCell::new(Direct { base: 0, n: 0, kind: 0, calls: Vec::new() })
+    };
+}
+
+unsafe extern "C" fn direct_compare<E: Elem>(
+    a: *const core::ffi::c_void,
+    b: *const core::ffi::c_void,
+) -> i32 {
+    // SAFETY: the UCRT passes pointers to elements of the array it sorts; read without assuming
+    // their alignment, so that this test stands on its own.
+    let (ea, eb) = unsafe {
+        (
+            a.cast::<E>().read_unaligned(),
+            b.cast::<E>().read_unaligned(),
+        )
+    };
+    DIRECT.with(|d| {
+        let mut d = d.borrow_mut();
+        let result = compare_keys(d.kind, ea.key(), eb.key());
+        let (at_a, at_b) = (
+            place(d.base, d.n, size_of::<E>(), a as usize),
+            place(d.base, d.n, size_of::<E>(), b as usize),
+        );
+        d.calls.push(Call {
+            a: ea.id(),
+            b: eb.id(),
+            at_a,
+            at_b,
+            result,
+        });
+        result
+    })
+}
+
+type QsortFn = unsafe extern "C" fn(
+    *mut core::ffi::c_void,
+    usize,
+    usize,
+    unsafe extern "C" fn(*const core::ffi::c_void, *const core::ffi::c_void) -> i32,
+);
+
+/// Sorts `keys` with the UCRT's `qsort` called directly: its comparator calls and the ids it left.
+fn qsort_theirs<E: Elem>(kind: u32, keys: &[i32]) -> (Vec<Call>, Vec<u32>) {
+    let mut v = elements::<E>(keys);
+    DIRECT.with(|d| {
+        *d.borrow_mut() = Direct {
+            base: v.as_ptr() as usize,
+            n: v.len(),
+            kind,
+            calls: Vec::new(),
+        };
+    });
+    let qsort: QsortFn = black_box(ucrt::qsort);
+    // SAFETY: `v` holds `v.len()` elements of `size_of::<E>()` bytes, and `direct_compare::<E>`
+    // reads two of them.
+    unsafe {
+        qsort(
+            v.as_mut_ptr().cast(),
+            v.len(),
+            size_of::<E>(),
+            direct_compare::<E>,
+        );
+    }
+    let calls = DIRECT.with(|d| std::mem::take(&mut d.borrow_mut().calls));
+    (calls, v.iter().map(Elem::id).collect())
+}
+
+/// The sizes of the key arrays sorted.
+const QSORT_SIZES: [usize; 23] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 16, 17, 31, 32, 33, 64, 100, 257, 1000,
+];
+
+/// Key arrays with ties, nine of each size: seeded keys below 1, 2, 3, 7 and 1000, and runs that
+/// rise in pairs, fall in pairs, rise and fall, and alternate.
+fn qsort_inputs(rng: &mut Rng) -> Vec<Vec<i32>> {
+    let mut out = Vec::new();
+    for n in QSORT_SIZES {
+        for bound in [1, 2, 3, 7, 1000] {
+            out.push((0..n).map(|_| rng.below(bound) as i32).collect());
+        }
+        out.push((0..n).map(|i| (i / 2) as i32).collect());
+        out.push((0..n).map(|i| ((n - i) / 2) as i32).collect());
+        out.push(
+            (0..n)
+                .map(|i| if i < n - i { i as i32 } else { (n - i) as i32 })
+                .collect(),
+        );
+        out.push((0..n).map(|i| (i % 2) as i32).collect());
+    }
+    out
+}
+
+#[test]
+fn qsort_makes_the_ucrts_calls() {
+    let mut rng = Rng(0xC127_0005);
+    let mut cases = 0;
+    for keys in qsort_inputs(&mut rng) {
+        for kind in 0..3 {
+            let what = || format!("comparator {kind}, keys {keys:?}");
+            assert_eq!(
+                qsort_ours::<E4>(kind, &keys),
+                qsort_theirs::<E4>(kind, &keys),
+                "{}",
+                what()
+            );
+            assert_eq!(
+                qsort_ours::<E8>(kind, &keys),
+                qsort_theirs::<E8>(kind, &keys),
+                "{}",
+                what()
+            );
+            assert_eq!(
+                qsort_ours::<E16>(kind, &keys),
+                qsort_theirs::<E16>(kind, &keys),
+                "{}",
+                what()
+            );
+            cases += 1;
+        }
+    }
+    assert_eq!(cases, QSORT_SIZES.len() * 9 * 3);
+}
+
+#[test]
+fn qsort_passes_only_elements_of_the_array() {
+    let mut rng = Rng(0xC127_0005);
+    let mut calls = 0;
+    for keys in qsort_inputs(&mut rng) {
+        for kind in 0..3 {
+            for (got, ids) in [
+                qsort_theirs::<E4>(kind, &keys),
+                qsort_theirs::<E8>(kind, &keys),
+                qsort_theirs::<E16>(kind, &keys),
+            ] {
+                assert!(keys.len() >= 2 || got.is_empty(), "calls for {keys:?}");
+                assert!(
+                    got.iter().all(|c| c.at_a != OUTSIDE && c.at_b != OUTSIDE),
+                    "a pointer outside the array, comparator {kind}, keys {keys:?}"
+                );
+                let mut seen = vec![false; keys.len()];
+                for &id in &ids {
+                    assert!(!seen[id as usize], "id {id} twice");
+                    seen[id as usize] = true;
+                }
+                if kind != 1 {
+                    let sorted: Vec<i32> = ids.iter().map(|&id| keys[id as usize]).collect();
+                    assert!(sorted.windows(2).all(|p| p[0] <= p[1]), "{sorted:?}");
+                }
+                calls += got.len();
+            }
+        }
+    }
+    assert!(calls > 100_000, "{calls} comparator calls");
+}
+
+#[test]
+fn qsort_calls_do_not_depend_on_the_element_size() {
+    let mut rng = Rng(0xC127_0005);
+    let mut cases = 0;
+    for keys in qsort_inputs(&mut rng) {
+        for kind in 0..3 {
+            let four = qsort_ours::<E4>(kind, &keys);
+            assert_eq!(
+                four,
+                qsort_ours::<E8>(kind, &keys),
+                "comparator {kind}, keys {keys:?}"
+            );
+            assert_eq!(
+                four,
+                qsort_ours::<E16>(kind, &keys),
+                "comparator {kind}, keys {keys:?}"
+            );
+            cases += 1;
+        }
+    }
+    assert_eq!(cases, QSORT_SIZES.len() * 9 * 3);
+}
+
+#[test]
+fn qsort_comparators_may_sort_again() {
+    let mut v: Vec<u64> = (0..50).rev().collect();
+    let mut inner = 0;
+    orca_crt::qsort(&mut v, |a, b| {
+        let mut w = [*b, *a, 3];
+        orca_crt::qsort(&mut w, |x, y| i32::from(x > y) - i32::from(x < y));
+        assert!(w.windows(2).all(|p| p[0] <= p[1]), "{w:?}");
+        inner += 1;
+        i32::from(a > b) - i32::from(a < b)
+    });
+    assert_eq!(v, (0..50).collect::<Vec<u64>>());
+    assert!(inner >= 49, "{inner} comparator calls");
 }

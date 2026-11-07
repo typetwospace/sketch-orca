@@ -10,7 +10,7 @@ The probe gate is the crates' `tests/probes.rs`, which replay every record of th
 
 | Test | File | Records |
 | --- | --- | --- |
-| `crates/orca-crt/tests/probes.rs` | `crt.sop1` | MATH (with FMA3 on and off), MATS, CAST, RAND |
+| `crates/orca-crt/tests/probes.rs` | `crt.sop1` | MATH (with FMA3 on and off), MATS, CAST, RAND, QSRT (every comparator call of `qsort`) |
 | `crates/orca-fmt/tests/probes.rs` | `fmt.sop1` | PRTF, TOCH, OSTR, TOST, PARS |
 | `crates/orca-stl/tests/probes.rs` | `stl.sop1` | SORT (every comparator call), VALS, HASH, UMAP, USET, RNGS, SSEQ, SHUF |
 | `crates/orca-tbb/tests/probes.rs` | `tbb.sop1` | TBBA, TBBF, TBBR, TBBO, in serial arenas of each recorded P |

@@ -221,7 +221,7 @@ records below, END.
 
 | File | Program's task | Records |
 | --- | --- | --- |
-| `crt.sop1` | O1 | MATH, MATS, CAST, RAND |
+| `crt.sop1` | O1, QSRT o2-geom | MATH, MATS, CAST, RAND, QSRT |
 | `fmt.sop1` | O1 | PRTF, TOCH, OSTR, TOST, PARS |
 | `stl.sop1` | O1 | SORT, VALS, HASH, UMAP, USET, RNGS, SSEQ, SHUF |
 | `tbb.sop1` | O1 | TBBA, TBBF, TBBR, TBBO |
@@ -279,6 +279,21 @@ compiler cannot inline: `str` `f64>i8` (`f64` or `f32`, then `i8`, `u8`, `i16`, 
 `rand()`: `str` what (`fresh-thread`: a new thread's first values; `srand`: a new thread's values
 after its `srand(seed)`; `per-thread`: a thread's first value, then its values after another
 thread called `srand(99)`), `u32` seed, `vec<i32>` the values.
+
+### QSRT
+
+`qsort` of the static UCRT, as Qhull calls it (added 2026-11-07): `u32` comparator (0: `a - b`,
+as `qh_intcompare` and `qh_comparemerge`; 1: `a > b ? 1 : -1`, never 0, as `qh_compareangle`; 2:
+-1, 0 or 1, as `qh_compare_facetarea`), `u32` element size (4: a `uint32_t` with the key in its
+high 16 bits and the id in its low 16; 8: an `int32_t` key, then a `uint32_t` id; 16: those, then
+a `uint64_t`, the id times 0x9E3779B97F4A7C15), `vec<i32>` the keys (the element at index i has
+id i), `u64` calls, then for each comparator call in order `u16` the first element's id, `u16` the
+second's, `u16` the first's place in the array, `u16` the second's (65535 for a pointer that is
+not at an element of the array), `u16` the result's low 16 bits (an `i16`); then `vec<u32>` the
+ids in the order `qsort` left them. Each size has nine key arrays with ties (seeded keys below 1,
+2, 3, 7 and 1000; pairs rising, pairs falling, rising then falling, alternating), each sorted with
+the three comparators; elements of 8 bytes take sizes up to 1000 (the committed set up to 33), of
+4 and 16 bytes up to 257 (the committed set up to 13).
 
 ### PRTF
 
