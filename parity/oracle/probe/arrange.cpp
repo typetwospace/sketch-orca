@@ -9,17 +9,32 @@
 // (LICENSE) for more details.
 //
 // arrange.sop1: libnest2d, Arrange.cpp, NLopt 2.5.0, Boost.Geometry's R*-tree and Boost's int128_t
-// and rational (parity/SOP1.md, "Probe files"), which orca-arrange and orca-exact replay. The
-// o2-arrange task records here; until then this is a stub that writes HEAD and PRUN only, and the
-// crate's tests/probes.rs fails as soon as the file holds a record it does not replay. Registered
-// 2026-11-07 (scripts/lib/parity/probe.ts, PROBE_REGISTRY).
+// and rational (parity/SOP1.md, "arrange.sop1"), which orca-arrange and orca-exact replay.
+// Registered 2026-11-07 (scripts/lib/parity/probe.ts, PROBE_REGISTRY); recorded by the o2-arrange
+// task (2026-11-07) from the engine's own libslic3r, libnest2d and NLopt, in arrange/: exact.cpp
+// (XI28, XRAT; orca-exact), nlopt.cpp (NLOP, NOPT), nest.cpp (RTRE, NFPC, NGEO) and runs.cpp
+// (ARNG), which orca-arrange replays.
 #include "probe.hpp"
 
 namespace probe {
 
+void record_exact(Sets &sets);
+void record_nlopt(Sets &sets);
+void record_nest(Sets &sets);
+void record_runs(Sets &sets);
+
 namespace {
 
-bool run_arrange(const Options &options, std::string &error) { return write_stub("arrange", options, error); }
+bool run_arrange(const Options &options, std::string &error)
+{
+    Sets sets;
+    head(sets, "arrange");
+    record_exact(sets);
+    record_nlopt(sets);
+    record_nest(sets);
+    record_runs(sets);
+    return save(sets, options, "arrange.sop1", error);
+}
 
 } // namespace
 

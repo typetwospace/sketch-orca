@@ -219,12 +219,14 @@ orca-geom (filled by the o2-geom task)
     MultiPoint.cpp, Line.cpp, ExPolygon.cpp, BoundingBox.cpp, Geometry.cpp and
     Geometry/ConvexHull.cpp, with their headers and libslic3r.h.
 
-orca-exact (filled by the o2-arrange task)
+orca-exact (filled by the o2-arrange task, 2026-11-07)
   - Boost.Multiprecision of Boost 1.84.0 (cpp_int's fixed-width signed-magnitude backend, as
-    int128_t), Copyright 2012-2022 John Maddock and Copyright 2022 Christopher Kormanyos, under
-    the Boost Software License, version 1.0 (licenses/BSL-1.0.txt).
-  - Boost.Rational of Boost 1.84.0 (boost/rational.hpp), under its own terms, which ask for its
-    notice in all copies:
+    int128_t: its arithmetic, comparisons, gcd and conversion to double; src/int128.rs),
+    Copyright 2012-2022 John Maddock, Copyright 2019-2022 Christopher Kormanyos, Copyright
+    2019-2020 Madhur Chauhan and Copyright 2021 Matt Borland, under the Boost Software License,
+    version 1.0 (licenses/BSL-1.0.txt).
+  - Boost.Rational of Boost 1.84.0 (boost/rational.hpp; src/rational.rs), under its own terms,
+    which ask for its notice in all copies:
 
       (C) Copyright Paul Moore 1999. Permission to copy, use, modify, sell and distribute this
       software is granted provided this copyright notice appears in all copies. This software is
@@ -283,22 +285,34 @@ orca-placeholder (filled by the o2-front task, 2026-11-07)
     (licenses/BSL-1.0.txt): the UTF-8 round trip an error message's line goes through
     (src/parser.rs).
 
-orca-arrange (filled by the o2-arrange task)
+orca-arrange (filled by the o2-arrange task, 2026-11-07)
   - libnest2d, by Tamas Meszaros (https://github.com/tamasmeszaros/libnest2d), as OrcaSlicer
-    v2.4.2 carries it, modified by PrusaSlicer and OrcaSlicer, in deps_src/libnest2d, under the
-    GNU Lesser General Public License, version 3 (licenses/LGPL-3.0.txt), which supplements the
-    GNU General Public License, version 3 (licenses/GPL-3.0.txt).
+    v2.4.2 carries it, modified by Prusa Research, Bambu Lab and the OrcaSlicer contributors, in
+    deps_src/libnest2d, under the GNU Lesser General Public License, version 3
+    (licenses/LGPL-3.0.txt), which supplements the GNU General Public License, version 3
+    (licenses/GPL-3.0.txt): the geometry traits and the libslic3r backend, the item, the convex
+    no-fit polygon, the optimiser, the no-fit-polygon placer and the first-fit selection
+    (src/geometry.rs, item.rs, nfp.rs, optimizer.rs, placer.rs and firstfit.rs).
   - NLopt 2.5.0 (https://github.com/stevengj/nlopt, tag v2.5.0), by Steven G. Johnson, Copyright
     (c) 2007-2014 Massachusetts Institute of Technology, under the MIT licence
     (licenses/MIT-NLopt.txt): the subplex and Nelder-Mead algorithms (src/algs/neldermead/sbplx.c
-    and nldrmd.c), the red-black tree (src/util/redblack.c), the stopping tests (src/util/stop.c)
-    and the API they are called through (src/api/general.c, options.c, optimize.c and
-    nlopt-in.hpp). NLopt's luksan code, under the GNU LGPL, is not carried.
-  - Boost.Geometry's R-tree of Boost 1.84.0 (boost/geometry/index, with its R* insertion),
-    Copyright (c) 2008 Federico J. Fernandez, Copyright (c) 2011-2023 Adam Wulkiewicz and
-    Copyright (c) 2020 Caian Benedicto, under the Boost Software License, version 1.0
-    (licenses/BSL-1.0.txt).
-  - OrcaSlicer's src/libslic3r/Arrange.cpp, with its header.
+    and nldrmd.c), NLopt's own qsort_r (src/util/qsort_r.c), the red-black tree
+    (src/util/redblack.c), the stopping tests (src/util/stop.c) and the API they are called
+    through (src/api/options.c, optimize.c and nlopt-in.hpp), in src/nlopt.rs; nlopt-in.hpp's
+    objective trampoline also in src/optimizer.rs. NLopt's luksan code, under the GNU LGPL, is
+    not carried.
+  - Boost.Geometry of Boost 1.84.0, under the Boost Software License, version 1.0
+    (licenses/BSL-1.0.txt): the R-tree's operations that Arrange.cpp calls (boost/geometry/index,
+    with box-box disjoint and assign_inverse; src/rtree.rs), Copyright (c) 2008 Federico J.
+    Fernandez, Copyright (c) 2011-2023 Adam Wulkiewicz, Copyright (c) 2020 Caian Benedicto,
+    Copyright (c) 2007-2015 Barend Gehrels and modifications copyright (c) 2014-2023 Oracle
+    and/or its affiliates; and the predicates libnest2d's backend calls (side_by_triangle, the
+    winding point-in-polygon strategy, point_in_geometry, closed_clockwise_view, the determinant
+    and equals' factor policy; src/bg.rs), Copyright (c) 2007-2015 Barend Gehrels, Copyright (c)
+    2008-2015 Bruno Lalande, Copyright (c) 2009-2015 Mateusz Loskot, Copyright (c) 2013-2014 Adam
+    Wulkiewicz and modifications copyright (c) 2013-2023 Oracle and/or its affiliates.
+  - OrcaSlicer's src/libslic3r/Arrange.cpp, with its header (src/arrange.rs, and its NfpImpl in
+    src/nfp.rs), and Print::is_filaments_compatible of src/libslic3r/Print.cpp (src/arrange.rs).
 
 orca-model (filled by the o2-model task)
   - OrcaSlicer's src/libslic3r/Model.cpp, BuildVolume.cpp, ModelArrange.cpp, Format/STL.cpp,

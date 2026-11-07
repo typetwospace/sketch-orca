@@ -274,7 +274,7 @@ records below, END.
 | `zip.sop1` | o2-model | none yet: a stub (`orca-zip`) |
 | `xml.sop1` | o2-model | none yet: a stub (`orca-xml`) |
 | `model.sop1` | o2-model | none yet: a stub (`orca-model`) |
-| `arrange.sop1` | o2-arrange | none yet: a stub (`orca-arrange`, `orca-exact`) |
+| `arrange.sop1` | o2-arrange | XI28, XRAT (`orca-exact`); NLOP, NOPT, RTRE, NFPC, NGEO, ARNG (`orca-arrange`) |
 | `placeholder.sop1` | o2-front | PHCF, PHEV (`orca-placeholder`) |
 
 A stub is HEAD, PRUN and END: the task that fills it adds its records here, and the crate's probe
@@ -808,6 +808,159 @@ printers with the override, and every `compatible_prints_condition` of its filam
 of its processes. `orca-placeholder`'s `tests/probes.rs` replays every PHEV: a result or a
 `PlaceholderParserError`'s message must match exactly, and outcomes 2 and 3 must be declined
 (`Unsupported`).
+
+### arrange.sop1's values
+
+The records of `arrange.sop1` (`parity/oracle/probe/arrange.cpp` and `arrange/`, added
+2026-11-07) write a point list as a `u32` count and each point's `i64` x and y; a shape (an
+`ExPolygon`) as its contour's point list, a `u32` hole count and each hole's point list; a box as
+its minimum and its maximum `point`; and an `int128_t` (`i128` below) as `bool` negative, `u64`
+the high and `u64` the low half of its magnitude. A call that may throw is `bool` threw, then the
+exception's `str` `what()` or the value. Each record holds its inputs, then the engine's results,
+so the replays need no generator. `orca-exact`'s `tests/probes.rs` replays XI28 and XRAT,
+`orca-arrange`'s the rest; each compares every result bit for bit.
+
+### XI28
+
+Boost.Multiprecision's `int128_t`, the `LargeInt` of `Arrange.cpp` under MSVC
+(`arrange/exact.cpp`): `i128` a and b, then `i128` a + b, a - b and a * b; a / b, a call that may
+throw; a % b, a call that may throw, only when b is not zero (a remainder by zero ends the C++
+process: `parity/HAZARDS.md`, orca-exact); `i128` -a and abs(a); gcd(a, b), a call that may throw
+(`boost::integer::gcd`, which is Boost.Multiprecision's `eval_gcd` here); `f64` double(a); `bool`
+a < b, a == b and a > b. The cases: 54 pairs of 18 chosen values (0, ±1, 2, -3, 7, ±2^63,
+±(2^64 - 1), ±2^64, ±2^127, ±(2^128 - 1), 2^127 - 1 and 1000000007), then 4000 seeded pairs of
+magnitudes of chosen sizes (zero, one, up to 1000, up to 64, 32, 62, 64, 96 or 128 bits, all
+ones, a single bit), each signed at random. The committed set: the 54 and the first 120 seeded.
+
+### XRAT
+
+`boost::rational<int128_t>`, the ratio `nfpConvexOnly` sorts edges with (`arrange/exact.cpp`):
+`i128` n1, d1, n2, d2 and i; then rational(n1, d1) and rational(n2, d2), calls that may throw (a
+rational is `i128` numerator and denominator). When both returned: a + b, a - b, a * b, a / b, a
+< b, a > b, a == b, a < i, a > i, a == i, a + i, a - i, a * i, a / i, -a and abs(a), each a call
+that may throw (the comparisons' values `bool`), then `f64` `rational_cast<double>(a)`. The cases:
+7 chosen (the edge sort's own pattern, zero denominators, the sign moves of `normalize()`, values
+near 2^31 and 2^62, the largest), then 2500 seeded, mostly of the sizes the edge sort makes (a
+coordinate difference over a squared length), now and then any 128-bit value. The committed set:
+the 7 and the first 60 seeded.
+
+### NLOP
+
+NLopt 2.5.0 through `nlopt::opt`, as the engine links it (`arrange/nlopt.cpp`): `u8` the
+algorithm (0 `LN_NELDERMEAD`, 1 `LN_SBPLX`), `u32` n, n `f64` x0, n `f64` lower and n `f64` upper
+bounds, `bool` maximise, `u8` the setters that run (1 `stopval`, 2 `ftol_rel`, 4 `ftol_abs`, 8
+`xtol_rel`, 16 `xtol_abs` with one value for all, 32 `maxeval`, 64 the initial step), `f64`
+stopval, ftol_rel, ftol_abs, xtol_rel and xtol_abs, `i32` maxeval, n `f64` initial steps when the
+setters have 64, `u8` the objective, four `f64` its parameters c, `i32` the evaluation (from 0)
+whose objective calls `force_stop()` (-1 none). Then `bool` `set_initial_step` threw, and when it
+did `u8` the kind and `str` `what()`, which end the record. Then `u32` the number of evaluations,
+each n `f64` x and `f64` the value; `bool` `optimize` threw, then `u8` the kind and `str`
+`what()`, or `i32` the result code; n `f64` the final x and `f64` the final value. The kinds: 1
+`std::runtime_error`, 2 `std::invalid_argument`, 3 `std::bad_alloc`, 4 `nlopt::roundoff_limited`,
+5 `nlopt::forced_stop`, 9 another `std::exception`. The objectives, by id, which the replay
+computes in the same order: 0 the sum of (x[i] - c[i])^2; 1 Rosenbrock's sum of 100 (x[i+1] -
+x[i]^2)^2 + (1 - x[i])^2, plus c[0]; 2 the sum of |x[i] - c[i]| (i + 1); 3 NaN where x[0] > c[1],
+else 0's; 4 `HUGE_VAL` where x[0] < c[1], else 0's; 5 1 where x[0] > c[0], else 0, plus 0's times
+1e-3. No time limit is ever set. The cases: 10 chosen (the placer's subplex in [0, 1] from a
+corner and its Nelder-Mead twin, `minimizeCircle`'s two variables, a start outside the bounds, a
+dimension with equal bounds eliminated, with and without a forced stop, a forced stop, a step too
+small for the simplex, a zero step, a maximised NaN objective with a stop value), then 1500
+seeded, each with an evaluation limit: 1 to 4 variables, bounds of each kind (none, one side,
+equal, both) at three scales. The committed set: the 10 and the first 60 seeded of at most 2048
+bytes.
+
+### NOPT
+
+libnest2d's `TOptimizer<L_SUBPLEX>::optimize_min` over 1, 2 or 3 variables (`arrange/nlopt.cpp`):
+`u32` n, n `f64` x0, n `f64` lower and n `f64` upper bounds, `f64` the stop criteria's
+`absolute_score_difference`, `relative_score_difference` and `stop_score` (NaN: not set), `u32`
+`max_iterations`, `u8` the objective and four `f64` c (NLOP's), `i32` the evaluation (from 0)
+that throws (-1 none) and `u8` its kind (NLOP's kinds 1 to 5: `std::runtime_error("probe
+failure")`, `std::invalid_argument("probe invalid argument")`, `std::bad_alloc`,
+`nlopt::roundoff_limited`, `nlopt::forced_stop`). Then `u32` the number of evaluations, each n
+`f64` x, `u8` 1 when it threw and `f64` the value (0 when it threw); `bool` `optimize_min` threw,
+then `u8` the kind and `str` `what()`, or `i32` the result code, n `f64` the optimum and `f64` the
+score. The cases: 8 chosen (the placer's one variable in [0, 1], the same throwing each kind at
+the fifth evaluation and a forced stop at the first, a start outside the bounds), then 1200
+seeded. The committed set: the 8 and the first 50 seeded of at most 2048 bytes.
+
+### RTRE
+
+`Arrange.cpp`'s spatial index, `bgi::rtree<std::pair<Box, unsigned>, bgi::rstar<16, 4>>`
+(`arrange/nest.cpp`): `u32` the number of operations, then each `u8` 0 insert, the box and `u32`
+its index; 1 an `intersects` query, the box, `u32` the number of elements whose box meets it and
+each one's box and index, sorted by index (`Arrange.cpp` never reads their order); 2 the box
+`bounds()`, `u64` `size()` and `bool` `empty()`; 3 `clear()`. The cases: 400 sequences, the first
+four of 8, 48, 88 and 128 operations, the rest of 1 to 60 or (every fifth) 1 to 400, inserting
+boxes at one of five scales (some flat, some inserted twice) and querying boxes, some of them
+touching an inserted box at a corner. The committed set: the first 12 of at most 4096 bytes.
+
+### NFPC
+
+`nfpConvexOnly<ExPolygon, boost::rational<LargeInt>>` and `nfpInnerRectBed` (`arrange/nest.cpp`):
+the point lists sh and other, then `nfpConvexOnly(sh, other)`, a call that may throw whose value
+is the shape and its reference `point`; then the bed box and `nfpInnerRectBed(bed, other)`: the
+shape and its reference `point`. The cases: 3000, three chosen (two clockwise squares, as
+`Arrange.cpp` makes its contours; a counter-clockwise triangle and a square; edges of one
+direction in both), the rest seeded: convex shapes, stars, rectangles, Ls, slivers and point soups
+at five scales, half of them replaced by their hulls, on beds about the origin up to 400 mm, now
+and then smaller than the shape. The committed set: the first 80 of at most 1536 bytes.
+
+### NGEO
+
+libnest2d's item, hulls, predicates and edge cache (`arrange/nest.cpp`): the point lists pts and
+other (other is simple), `bool` pts is simple, `bool` the rotation is set and `f64` the rotation,
+`bool` the translation is set and the `point`, `bool` the inflation is set and `i64` the
+inflation, a box, a circle's `point` centre and `f64` radius, a `point` pt, `f64` the edge cache's
+accuracy, `u32` the number of distances and each `f64`. Then the item's transformed shape, `f64`
+`area()`, the box `boundingBox()`, the `point`s `referenceVertex()` and `leftmostBottomVertex()`;
+the shapes `convexHull` of the transformed shape and of it with other; `minimizeCircle` of the
+transformed shape, `point` centre and `f64` radius; `bool` `isInside` of (shape, box), (shape,
+circle), (bounding box, circle), (bounding box, box), (pt, circle), (pt, box) and (pt, shape), and
+`touches(pt, shape)`; `within(hull, other)`, a call that may throw with a `bool` value, and, for a
+simple pts, `within(shape, other)` the same; `f64` the placer's `overfit` of (bounding box, box)
+and (shape, circle), and its `overfit(hull, other)`, a call that may throw with an `f64` value;
+then `EdgeCache` of the transformed shape at the accuracy: `u32` the number of corners and each
+`f64` corner, `f64` `circumference()`, each corner's `point` `coords` and each distance's. The
+cases: 1500, two chosen (a rectangle in a larger square; a square inflated and moved, as
+`Arrange.cpp`'s items are), the rest seeded: NFPC's shapes at five scales, each of rotation,
+translation and inflation set or not, accuracies 1, 0.65, 0.5, 0.3, 0.1 and 0, up to five
+distances in [0, 2.5]. The committed set: the first 30 of at most 3072 bytes.
+
+### ARNG
+
+One whole `Slic3r::arrangement::arrange` (`arrange/runs.cpp`). The bed: `u8` 0 bed points (the
+`Points` overload, which makes a box, a circle, a polygon or an infinite bed of them), a point
+list; 1 a `BoundingBox`, two `point`s; 2 a `CircleBed`, `point` centre and `f64` radius; 3 a
+`Polygon`, a point list; 4 an `InfiniteBed`, `point` centre. The parameters: `i64`
+`min_obj_distance`, `f32` `accuracy`, `bool` `parallel`, `allow_rotations`, `do_final_align`,
+`allow_multi_materials_on_same_plate`, `avoid_extrusion_cali_region`, `is_seq_print` and
+`align_to_y_axis`, `f32` `bed_shrink_x`, `bed_shrink_y`, `brim_skirt_distance`,
+`clearance_height_to_rod`, `clearance_height_to_lid`, `clearance_radius`, `object_skirt_offset`,
+`nozzle_height` and `printable_height`, `f64` `align_center`'s x and y. Then four lists of
+`ArrangePolygon`s, `excluded_regions`, `nonprefered_regions`, the items and the excludes: each a
+`u32` count and each polygon's contour point list, `i64` translation x and y, `f64` rotation,
+`i64` inflation, `i32` `bed_idx` and `priority`, `bool` `is_virt_object` and `is_wipe_tower`,
+`u32` the number of `extrude_ids` and each `i32`, `i32` `filament_temp_type`, `first_bed_temp`,
+`print_temp`, `vitrify_temp` and `itemid`, `f64` `height`, `str` `name`. Then `bool` the progress
+callbacks are set (`progressind` and `on_packed`; otherwise both are null) and `i32` the stop
+condition's limit (-1: none; otherwise `stopcondition` says stop from its call limit + 1 on). The
+results: `bool` `arrange` threw, and `str` `what()` when it did; for each item `i64` translation x
+and y, `f64` rotation, `i32` `bed_idx` and `itemid`; `u32` the number of `progressind` calls and
+each `u32` st and `str` name; `u32` the number of `on_packed` calls and each `i32` `bed_idx` and
+`priority`; `u32` the stop condition's calls. The cases: 13 chosen (`cli/run.cpp`'s five parts on
+a 256 mm bed with its excluded area and prime tower, and the same printed by object; a delta's
+round bed from points; an irregular convex bed printed by object; an L-shaped bed through the
+typed overload; infinite beds from no point, one point and the typed overload; the typed box and
+circle overloads with an item too big, one not to arrange, one of two points and one on plate 3;
+more parts than a plate holds, fixed parts on plates 0 and 1, priorities and filaments, stopped
+part way and not; a user alignment point with a lower accuracy and serial placement), then 300
+seeded: boxes, circles, convex or L-shaped polygons and infinite beds, each as points or through
+its typed overload; 1 to 16 parts of every shape, some too big, moved, rotated or on other plates;
+on boxes the CLI's excluded area and prime tower, fixed parts, and excluded and non-preferred
+regions. The seeded runs keep to inputs where the C++ is defined and ends (`parity/HAZARDS.md`,
+orca-arrange). The committed set: the 13 and the first 16 seeded of at most five items, an
+accuracy of 0.65 or less and at most 6144 bytes.
 
 ## Versions
 

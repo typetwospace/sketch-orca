@@ -500,8 +500,17 @@ The hazards it owns:
 
 ### orca-exact
 
-Boost 1.84.0's `boost::multiprecision::int128_t` (signed magnitude, unchecked) and
-`boost::rational`. Probe file `arrange.sop1`. Filled by o2-arrange.
+Boost 1.84.0's `boost::multiprecision::int128_t` (signed magnitude, unchecked, in 32-bit limbs, as
+MSVC has no `__int128`) and `boost::rational`. Probe file `arrange.sop1`: XI28 and XRAT
+(`parity/SOP1.md`), which `crates/orca-exact/tests/probes.rs` replays; every record of both sets
+matched on 2026-11-07 (241 committed, 6561 in the full set). Filled by o2-arrange on 2026-11-07.
+The hazards it owns:
+
+| What | Where (Boost 1.84.0, `boost/`) | What the translation does |
+| --- | --- | --- |
+| `int128_t % 0`: `eval_modulus` by a single limb divides by it unchecked, a hardware integer divide by zero that ends the process (`/` by zero throws `std::overflow_error`) | `multiprecision/cpp_int/divide.hpp:549-570` | `Int128::rem` panics; XI28 records no remainder by zero. `boost::rational` never takes one: its gcd stops at a zero |
+| `gcd` of two values of more than one limb whose bit lengths differ by 16 or less takes Lehmer's steps, which multiply U and V by the cosequences in 128 bits: the products wrap, U or V comes out negative or zero, and `eval_lsb` or `eval_msb` throws `std::domain_error` ("Testing individual bits in negative values is not supported - results are undefined.", "No bits were set in the operand."), or the result is not the gcd | `multiprecision/cpp_int/misc.hpp:670-858`, `:1116-1218`, `:326-359` | translated step for step: `Int128::gcd` gives `ExactError::Domain` with the same message, or the same wrong value; probed (XI28's operands near 2^127) |
+| `boost::rational` calls that gcd in `normalize()` and in its operators, so its exceptions leave rational arithmetic too | `rational.hpp` | every `Rational` operation passes them on; probed (XRAT) |
 
 ### orca-qhull
 
@@ -583,7 +592,33 @@ debug and release. Filled by o2-front on 2026-11-07. The hazards it owns:
 ### orca-arrange
 
 libnest2d, `Arrange.cpp`, NLopt 2.5.0's subplex and Nelder-Mead, and Boost.Geometry's R*-tree.
-Probe file `arrange.sop1`. Filled by o2-arrange.
+Probe file `arrange.sop1`: NLOP, NOPT, RTRE, NFPC, NGEO and ARNG (`parity/SOP1.md`), which
+`crates/orca-arrange/tests/probes.rs` replays; every record of both sets matched on 2026-11-07
+(279 committed, 7931 in the full set). Filled by o2-arrange on 2026-11-07; `ModelArrange.cpp` (the
+inflations, `get_shrink_bedpts` and the `ArrangePolygon` setter) is o2-model's. The hazards it
+owns (NLopt's paths are under NLopt src/, libnest2d's under
+`deps_src/libnest2d/include/libnest2d/`):
+
+| What | Where | What the translation does |
+| --- | --- | --- |
+| NLopt's clocks: `nlopt_optimize_` seeds NLopt's generator from `time(NULL)` and the thread id (`nlopt_srand_time_default`) and reads `nlopt_seconds()` into `stop.start` | `api/optimize.c:414`, `:433`, `util/stop.c:90`, `api/general.c:128-136` | class O: neither reaches a result. The Rust reads the clock only for a `maxtime > 0`, which no caller sets (libnest2d sets no time limit), and keeps no generator, as neither subplex nor Nelder-Mead draws from it |
+| The qsort path: subplex sorts its subspace indices by `abs(dx)` with `nlopt_qsort_r`, NLopt's own sort (an exchange sort below ten elements, else a quicksort on the median of three), whose ties (0) land where it leaves them; it never calls the CRT's `qsort`, `qsort_s` or `qsort_r` | `algs/neldermead/sbplx.c:119`, `util/qsort_r.c:68-104` | translated as written (`nlopt::qsort_r`), not `orca_crt::qsort`; probed (NLOP, NOPT) |
+| Nelder-Mead keeps its simplex in NLopt's red-black tree, ties broken by the key's address (`k1 - k2`) | `algs/neldermead/nldrmd.c:38-42`, `util/redblack.c` | translated node for node, ties by row; probed (NLOP) |
+| With dimensions of equal bounds eliminated, the algorithm runs on a copy of the options with a stop flag of its own, so a `force_stop()` on the caller's `nlopt::opt` goes unseen | `api/optimize.c` (`elimdim`) | the same; probed (NLOP's chosen cases) |
+| An objective that throws inside `nlopt::opt::optimize`: `myfunc` keeps only the exception's kind and forces a stop, which clears the message, so `mythrow` throws the kind's default ("nlopt invalid argument", "nlopt failure", MSVC's "bad allocation") | `api/nlopt-in.hpp` (`myfunc`, `mythrow`) | the same (`optimizer.rs`); probed (NOPT, each kind) |
+| The R*-tree's queries return elements in tree order (the "Orders" table above has the objective function sum over them) | `src/libslic3r/Arrange.cpp:78`, `:530-560` | the tree is not built: `SpatIndex` keeps a list in insertion order with the tree's answers (each query's set, `bounds()`, `size()`). `Arrange.cpp` reads a query's results only through a strict `<` minimum and `empty()`, so their order never reaches a result; probed (RTRE, ARNG) |
+| `within(polygon, polygon)`, which Boost computes with its relate machinery, for a bed that is neither a box nor a circle (the bin check, the bottom-left objective, the excludes dropped outside the bed) | `utils/boost_alg.hpp:378-381` | not translated: the exact predicate in 128-bit integers, which agrees with Boost wherever Boost's double side tests are exact; probed (NGEO, ARNG's polygon beds), open past that |
+| An `ArrangePolygon` of fewer than three points makes no item, yet the results are written back by position: each later polygon gets the next one's result and the last keeps its own | `Arrange.cpp` (`process_arrangeable`, `arrange`) | kept; probed (ARNG's chosen run with a two-point polygon) |
+| A triangle alone on a plate: libnest2d's hull of a path of three points is empty (`edges <= 3`), and the offset by zero every item gets (`inflation(0)` still sets `has_inflation_`) takes a collinear fourth point off. `finalAlign(Box)` gives `nfpInnerRectBed` the empty hull, whose inverted box is past Clipper's range, and Clipper throws inside `~_NofitPolyPlacer`, which is `noexcept`: `std::terminate`. With fixed items on the plate, `correctNfpPosition` first reads the empty item's vertices (`*end()`) | `geometry_traits.hpp:1049-1056`, `nester.hpp:308-312`, `:434-444`, `placers/nfpplacer.hpp:338-373`, `:552-554`, `:1069` | a panic, `std::terminate: <what> left ~_NofitPolyPlacer`: `firstfit.rs`'s `destroy` turns any error or panic of `finalAlign` in a destructor into one (unit test `a_lone_triangle_ends_the_run_in_the_final_alignment`). ARNG inflates every triangle |
+| An item that fits an empty plate but scores 1e7 or more (or below 0) on every plate never meets the `MAX_NUM_PLATES` test, so plates are opened one after another, and its second failure on a plate with nothing packed preloads `fixed_bins[placers.size() - 1]` past the end of `fixed_bins`: undefined behaviour | `selections/firstfit.hpp:116-200` (the read at `:179`) | `ArrangeError::Undefined` at that read, so the Rust ends there; ARNG keeps to inputs that end (below) |
+| The placers live in a `std::vector` reserved for as many placers as items. `_NofitPolyPlacer` is not nothrow-movable (`Slic3r::Point` declares its copy constructor), so when a run opens more plates than that, MSVC copies the placers and destroys the old ones in order, each destructor's `finalAlign` moving the items its copy shares | `selections/firstfit.hpp:43`, `:192` | kept, with MSVC's growth (half again) |
+| `ArrangeParams::progressind` defaults to printing `st=<n>, <name>` to `std::cout` | `src/libslic3r/Arrange.hpp:146-148` | no default: `ArrangeCallbacks` holds none, and `stdout_progressind` prints what the C++ default prints, for a caller that keeps the C++ default (o2-model's `ModelArrange`) |
+| `allow_rotations` runs libnest2d's rotating calipers (`fitIntoBoxRotation`, `minAreaBoundingBox` over `boost::rational<int128_t>`) | `Arrange.cpp:945-1005` | not translated: `ArrangeError::RotationsNotTranslated`, before anything changes; the command line sets `allow_rotations = false` (`cli/run.cpp:994`) |
+
+ARNG's generated runs keep to inputs on which the C++ is defined and ends
+(`parity/oracle/probe/arrange/runs.cpp`): fixed items and excluded regions on box beds only,
+convex polygon beds when printing by object, fixed items on the bed, and every triangle inflated
+(an uninflated one by 0.5 mm).
 
 ### orca-model
 

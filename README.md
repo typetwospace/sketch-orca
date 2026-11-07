@@ -217,13 +217,13 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | `orca-cli` | The program, `sketch-orca-rs`. |
 | `orca-eigen` | Phase O2: the Eigen 5.0.1 operations libslic3r's geometry reaches, evaluated as MSVC compiles them (o2-geom). |
 | `orca-geom` | Phase O2: Clipper 6.4.2, `ClipperUtils` and libslic3r's points, lines, polygons, ExPolygons, boxes, convex hulls and the `Geometry` predicates and transform builders (o2-geom; `Geometry::Transformation` comes with the task that first needs it). |
-| `orca-exact` | Phase O2: Boost's signed-magnitude `int128_t` and `rational`, which arrangement computes with (o2-arrange). |
+| `orca-exact` | Phase O2: Boost's signed-magnitude `int128_t` and `rational`, which arrangement computes with, down to the exceptions of the wrapped Lehmer gcd, proven by `arrange.sop1`'s XI28 and XRAT records (o2-arrange). |
 | `orca-qhull` | Phase O2: Qhull 2015.2, the convex hulls of meshes (o2-mesh). |
 | `orca-mesh` | Phase O2: admesh's STL reading and repair and libslic3r's `TriangleMesh` with its statistics, transforms, bounding boxes, split and 2D hull, proven by `mesh.sop1`'s MCAS and MSTD records (o2-mesh; the 3D hull comes with `orca-qhull`). |
 | `orca-zip` | Phase O2: ZIP archives as miniz reads and writes them, for 3MF files (o2-model). |
 | `orca-xml` | Phase O2: XML as expat 2.5.0 parses it, for 3MF files (o2-model). |
 | `orca-placeholder` | Phase O2: Orca's placeholder parser's boolean expressions, for the presets' compatibility conditions, with `boost::regex` as an MSVC build reads it; `placeholder.sop1` holds every condition of the vendor profiles (o2-front). |
-| `orca-arrange` | Phase O2: arrangement with libnest2d, `Arrange.cpp`, NLopt 2.5.0 and Boost.Geometry's R*-tree (o2-arrange). |
+| `orca-arrange` | Phase O2: arrangement with libnest2d, `Arrange.cpp`, NLopt 2.5.0's subplex and Nelder-Mead and Boost.Geometry's R*-tree, on box, circle, polygon and infinite beds and over several plates, proven by `arrange.sop1`'s NLOP, NOPT, RTRE, NFPC, NGEO and ARNG records (o2-arrange; rotations are not translated, as the command line never rotates). |
 | `orca-model` | Phase O2: the STL, OBJ and 3MF readers, `Model`, `BuildVolume` and `ModelArrange` (o2-model). |
 
 Phase O2's crates (added 2026-11-07) declare every dependency they will need from the start, so
@@ -242,6 +242,7 @@ bun run rs:test:release                # cargo test --locked --release: the ship
 SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes bun run rs:test   # the probe tests on the full set
 SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes bun run rs:test:release -p orca-crt -p orca-fmt -p orca-stl -p orca-tbb --test probes
 SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes bun run rs:test:release -p orca-eigen -p orca-geom --test probes
+SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes bun run rs:test:release -p orca-exact -p orca-arrange --test probes
 bun run rs:clippy -- -D warnings       # cargo clippy --locked --all-targets -- -D warnings
 bun run rs:fmt:check                   # cargo fmt --all --check
 bun scripts/rust.ts <build|test|clippy|fmt> [args]   # the same with other arguments
