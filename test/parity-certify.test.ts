@@ -6,15 +6,20 @@
 // the model's file check); a family is certified when every run of every case passes; parity.json's
 // flags are raised and never lowered, and a certified family that fails is a regression; every run
 // of a corpus job, example or refusal that reaches an uncertified family must be declined naming it,
-// unless its C++ run ended within what the program does; goldens count only when parity neutral passed with the
-// staged oracle and they were recorded with it. Hermetic: the runs are written to a temporary
-// folder.
+// unless its C++ run ended within what the program does, the families held as the same run raises
+// them; goldens count only when parity neutral passed with the staged oracle and they were recorded
+// with it. The dumps: an answered run writes the golden's dumps, the same; a right decline that wrote
+// every dump of a boundary the same, its progress the C++ run's first lines, passes the families
+// before that boundary and no other; a dump that differs makes the decline wrong; goldens of before
+// dumps were kept compare none. Hermetic: the runs are written to a temporary folder.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  BOUNDARY_FAMILIES,
+  boundariesReached,
   compareCase,
   DECLINE_HELD_KINDS,
   declineGaps,
@@ -25,6 +30,7 @@ import {
   isResult,
   normaliseEngine,
   oracleChainProblems,
+  progressIsPrefix,
   progressStages,
   raiseCertified,
   rustProgramPath,
@@ -51,17 +57,21 @@ function side(name: string): Side {
   return { store: join(work, name, 'store'), root: join(work, name, 'cases'), resources: join(work, 'resources'), work: join(work, name) }
 }
 
-/** Keeps a run of `caseId` in `s`'s store as recordingExec does, and returns its record. */
-function keep(s: Side, caseId: string, index: number, o: { code: number; files?: Record<string, string>; stdout?: string; stderr?: string; gone?: string[]; args?: string[] }): RecordedRun {
+/** Keeps a run of `caseId` in `s`'s store as recordingExec does (its dumps as collectDumps does), and returns its record. */
+function keep(s: Side, caseId: string, index: number, o: { code: number; files?: Record<string, string>; stdout?: string; stderr?: string; gone?: string[]; args?: string[]; dumps?: Record<string, Buffer> }): RecordedRun {
   const dir = join(s.store, caseId, String(index))
   mkdirSync(join(dir, 'files'), { recursive: true })
+  if (o.dumps) {
+    mkdirSync(join(dir, 'dumps'), { recursive: true })
+    for (const [f, b] of Object.entries(o.dumps)) writeFileSync(join(dir, 'dumps', f), b)
+  }
   writeFileSync(join(dir, 'stdout'), o.stdout ?? '')
   writeFileSync(join(dir, 'stderr'), o.stderr ?? '')
   for (const [rel, text] of Object.entries(o.files ?? {})) {
     mkdirSync(join(dir, 'files', ...rel.split('/').slice(0, -1)), { recursive: true })
     writeFileSync(join(dir, 'files', ...rel.split('/')), text.split('<case>').join(join(s.root, caseId)))
   }
-  return { index, args: o.args ?? ['run', '--job', '<cases>/c/job.json'], extraEnv: [], code: o.code, timedOut: false, files: Object.keys(o.files ?? {}).sort(), gone: o.gone ?? [] }
+  return { index, args: o.args ?? ['run', '--job', '<cases>/c/job.json'], extraEnv: [], code: o.code, timedOut: false, files: Object.keys(o.files ?? {}).sort(), gone: o.gone ?? [], ...(o.dumps ? { dumps: Object.keys(o.dumps).sort() } : {}) }
 }
 
 function caseRecord(id: string, runs: RecordedRun[]): CaseRecord {
@@ -128,7 +138,7 @@ describe('results as JSON values', () => {
     const cpp = keep(g, 'c', 0, { code: 0, files: { 'result.json': result('  "ok": true,\n  "outputs": [\n    "<case>/a.gcode"\n  ]', CPP_ENGINE) } })
     const same = keep(r, 'c', 0, { code: 0, files: { 'result.json': result('  "ok": true,\n  "outputs": ["<case>/a.gcode"]', RUST_ENGINE) } })
     const v = compareCase({ caseId: 'c', golden: { side: g, record: caseRecord('c', [cpp]) }, rust: { side: r, record: caseRecord('c', [same]) }, masks: [], families: [], classOf: NO_CLASS, envelopeOf: NO_CLASS })
-    expect(v.runs).toEqual([{ run: 0, passed: true, declined: false, problems: [] }])
+    expect(v.runs).toEqual([{ run: 0, passed: true, declined: false, boundaries: [], problems: [] }])
     const other = side('other')
     const differs = keep(other, 'c', 0, { code: 0, files: { 'result.json': result('  "ok": true,\n  "outputs": ["<case>/b.gcode"]', RUST_ENGINE) } })
     const w = compareCase({ caseId: 'c', golden: { side: g, record: caseRecord('c', [cpp]) }, rust: { side: other, record: caseRecord('c', [differs]) }, masks: [], families: [], classOf: NO_CLASS, envelopeOf: NO_CLASS })
@@ -195,7 +205,7 @@ describe('a decline', () => {
     const d = declined({})
     expect(d.problems).toEqual([])
     const v = compareCase({ caseId: 'c', golden: { side: d.g, record: caseRecord('c', [d.cpp]) }, rust: { side: d.r, record: caseRecord('c', [d.rust]) }, masks: [], families, classOf: NO_CLASS, envelopeOf: NO_CLASS })
-    expect(v.runs).toEqual([{ run: 0, passed: false, declined: true, problems: [] }])
+    expect(v.runs).toEqual([{ run: 0, passed: false, declined: true, boundaries: [], problems: [] }])
     const verdicts = familyVerdicts(parityOf(families), new Map([['c', v]]))
     expect(verdicts.find((f) => f.name === 'intake')).toMatchObject({ passed: false, declined: 1, certified: false })
     expect(verdicts.find((f) => f.name === 'intake')!.problems).toEqual(['c/0: declined (not-ported)'])
@@ -259,7 +269,7 @@ describe('a decline', () => {
 
   test('never passes a family after the front end either', () => {
     const d = declined({})
-    const v: CaseVerdict = { id: 'm', runs: [{ run: 0, passed: false, declined: true, problems: [] }] }
+    const v: CaseVerdict = { id: 'm', runs: [{ run: 0, passed: false, declined: true, boundaries: [], problems: [] }] }
     const verdicts = familyVerdicts(parityOf(families), new Map([['m', v]]))
     expect(verdicts.find((f) => f.name === 'model-load')).toMatchObject({ passed: false, declined: 1, certified: false })
     expect(d.problems).toEqual([])
@@ -273,8 +283,8 @@ describe('a decline', () => {
 })
 
 describe('families and parity.json', () => {
-  const pass: CaseVerdict = { id: 'a', runs: [{ run: 0, passed: true, declined: false, problems: [] }] }
-  const fail: CaseVerdict = { id: 'b', runs: [{ run: 0, passed: true, declined: false, problems: [] }, { run: 1, passed: false, declined: false, problems: ['exit: 1 against 2'] }] }
+  const pass: CaseVerdict = { id: 'a', runs: [{ run: 0, passed: true, declined: false, boundaries: [], problems: [] }] }
+  const fail: CaseVerdict = { id: 'b', runs: [{ run: 0, passed: true, declined: false, boundaries: [], problems: [] }, { run: 1, passed: false, declined: false, boundaries: [], problems: ['exit: 1 against 2'] }] }
 
   test('a family passes when every run of every case of it passes, and not when a case was not run', () => {
     const p = parityOf([family('version', ['a']), family('intake', ['a', 'b']), family('placement', ['z']), family('info', [])])
@@ -301,6 +311,102 @@ describe('families and parity.json', () => {
     expect(raised).toEqual(['version'])
     expect(regressions).toEqual(['intake'])
     expect(JSON.stringify(p)).toBe(before)
+  })
+})
+
+describe('the dumps', () => {
+  const u32 = (v: number) => {
+    const b = Buffer.alloc(4)
+    b.writeUInt32LE(v)
+    return b
+  }
+  const u64 = (v: number) => {
+    const b = Buffer.alloc(8)
+    b.writeBigUInt64LE(BigInt(v))
+    return b
+  }
+  const i64 = (v: number) => {
+    const b = Buffer.alloc(8)
+    b.writeBigInt64LE(BigInt(v))
+    return b
+  }
+  const str = (t: string) => Buffer.concat([u32(Buffer.byteLength(t)), Buffer.from(t, 'utf8')])
+  /** A front-objects dump whose one CONF value is `value`. */
+  const dump = (value: string) => {
+    const records: [string, Buffer][] = [
+      ['HEAD', Buffer.concat([str('front'), str('objects'), i64(-1), u32(1)])],
+      ['CONF', Buffer.concat([str('run'), i64(-1), i64(-1), u64(1), str('post_process'), u32(5), str(value), u64(0)])],
+    ]
+    const parts: Buffer[] = [Buffer.from('SOP1', 'latin1'), u32(1)]
+    for (const [kind, payload] of [...records, ['END ', u64(records.length)] as [string, Buffer]]) parts.push(Buffer.from(kind, 'latin1'), u64(payload.length), payload)
+    return Buffer.concat(parts)
+  }
+  const families = [family('intake', ['c']), family('preset-conditions', ['c']), family('model-load', ['c']), family('placement', ['c']), family('slice-mesh', ['c'])]
+  const GOLDEN_DUMPS = { 'front-objects-1.sop1': dump('<case>/post.py') }
+
+  /** Case c: the C++ run went past placement and wrote GOLDEN_DUMPS (or, with `before`, no dumps named); the Rust run as given. */
+  function verdict(rust: { code: number; files: Record<string, string>; dumps?: Record<string, Buffer> }, before = false) {
+    const g = side('golden')
+    const r = side('rust')
+    const cpp = keep(g, 'c', 0, { code: 0, files: { 'progress.ndjson': PROGRESS_PAST, 'result.json': result(failedFields('arrange-failed'), CPP_ENGINE) }, ...(before ? {} : { dumps: GOLDEN_DUMPS }) })
+    const run = keep(r, 'c', 0, rust)
+    const v = compareCase({ caseId: 'c', golden: { side: g, record: caseRecord('c', [cpp]) }, rust: { side: r, record: caseRecord('c', [run]) }, masks: [], families, classOf: NO_CLASS, envelopeOf: NO_CLASS })
+    return { v, verdicts: familyVerdicts(parityOf(families), new Map([['c', v]])) }
+  }
+  const answered = { 'progress.ndjson': PROGRESS_PAST, 'result.json': result(failedFields('arrange-failed'), RUST_ENGINE) }
+  const NOT_PORTED_SLICE = NOT_PORTED_FIELDS.replace('[\n    "model-load"\n  ]', '["slice-mesh"]')
+  const declinedFiles = (progress: string) => ({ 'progress.ndjson': progress, 'result.json': result(NOT_PORTED_SLICE, RUST_ENGINE) })
+
+  test('a boundary passes the families wholly before it: front-objects, the presets, the model and its placement', () => {
+    expect(BOUNDARY_FAMILIES).toEqual({ 'front-objects': ['preset-conditions', 'model-load', 'placement'] })
+    expect(boundariesReached(['front-objects-1.sop1', 'front-objects-2.sop1'], ['front-objects-1.sop1', 'front-objects-2.sop1'])).toEqual(['front-objects'])
+    expect(boundariesReached(['front-objects-1.sop1', 'front-objects-2.sop1'], ['front-objects-1.sop1'])).toEqual([])
+    expect(boundariesReached([], [])).toEqual([])
+  })
+
+  test("an answered run writes the golden's dumps, the same once each side's paths are portable", () => {
+    // The Rust run's dump names its own case folder, which the golden's writes as <case> too.
+    const same = verdict({ code: 0, files: answered, dumps: { 'front-objects-1.sop1': dump(`${join(side('rust').root, 'c')}/post.py`) } })
+    expect(same.v.runs).toEqual([{ run: 0, passed: true, declined: false, boundaries: [], problems: [] }])
+    const none = verdict({ code: 0, files: answered, dumps: {} })
+    expect(none.v.runs[0]).toMatchObject({ passed: false, problems: ['dumps/front-objects-1.sop1: not written, which the C++ run did'] })
+    const other = verdict({ code: 0, files: answered, dumps: { 'front-objects-1.sop1': dump('y') } })
+    expect(other.v.runs[0]!.problems).toEqual(['dumps/front-objects-1.sop1: differs from the C++ run\'s (record 1 (CONF))'])
+  })
+
+  test("a right decline that wrote the boundary's dumps the same, its progress the C++ run's first lines, passes those families and no other", () => {
+    const d = verdict({ code: -8, files: declinedFiles(PROGRESS_MODEL + '{"stage":"arrange","percent":10.0,"message":"arranging"}\n' + FAILED), dumps: GOLDEN_DUMPS })
+    expect(d.v.runs).toEqual([{ run: 0, passed: false, declined: true, boundaries: ['front-objects'], problems: [] }])
+    const by = (n: string) => d.verdicts.find((f) => f.name === n)!
+    for (const n of ['preset-conditions', 'model-load', 'placement']) expect(by(n)).toMatchObject({ passed: true, declined: 1, boundaryPasses: 1, certified: true })
+    for (const n of ['intake', 'slice-mesh']) expect(by(n)).toMatchObject({ passed: false, declined: 1, boundaryPasses: 0 })
+  })
+
+  test('a decline passes no family when its progress is not the C++ run\'s first lines, it wrote no dump, or the goldens are of before', () => {
+    const other = verdict({ code: -8, files: declinedFiles(PROGRESS_PRESETS + '{"stage":"model","percent":9.0,"message":"x"}\n' + FAILED), dumps: GOLDEN_DUMPS })
+    expect(other.v.runs[0]).toMatchObject({ declined: true, boundaries: [] })
+    const none = verdict({ code: -8, files: declinedFiles(PROGRESS_MODEL + FAILED), dumps: {} })
+    expect(none.v.runs[0]).toMatchObject({ declined: true, boundaries: [] })
+    expect(none.verdicts.find((f) => f.name === 'model-load')).toMatchObject({ passed: false, boundaryPasses: 0 })
+    const before = verdict({ code: -8, files: declinedFiles(PROGRESS_MODEL + FAILED), dumps: GOLDEN_DUMPS }, true)
+    expect(before.v.runs[0]).toMatchObject({ declined: true, boundaries: [] })
+  })
+
+  test('a decline that wrote a dump the C++ run did not, or one that differs, is wrong', () => {
+    const wrong = verdict({ code: -8, files: declinedFiles(PROGRESS_MODEL + FAILED), dumps: { 'front-objects-1.sop1': dump('y') } })
+    expect(wrong.v.runs[0]).toMatchObject({ declined: false, passed: false })
+    expect(wrong.v.runs[0]!.problems.join()).toContain("dumps/front-objects-1.sop1: differs from the C++ run's")
+    const extra = verdict({ code: -8, files: declinedFiles(PROGRESS_MODEL + FAILED), dumps: { ...GOLDEN_DUMPS, 'front-objects-2.sop1': dump('z') } })
+    expect(extra.v.runs[0]!.problems.join()).toContain('dumps/front-objects-2.sop1: written, which the C++ run did not')
+  })
+
+  test("progress lines are the C++ run's first ones, the Rust run's final failed line aside", () => {
+    const g = Buffer.from(PROGRESS_PAST)
+    expect(progressIsPrefix(g, Buffer.from(PROGRESS_MODEL + FAILED))).toBe(true)
+    expect(progressIsPrefix(g, Buffer.from(PROGRESS_MODEL))).toBe(true)
+    expect(progressIsPrefix(g, Buffer.from(PROGRESS_JOB + '{"stage":"model","percent":8.0,"message":"reading the model"}\n'))).toBe(false)
+    expect(progressIsPrefix(Buffer.from(PROGRESS_JOB), Buffer.from(PROGRESS_MODEL))).toBe(false)
+    expect(progressIsPrefix(g, undefined)).toBe(true)
   })
 })
 
@@ -367,6 +473,17 @@ describe('the decline against the corpus cases', () => {
     expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports'], families, rust: refused, golden: golden(PROGRESS_PRESETS + FAILED, 'config-invalid') })).toEqual([])
     expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports'], families, rust: refused, golden: golden(PROGRESS_MODEL + FAILED, 'file-not-found') })).toEqual([])
     expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports'], families, rust: refused, golden: golden(PROGRESS_MODEL + FAILED, 'model-unreadable') }).join()).toContain('was not declined')
+  })
+
+  test('is held against parity.json as the same run raises it: a family certified now needs no decline', () => {
+    const r = side('rust')
+    const ran = { side: r, record: caseRecord('m', [keep(r, 'm', 0, { code: 0, files: { 'result.json': result('  "ok": true', RUST_ENGINE) } })]) }
+    const p = parityOf(families)
+    expect(declineGaps({ caseId: 'm', reaches: ['supports'], families: p.families, rust: ran, golden: past() }).join()).toContain('was not declined')
+    const now: CaseVerdict = { id: 'm', runs: [{ run: 0, passed: true, declined: false, boundaries: [], problems: [] }] }
+    const raised = raiseCertified(p, familyVerdicts(p, new Map([['m', now]])))
+    expect(raised.raised).toEqual(['supports', 'raft'])
+    expect(declineGaps({ caseId: 'm', reaches: ['supports'], families: raised.parity.families, rust: ran, golden: past() })).toEqual([])
   })
 
   test('is held for jobs, examples and refusals, whose families are worked out for their one job, and not for smoke cases', () => {

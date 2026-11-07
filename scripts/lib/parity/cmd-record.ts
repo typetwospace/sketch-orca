@@ -2,8 +2,10 @@
 // thread counts 1, 2, 8 and the machine's concurrency, and with the engine staged from this checkout
 // five times (record.ts); classifies every output (classes.ts); keeps the oracle's one-thread pass as
 // the goldens (<work>/parity/goldens); writes the front end's goldens (parity/goldens/front/) and
-// parity/parity.json; and writes <work>/parity/record.json. A pass whose program, knobs and corpus
-// have not changed is kept, not run again. --only runs the cases whose id matches, into
+// parity/parity.json; and writes <work>/parity/record.json. The oracle's passes keep the dumps of
+// the boundaries in record.ts KEPT_DUMPS beside their runs, and goldens.json names each kept dump
+// with its class across the thread counts (B or T). A pass whose program, knobs, kept boundaries and
+// corpus have not changed is kept, not run again. --only runs the cases whose id matches, into
 // <work>/parity/runs/record-only, and writes neither goldens nor parity.json (for trying a case).
 // It needs parity corpus, parity oracle, and build, smoke and stage of this checkout.
 
@@ -22,7 +24,9 @@ import { readMasks } from './masks.ts'
 import { checkPlatforms } from './neutral.ts'
 import { oraclePatches, oracleSourceInputs, oracleUnderTest } from './oracle.ts'
 import {
+  classifyDumps,
   classifyPasses,
+  KEPT_DUMPS,
   keepGoldens,
   oracleLabel,
   parityDocument,
@@ -111,8 +115,10 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
   say(`written: ${files.report}`)
   if (only) return 0
   const kept = passes.find((p) => p.label === oracleLabel(1))!
-  const index = keepGoldens({ pass: kept, store: files.store(kept.label), goldens: files.goldens, corpusSha256, root: files.root, resources: oracle.resources, work: ctx.work.home, oracle: { exeSha256: oracle.manifest.exe.sha256, cli: oracle.manifest.cli } })
-  say(`goldens: ${kept.label} kept in ${files.goldens}`)
+  const dumps = classifyDumps(passes, files.store)
+  const index = keepGoldens({ pass: kept, store: files.store(kept.label), goldens: files.goldens, corpusSha256, root: files.root, resources: oracle.resources, work: ctx.work.home, oracle: { exeSha256: oracle.manifest.exe.sha256, cli: oracle.manifest.cli }, dumps })
+  say(`goldens: ${kept.label} kept in ${files.goldens}, with ${dumps.length} dumps of ${KEPT_DUMPS.join(', ')} (${dumps.filter((d) => d.class === 'T').length} T across the thread counts)`)
+  for (const d of dumps.filter((x) => x.class === 'T').slice(0, 20)) say(`  T: ${d.case}/${d.run}/dumps/${d.dump}: ${d.detail ?? ''}`)
   const front = writeFrontGoldens({ doc, index, goldens: files.goldens, engineDir: ctx.engine.engine })
   say(`front-end goldens: ${front.length} files in parity/goldens/front`)
   const pf = parityFile(ctx.engine.engine)

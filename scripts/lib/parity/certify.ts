@@ -33,6 +33,20 @@
 // certify (the corpus's families for it, corpus.ts) must be declined, naming each such family
 // (crates/orca-cli/src/decline.rs), unless its C++ run ended within what the program does itself,
 // so the program never does a step that is not certified; a gap fails certify and certify --check.
+// The families are held against parity.json as this very run raises it, so a family certified here
+// needs no decline in the same run.
+//
+// The dumps (record.ts KEPT_DUMPS). The program runs with the golden pass's knobs (time and seed
+// pinned, one thread) and SKETCH_ORCA_ORACLE_DUMP set to a fresh folder per run, as the oracle did,
+// and each dump it keeps is compared with the golden run's byte for byte, each side's paths portable
+// inside its strings (neutral.ts portableDump). A run that is answered must write the golden's dumps,
+// each the same, and no other. A declined run must write no dump the C++ run did not, nor one that
+// differs from it; and where it wrote every dump of a boundary the C++ run wrote, each the same, and
+// its progress lines (its final failed line aside) are the C++ run's first lines, the decline passes
+// the families wholly before that boundary (BOUNDARY_FAMILIES: front-objects passes
+// preset-conditions, model-load and placement), in RunVerdict.boundaries and the families'
+// boundaryPasses. It passes no other family. Goldens recorded before dumps were kept (their runs name
+// no dumps) are compared without them, and no decline passes a family against them.
 
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -42,7 +56,8 @@ import { lineShape, type EnvelopeReport, type OutputEnvelope } from './envelope.
 import { portableBytes, type OutputClass } from './classes.ts'
 import { compareOutput, type Mask, type OutputStatus } from './masks.ts'
 import type { NeutralReport } from './neutral.ts'
-import { maskName, outputBytes, outputNames, portableRoots, type FamilyEntry, type GoldensIndex, type ParityDocument } from './record.ts'
+import { readSop1, sop1Differences } from './neutral.ts'
+import { dumpBoundary, dumpNames, maskName, outputBytes, outputNames, portableDumpBytes, portableRoots, type FamilyEntry, type GoldensIndex, type ParityDocument } from './record.ts'
 import { runStore, type CaseRecord, type RecordedRun } from './same.ts'
 import { endedWithinRust, RUST_STAGES } from '../smoke.ts'
 
@@ -62,6 +77,14 @@ export const FRONT_FAMILIES = ['version', 'config-def', 'intake'] as const
 // What the program does itself and where a C++ run ended within it (RUST_STAGES, endedWithinRust)
 // are smoke.ts's, which the stage's rs-intake case holds the program to as well.
 export { endedWithinRust, RUST_STAGES }
+
+/**
+ * The families a declined run passes when it reached a boundary (see the top of this file): those
+ * wholly before the boundary's dump, one list per boundary of record.ts KEPT_DUMPS.
+ */
+export const BOUNDARY_FAMILIES: Record<string, readonly string[]> = {
+  'front-objects': ['preset-conditions', 'model-load', 'placement'],
+}
 
 /** The code and exit code of a decline (crates/orca-cli/src/decline.rs; protocol/README.md). */
 export const NOT_PORTED = 'not-ported'
@@ -285,10 +308,66 @@ export interface RunVerdict {
   passed: boolean
   /**
    * The Rust program declined it (not-ported) and declineProblems found nothing wrong with the
-   * decline. Information only: a declined run does not pass, in any family.
+   * decline. A declined run passes no family but those of the boundaries it reached (`boundaries`).
    */
   declined: boolean
+  /**
+   * The boundaries a declined run reached: it wrote every dump of the boundary the C++ run wrote,
+   * each the same, and its progress lines are the C++ run's first lines. It passes the families of
+   * each (BOUNDARY_FAMILIES). Empty for a run that is not declined.
+   */
+  boundaries: string[]
   problems: string[]
+}
+
+/**
+ * The kept dumps of a run against the golden run's, each side's paths portable: those that are the
+ * same, those the golden run wrote and the Rust run did not, and those the Rust run wrote that the
+ * golden run did not or that differ from it (with the records that differ, RUN included).
+ */
+export function dumpComparison(o: { caseId: string; golden: { side: Side; run: RecordedRun }; rust: { side: Side; run: RecordedRun } }): { same: string[]; notWritten: string[]; wrong: string[] } {
+  const out = { same: [] as string[], notWritten: [] as string[], wrong: [] as string[] }
+  for (const dump of dumpNames([o.golden.run, o.rust.run])) {
+    const a = portableDumpBytes(o.golden.side.store, o.caseId, o.golden.run, dump, o.golden.side)
+    const b = portableDumpBytes(o.rust.side.store, o.caseId, o.rust.run, dump, o.rust.side)
+    if (a !== undefined && b !== undefined && a.equals(b)) out.same.push(dump)
+    else if (b === undefined) out.notWritten.push(dump)
+    else if (a === undefined) out.wrong.push(`dumps/${dump}: written, which the C++ run did not`)
+    else {
+      let detail: string
+      try {
+        const x = readSop1(a)
+        const y = readSop1(b)
+        const runA = x.records.find((r) => r.kind === 'RUN ')
+        const runB = y.records.find((r) => r.kind === 'RUN ')
+        const d = sop1Differences(x, y)
+        if (runA && runB && !runA.payload.equals(runB.payload)) d.unshift('the RUN record')
+        detail = d.length > 0 ? d.slice(0, 5).join('; ') : 'its bytes'
+      } catch (err) {
+        detail = `unreadable: ${(err as Error).message}`
+      }
+      out.wrong.push(`dumps/${dump}: differs from the C++ run's (${detail})`)
+    }
+  }
+  return out
+}
+
+/** Whether the Rust run's progress lines, its final failed line aside, are the golden run's first lines. */
+export function progressIsPrefix(golden: Buffer | undefined, rust: Buffer | undefined): boolean {
+  const lines = (b: Buffer | undefined) => (b === undefined ? [] : b.toString('latin1').split('\n').filter((l, i, all) => !(i === all.length - 1 && l === '')))
+  const g = lines(golden)
+  const r = lines(rust)
+  const last = r[r.length - 1]
+  if (last !== undefined && progressStages(Buffer.from(last, 'latin1'))[0] === 'failed') r.pop()
+  return r.length <= g.length && r.every((l, i) => l === g[i])
+}
+
+/** The boundaries whose every golden dump the Rust run wrote, the same (BOUNDARY_FAMILIES' keys). */
+export function boundariesReached(goldenDumps: string[], same: string[]): string[] {
+  return Object.keys(BOUNDARY_FAMILIES).filter((b) => {
+    const of = goldenDumps.filter((d) => dumpBoundary(d) === b)
+    return of.length > 0 && of.every((d) => same.includes(d))
+  })
 }
 
 export interface CaseVerdict {
@@ -307,31 +386,42 @@ export function compareCase(o: {
   envelopeOf: (run: number, output: string) => OutputEnvelope | undefined
 }): CaseVerdict {
   const runs: RunVerdict[] = []
-  if (!o.golden.record) return { id: o.caseId, runs: [{ run: -1, passed: false, declined: false, problems: ['the goldens do not have this case; run parity record'] }] }
-  if (!o.rust.record) return { id: o.caseId, runs: [{ run: -1, passed: false, declined: false, problems: ['the Rust program did not run this case'] }] }
+  if (!o.golden.record) return { id: o.caseId, runs: [{ run: -1, passed: false, declined: false, boundaries: [], problems: ['the goldens do not have this case; run parity record'] }] }
+  if (!o.rust.record) return { id: o.caseId, runs: [{ run: -1, passed: false, declined: false, boundaries: [], problems: ['the Rust program did not run this case'] }] }
   const n = Math.max(o.golden.record.runs.length, o.rust.record.runs.length)
   for (let i = 0; i < n; i++) {
     const g = { side: o.golden.side, run: o.golden.record.runs[i] }
     const r = { side: o.rust.side, run: o.rust.record.runs[i] }
     if (!g.run || !r.run) {
-      runs.push({ run: i, passed: false, declined: false, problems: [`only the ${g.run ? 'C++' : 'Rust'} program ran it`] })
+      runs.push({ run: i, passed: false, declined: false, boundaries: [], problems: [`only the ${g.run ? 'C++' : 'Rust'} program ran it`] })
       continue
     }
     const args = (x: RecordedRun) => JSON.stringify([x.args, x.extraEnv])
     if (args(g.run) !== args(r.run)) {
-      runs.push({ run: i, passed: false, declined: false, problems: [`the runs differ: ${args(g.run)} against ${args(r.run)}`] })
+      runs.push({ run: i, passed: false, declined: false, boundaries: [], problems: [`the runs differ: ${args(g.run)} against ${args(r.run)}`] })
       continue
     }
     const verdicts = compareWithGolden({ caseId: o.caseId, golden: g, rust: r, masks: o.masks, classOf: (out) => o.classOf(i, out), envelopeOf: (out) => o.envelopeOf(i, out) })
     const bad = verdicts.filter((v) => v.status === 'different')
-    if (bad.length === 0) {
-      runs.push({ run: i, passed: true, declined: false, problems: [] })
+    // The dumps, when the goldens kept them (a golden run recorded before has no `dumps`).
+    const withDumps = g.run.dumps !== undefined
+    const dumps = withDumps ? dumpComparison({ caseId: o.caseId, golden: { side: g.side, run: g.run }, rust: { side: r.side, run: r.run } }) : { same: [], notWritten: [], wrong: [] }
+    const dumpProblems = [...dumps.notWritten.map((d) => `dumps/${d}: not written, which the C++ run did`), ...dumps.wrong]
+    if (bad.length === 0 && dumpProblems.length === 0) {
+      runs.push({ run: i, passed: true, declined: false, boundaries: [], problems: [] })
       continue
     }
     const declined = r.run.code !== null && ((r.run.code % 256) + 256) % 256 === ((NOT_PORTED_EXIT % 256) + 256) % 256
-    const dp = declined ? declineProblems({ caseId: o.caseId, golden: g, rust: r, families: o.families }) : []
-    if (declined && dp.length === 0) runs.push({ run: i, passed: false, declined: true, problems: [] })
-    else runs.push({ run: i, passed: false, declined: false, problems: [...dp, ...bad.map((v) => `${v.output}: ${v.detail ?? 'differs'}`)] })
+    const dp = declined ? [...declineProblems({ caseId: o.caseId, golden: g, rust: r, families: o.families }), ...dumps.wrong] : []
+    if (declined && dp.length === 0) {
+      const progress = (x: { side: Side; run: RecordedRun }) => {
+        const f = x.run.files.find((p) => /(^|\/)progress\.ndjson$/.test(p))
+        return f === undefined ? undefined : sideBytes(x.side, o.caseId, x.run, `files/${f}`)
+      }
+      const prefix = progressIsPrefix(progress({ side: g.side, run: g.run }), progress({ side: r.side, run: r.run }))
+      const boundaries = withDumps && prefix ? boundariesReached(g.run.dumps ?? [], dumps.same) : []
+      runs.push({ run: i, passed: false, declined: true, boundaries, problems: [] })
+    } else runs.push({ run: i, passed: false, declined: false, boundaries: [], problems: [...dp, ...(declined ? [] : dumpProblems), ...bad.map((v) => `${v.output}: ${v.detail ?? 'differs'}`)] })
   }
   return { id: o.caseId, runs }
 }
@@ -390,8 +480,10 @@ export interface FamilyVerdict {
   cases: number
   runs: number
   passed: boolean
-  /** Its runs the Rust program declined, rightly (information: none of them passed). */
+  /** Its runs the Rust program declined, rightly (those that reached a boundary of it are in boundaryPasses too). */
   declined: number
+  /** Its declined runs that passed it by reaching a boundary after it (BOUNDARY_FAMILIES). */
+  boundaryPasses: number
   certifiedBefore: boolean
   certified: boolean
   /** The first problems, as <case>/<run>: what. */
@@ -400,12 +492,15 @@ export interface FamilyVerdict {
 
 /**
  * Each family's verdict from its cases': it passes when every run of every case of it passed. A
- * declined run is no pass, in any family, the front families too; `declined` counts them.
+ * declined run is no pass, in any family, the front families too, unless it reached a boundary
+ * whose families (BOUNDARY_FAMILIES) include this one; `declined` counts them and `boundaryPasses`
+ * those that passed so.
  */
 export function familyVerdicts(parity: ParityDocument, cases: Map<string, CaseVerdict>, maxProblems = 20): FamilyVerdict[] {
   return parity.families.map((f) => {
     let runs = 0
     let declined = 0
+    let boundaryPasses = 0
     const problems: string[] = []
     let passed = f.cases.length > 0
     for (const id of f.cases) {
@@ -418,14 +513,16 @@ export function familyVerdicts(parity: ParityDocument, cases: Map<string, CaseVe
       for (const r of c.runs) {
         runs++
         if (r.declined) declined++
-        const ok = r.passed
+        const byBoundary = r.declined && (r.boundaries ?? []).some((b) => (BOUNDARY_FAMILIES[b] ?? []).includes(f.name))
+        if (byBoundary) boundaryPasses++
+        const ok = r.passed || byBoundary
         if (!ok) {
           passed = false
           if (problems.length < maxProblems) problems.push(`${id}/${r.run}: ${r.declined ? 'declined (not-ported)' : r.problems.slice(0, 3).join('; ')}`)
         }
       }
     }
-    return { name: f.name, cases: f.cases.length, runs, passed, declined, certifiedBefore: f.certified, certified: f.certified || passed, problems }
+    return { name: f.name, cases: f.cases.length, runs, passed, declined, boundaryPasses, certifiedBefore: f.certified, certified: f.certified || passed, problems }
   })
 }
 

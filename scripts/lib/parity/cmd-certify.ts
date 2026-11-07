@@ -8,11 +8,13 @@
 // declines passes in no family. Exit 1 when a family parity.json certifies does not pass, or when a
 // run of a corpus job, example or refusal (DECLINE_HELD_KINDS) that reaches a family parity.json
 // does not certify is not declined naming it, its C++ run having gone past what the program does
-// itself (certify.ts declineGaps). It needs
-// parity corpus, and parity oracle, neutral and record run for this checkout's cli/ and patches
-// (certify.ts oracleChainProblems).
+// itself (certify.ts declineGaps), the families held as this run raises them. The program runs with
+// the golden pass's knobs and a fresh SKETCH_ORCA_ORACLE_DUMP folder per run, and the dumps it keeps
+// (record.ts KEPT_DUMPS) are compared with the goldens'; a decline that reached a boundary passes the
+// families before it (certify.ts BOUNDARY_FAMILIES). It needs parity corpus, and parity oracle,
+// neutral and record run for this checkout's cli/ and patches (certify.ts oracleChainProblems).
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { listPatches } from '../checkout.ts'
 import { sha256Bytes } from '../files.ts'
@@ -46,8 +48,9 @@ import type { EnvelopeReport } from './envelope.ts'
 import { readMasks } from './masks.ts'
 import { neutralFiles, type NeutralReport } from './neutral.ts'
 import { oraclePatches, oracleSourceInputs, oracleUnderTest } from './oracle.ts'
-import { GOLDENS_FORMAT, parityFile, readGoldens, readParity, recordFiles, writeJsonAtomic, type RecordReport } from './record.ts'
-import { runEngineCases } from './same.ts'
+import { knobRunner } from './neutral.ts'
+import { collectDumps, dumpsRoot, GOLDENS_FORMAT, keptDump, parityFile, readGoldens, readParity, recordFiles, writeJsonAtomic, type RecordReport } from './record.ts'
+import { runEngineCases, runHidden } from './same.ts'
 
 export const usage = `certify [--check] [--program <exe>]   runs every corpus case with ${RUST_PROGRAM} (target/debug, from bun run rs:build) and compares its outputs with the goldens; raises the certified families in parity/parity.json, never lowers them; --check writes no parity.json and fails on a regression`
 
@@ -104,7 +107,10 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
 
   const cases = corpusSmokeCases(doc, { corpusDir: paths.corpus, protocolDir: join(ctx.engine.engine, 'protocol') })
   const files = certifyFiles(paths, check)
-  say(`${cases.length} cases with ${exe}, in ${files.root}`)
+  // The golden pass's knobs (time and seed pinned, one thread) and a fresh dump folder per run.
+  const dumps = dumpsRoot(join(files.store, '..'), 'rust')
+  rmSync(dumps, { recursive: true, force: true })
+  say(`${cases.length} cases with ${exe}, in ${files.root}, with ${Object.entries(index.knobs).map(([k, v]) => `${k}=${v}`).join(' ') || 'no knobs'}`)
   const records = await runEngineCases(
     { label: RUST_PROGRAM, exe, resources: index.resources, libraryPath: dirname(exe) },
     {
@@ -117,9 +123,11 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
       baseEnv: process.env,
       platform,
       timeoutMs: smokeTimeoutMs(),
+      run: knobRunner(index.knobs, dumps, runHidden, (f) => keptDump(f)),
       log: (m) => log.detail(m),
     },
   )
+  collectDumps(dumps, files.store, records)
 
   const golden: Side = { store: join(paths.goldens, 'cases'), root: index.root, resources: index.resources, work: index.work }
   const rust: Side = { store: files.store, root: files.root, resources: index.resources, work: ctx.work.home }
@@ -141,13 +149,13 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
   const families = familyVerdicts(parity, verdicts)
   const { parity: raisedParity, raised, regressions } = raiseCertified(parity, families)
   // The decline against the corpus: each run of a case that reaches an uncertified family is
-  // declined, naming it (smoke cases aside: DECLINE_HELD_KINDS).
+  // declined, naming it (smoke cases aside: DECLINE_HELD_KINDS), the families as this run raised them.
   const held = doc.cases.filter((c) => (DECLINE_HELD_KINDS as readonly string[]).includes(c.kind))
   const declineGapList = held.flatMap((c) =>
     declineGaps({
       caseId: c.id,
       reaches: c.families,
-      families: parity.families,
+      families: raisedParity.families,
       rust: { side: rust, record: records.find((x) => x.id === c.id) },
       golden: { side: golden, record: index.cases.find((x) => x.id === c.id) },
     }),
@@ -165,7 +173,8 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
   }
   writeJsonAtomic(files.report, report)
   for (const f of families) {
-    const how = f.passed ? `passes (${f.runs} runs)` : `does not pass${f.declined > 0 ? ` (${f.declined} of ${f.runs} runs declined)` : ''}: ${f.problems.slice(0, 2).join(' | ')}`
+    const boundary = f.boundaryPasses > 0 ? `, ${f.boundaryPasses} by declines past its boundary` : ''
+    const how = f.passed ? `passes (${f.runs} runs${boundary})` : `does not pass${f.declined > 0 ? ` (${f.declined} of ${f.runs} runs declined${boundary})` : ''}: ${f.problems.slice(0, 2).join(' | ')}`
     say(`${f.certified ? 'certified' : '         '} ${f.name}: ${how}`)
   }
   if (!check && raised.length > 0) {

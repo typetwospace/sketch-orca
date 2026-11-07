@@ -142,12 +142,17 @@ export interface RecordedRun {
   files: string[]
   /** Files the run removed. */
   gone: string[]
+  /**
+   * The oracle's dumps kept of the run (record.ts KEPT_DUMPS), file names in <store>/<n>/dumps/; a
+   * run of a pass that keeps none (the engine's, or one recorded before dumps were kept) has none.
+   */
+  dumps?: string[]
 }
 
-/** Where run `index` of a case keeps its outputs: <store>/<index>/{stdout,stderr,files/}. */
-export function runStore(store: string, index: number): { dir: string; stdout: string; stderr: string; files: string } {
+/** Where run `index` of a case keeps its outputs: <store>/<index>/{stdout,stderr,files/,dumps/}. */
+export function runStore(store: string, index: number): { dir: string; stdout: string; stderr: string; files: string; dumps: string } {
   const dir = join(store, String(index))
-  return { dir, stdout: join(dir, 'stdout'), stderr: join(dir, 'stderr'), files: join(dir, 'files') }
+  return { dir, stdout: join(dir, 'stdout'), stderr: join(dir, 'stderr'), files: join(dir, 'files'), dumps: join(dir, 'dumps') }
 }
 
 /** The command line as same.json gives it: the cases' folder as <cases>, so both engines' read alike. */

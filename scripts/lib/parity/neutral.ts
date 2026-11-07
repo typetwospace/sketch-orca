@@ -13,6 +13,9 @@
 // RUN record of each dump (parity/SOP1.md) says TBB reports, so whether the arena of patch 0003
 // reports P to the code that asks is read from the oracle itself, not assumed.
 // Everything goes in <work>/parity/neutral.json; the runs are kept in <work>/parity/runs/neutral.
+// The SOP1 reader here (readSop1, sop1Differences) and portableDump (a dump's paths written as
+// <case>, <cases>, <resources> and <work> inside its strings) serve parity record, goldens --check
+// and certify too, as does knobRunner, which can drop each run's dumps but the kept boundaries.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, join } from 'node:path'
@@ -21,6 +24,7 @@ import type { OrcaLock } from '../lock.ts'
 import type { ParityPaths } from '../paths.ts'
 import { StepError } from '../run.ts'
 import { SMOKE_VERSION, type SmokeCase, type SmokePresetSets } from '../smoke.ts'
+import { portableText } from './classes.ts'
 import type { Mask, OutputStatus } from './masks.ts'
 import { ORACLE_KNOBS, type OracleUnderTest } from './oracle.ts'
 import { compareCases, runEngineCases, runHidden, type CaseRecord, type CaseReport, type EngineUnderTest, type RunProcess, type SameEngineInfo } from './same.ts'
@@ -174,27 +178,126 @@ export function sop1Differences(a: Sop1File, b: Sop1File): string[] {
   return out
 }
 
+/** The fields of a record kind whose strings portableDump rewrites, in the order OracleDump.cpp writes them. */
+type Sop1Field = 'u8' | 'bool' | 'u32' | 'i32' | 'f32' | 'u64' | 'i64' | 'f64' | 'str' | { count: Sop1Field[] } | { fixed: number; of: Sop1Field[] }
+
+const MATRIX: Sop1Field = { fixed: 16, of: ['f64'] }
+
+/**
+ * The record kinds whose strings can hold a path (parity/SOP1.md): a config's values, an object's
+ * or volume's name, and the knobs' values. Other kinds are compared as they are.
+ */
+export const SOP1_STRING_FIELDS: Record<string, Sop1Field[]> = {
+  HEAD: ['str', 'str', 'i64', 'u32'],
+  'RUN ': [{ count: ['str', 'bool', 'str'] }, 'i32', 'u64', 'i32'],
+  CONF: ['str', 'i64', 'i64', { count: ['str', 'u32', 'str', { count: ['f64'] }] }],
+  MODL: ['i64', 'str', 'bool', { count: ['f64'] }, { count: [MATRIX, 'bool'] }, { count: ['str', 'i32', MATRIX, { count: ['f32', 'f32', 'f32'] }, { count: ['i32', 'i32', 'i32'] }] }],
+}
+
+const FIXED_SIZE: Record<string, number> = { u8: 1, bool: 1, u32: 4, i32: 4, f32: 4, u64: 8, i64: 8, f64: 8 }
+
+/** Copies `fields` from `src` at `at` into `out`, each string through `str`; returns where it stopped. */
+function rewriteFields(src: Buffer, at: number, fields: Sop1Field[], out: Buffer[], str: (s: Buffer) => Buffer): number {
+  const need = (n: number) => {
+    if (at + n > src.length) throw new Error('the payload ends inside a field')
+  }
+  for (const f of fields) {
+    if (typeof f === 'string') {
+      if (f === 'str') {
+        need(4)
+        const n = src.readUInt32LE(at)
+        need(4 + n)
+        const s = str(src.subarray(at + 4, at + 4 + n))
+        const len = Buffer.alloc(4)
+        len.writeUInt32LE(s.length)
+        out.push(len, s)
+        at += 4 + n
+      } else {
+        const n = FIXED_SIZE[f]!
+        need(n)
+        out.push(src.subarray(at, at + n))
+        at += n
+      }
+    } else if ('count' in f) {
+      need(8)
+      const n = src.readBigUInt64LE(at)
+      out.push(src.subarray(at, at + 8))
+      at += 8
+      for (let i = 0n; i < n; i++) at = rewriteFields(src, at, f.count, out, str)
+    } else {
+      for (let i = 0; i < f.fixed; i++) at = rewriteFields(src, at, f.of, out, str)
+    }
+  }
+  return at
+}
+
+/**
+ * A dump with its paths portable between folders: each of `roots` written as its name
+ * (classes.ts portableText) in the strings of the kinds of SOP1_STRING_FIELDS, each string's
+ * length and its record's length written again. The bytes as they are when no root appears in
+ * them, or when they are not an SOP1 file of those fields (then a path in them makes them differ).
+ */
+export function portableDump(bytes: Buffer | undefined, roots: [string, string][]): Buffer | undefined {
+  if (bytes === undefined) return undefined
+  const latin = bytes.toString('latin1')
+  const asBytes = (s: string) => Buffer.from(s, 'utf8').toString('latin1')
+  const forms = roots.flatMap(([r]) => [r, r.replace(/\\/g, '/'), r.replace(/\\/g, '\\\\'), r.replace(/\//g, '\\\\')]).filter((f) => f !== '').map(asBytes)
+  if (!forms.some((f) => latin.includes(f))) return bytes
+  const latinRoots = roots.map(([r, n]): [string, string] => [asBytes(r), asBytes(n)])
+  const str = (s: Buffer) => Buffer.from(portableText(s.toString('latin1'), latinRoots), 'latin1')
+  try {
+    readSop1(bytes)
+    const out: Buffer[] = [bytes.subarray(0, 8)]
+    let at = 8
+    while (at < bytes.length) {
+      const kind = bytes.toString('latin1', at, at + 4)
+      const length = Number(bytes.readBigUInt64LE(at + 4))
+      const payload = bytes.subarray(at + 12, at + 12 + length)
+      const fields = SOP1_STRING_FIELDS[kind]
+      let body = payload
+      if (fields) {
+        const parts: Buffer[] = []
+        if (rewriteFields(payload, 0, fields, parts, str) !== payload.length) throw new Error(`the ${kind} record is longer than its fields`)
+        body = Buffer.concat(parts)
+      }
+      const head = Buffer.alloc(12)
+      head.write(kind, 0, 'latin1')
+      head.writeBigUInt64LE(BigInt(body.length), 4)
+      out.push(head, body)
+      at += 12 + length
+    }
+    return Buffer.concat(out)
+  } catch {
+    return bytes
+  }
+}
+
 // ---------------------------------------------------------------- running the oracle with knobs
 
 /**
  * A RunProcess that runs the engine with `knobs` added to its environment and, with `dumps`, with
  * SKETCH_ORCA_ORACLE_DUMP set to a new folder per engine run: <dumps>/<case>/<n>, n counting the
- * case's runs from 0 as same.ts's run stores do.
+ * case's runs from 0 as same.ts's run stores do. With `keep` (a dump's file name to whether it is
+ * kept), every other file the run wrote there is removed as soon as the run ends, so a pass holds
+ * only the boundaries it compares (record.ts KEPT_DUMPS) on disk.
  */
-export function knobRunner(knobs: Record<string, string>, dumps?: string, run: RunProcess = runHidden): RunProcess {
+export function knobRunner(knobs: Record<string, string>, dumps?: string, run: RunProcess = runHidden, keep?: (file: string) => boolean): RunProcess {
   const counts = new Map<string, number>()
-  return (exe, args, o) => {
+  return async (exe, args, o) => {
     const env = { ...o.env, ...knobs }
+    let folder: string | undefined
     if (dumps !== undefined) {
       const id = basename(o.cwd)
       const n = counts.get(id) ?? 0
       counts.set(id, n + 1)
-      const folder = join(dumps, id, String(n))
+      folder = join(dumps, id, String(n))
       rmSync(folder, { recursive: true, force: true })
       mkdirSync(folder, { recursive: true })
       env[ORACLE_KNOBS.dump] = folder
     }
-    return run(exe, args, { ...o, env })
+    const outcome = await run(exe, args, { ...o, env })
+    if (folder !== undefined && keep !== undefined && existsSync(folder)) for (const f of readdirSync(folder)) if (!keep(f)) rmSync(join(folder, f), { recursive: true, force: true })
+    return outcome
   }
 }
 

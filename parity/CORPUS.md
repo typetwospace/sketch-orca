@@ -302,4 +302,11 @@ with forward slashes, and JSON-escaped, so a result's bytes do not name the mach
 - `hSites`.
 
 Every family starts as `certified: false`. Certifying a family is later work (`parity certify`);
-`parity record` keeps a family that was certified before as it is.
+`parity record` keeps a family that was certified before as it is. `parity certify` certifies a
+family when every run of every case of it passes: its outputs the goldens', and the dumps the
+goldens keep (`front-objects-<n>.sop1`, the model once the objects are placed) the same. A run the
+Rust program declines passes no family, with one exception: a right decline that wrote every dump
+of a boundary as the C++ run did, its progress lines the C++ run's first lines, passes the families
+wholly before that boundary (`front-objects`: `preset-conditions`, `model-load` and `placement`).
+So a phase that ports the steps up to a boundary certifies their families on every case that goes
+past it, slices included, while the rest still declines.

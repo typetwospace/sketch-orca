@@ -1,6 +1,7 @@
 // parity goldens --check <folder>: copies the staged oracle and the corpus to a second work folder,
-// records the oracle there again as parity record kept it, and lists every output that differs from
-// the goldens once each folder's paths are portable as an H-site (goldens.ts): in parity.json, in
+// records the oracle there again as parity record kept it (its dumps too), and lists every output and
+// kept dump that differs from the goldens once each folder's paths are portable as an H-site
+// (goldens.ts): in parity.json, in
 // record.json's classes, and in <work>/parity/goldens-check.json. It needs parity record. Exit 0 when
 // it ran (H-sites are findings, recorded for oracle H-patches, not a failure of the check).
 

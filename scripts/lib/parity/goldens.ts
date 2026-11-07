@@ -5,7 +5,10 @@
 // folder's own paths written as <case>, <cases>, <resources> and <work> (record.ts portableRoots).
 // Any output that still differs is an H-site: it is listed in parity.json (hSites) for an oracle
 // H-patch, and record.json's class of that output becomes H. A zip (a .3mf) is compared as its
-// bytes, so a path inside one is an H-site too.
+// bytes, so a path inside one is an H-site too. The second folder's pass keeps the oracle's dumps
+// as record does (record.ts KEPT_DUMPS), and each kept dump is compared with the goldens' too, its
+// strings' paths portable (neutral.ts portableDump): one that differs is an H-site named
+// dumps/<file>.
 
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -19,10 +22,12 @@ import { portableBytes } from './classes.ts'
 import { corpusSmokeCases, type CorpusDocument } from './corpus.ts'
 import { oracleUnderTest, type OracleSourceInputs, type OracleUnderTest } from './oracle.ts'
 import {
+  dumpNames,
   oracleLabel,
   outputBytes,
   outputNames,
   parityDocument,
+  portableDumpBytes,
   portableRoots,
   readGoldens,
   recordFiles,
@@ -73,6 +78,15 @@ export function folderDifferences(o: {
         if (a === undefined && b === undefined) continue
         if (a === undefined || b === undefined) sites.push({ case: g.id, run: i, output: name, detail: `written in the ${a === undefined ? 'second' : 'first'} folder only` })
         else if (!a.equals(b)) sites.push({ case: g.id, run: i, output: name, detail: 'differs between the folders' })
+      }
+      // The kept dumps (record.ts KEPT_DUMPS), each folder's paths portable inside their strings.
+      for (const dump of dumpNames([gr, cr])) {
+        compared++
+        const a = portableDumpBytes(o.golden.store, g.id, gr, dump, o.golden)
+        const b = portableDumpBytes(o.check.store, g.id, cr, dump, o.check)
+        const output = `dumps/${dump}`
+        if (a === undefined || b === undefined) sites.push({ case: g.id, run: i, output, detail: `written in the ${a === undefined ? 'second' : 'first'} folder only` })
+        else if (!a.equals(b)) sites.push({ case: g.id, run: i, output, detail: 'differs between the folders' })
       }
     }
   }

@@ -26,6 +26,14 @@ The object steps are `posSlice`, `posPerimeters`, `posEstimateCurledExtrusions`,
 `psConflictCheck`. A step the engine skips writes nothing. Dumps are written one at a time, each
 whole, under one lock.
 
+`parity record` keeps the dumps of the boundaries in `KEPT_DUMPS` (`scripts/lib/parity/record.ts`;
+`front-objects` in phase O2) of each oracle pass beside its runs, and `parity certify` compares the
+Rust program's dumps of those boundaries with them byte for byte. Paths differ between the folders
+a dump is written in, so before two dumps are compared each side's folders are written as
+`<case>`, `<cases>`, `<resources>` and `<work>` inside the strings of HEAD, RUN, CONF and MODL,
+each string's length and its record's length written again (`neutral.ts` `portableDump`); the
+kinds without a string field that can hold a path are compared as they are.
+
 ## The container
 
 ```

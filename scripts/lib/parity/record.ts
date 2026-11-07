@@ -8,8 +8,16 @@
 // goldens.json names the oracle: its program's SHA-256 and the cli/ it was built from); the
 // front end's goldens are written into the repository (parity/goldens/front/); and parity.json lists
 // every family (corpus.ts FAMILIES) with the classes of the outputs of its cases, certified false.
+// The oracle's passes run with SKETCH_ORCA_ORACLE_DUMP set to a fresh folder per engine run
+// (neutral.ts knobRunner) and keep the dumps of the boundaries in KEPT_DUMPS (front-objects-<n>.sop1
+// in phase O2; O3 adds its own), each beside its run as <pass>/<case>/<n>/dumps/<file> and named in
+// the run's record (RecordedRun.dumps); every other dump is removed as soon as its run ends. Each
+// kept dump gets a class across the thread counts (classifyDumps: B when it is the same at every
+// count, its RUN record left out, T when not), which goldens.json lists (GoldensIndex.dumps), and
+// the goldens keep the one-thread pass's dumps with its outputs. Goldens recorded before dumps were
+// kept have no `dumps`, and certify reads them as before.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { copyTree, nativePath, sha256Bytes } from '../files.ts'
 import type { OrcaLock } from '../lock.ts'
@@ -20,7 +28,7 @@ import { SMOKE_VERSION, type SmokeCase, type SmokePresetSets } from '../smoke.ts
 import { classesOf, classify, portableBytes, type OutputClass } from './classes.ts'
 import type { CorpusDocument } from './corpus.ts'
 import type { Mask } from './masks.ts'
-import { knobRunner, PINNED_KNOBS } from './neutral.ts'
+import { knobRunner, PINNED_KNOBS, portableDump, readSop1, sop1Differences } from './neutral.ts'
 import { ORACLE_KNOBS, type OracleUnderTest } from './oracle.ts'
 import { runEngineCases, runHidden, runStore, type CaseRecord, type EngineUnderTest, type RunProcess } from './same.ts'
 
@@ -64,9 +72,123 @@ export function engineLabel(n: number): string {
   return `engine-${n}`
 }
 
-/** What makes a pass: the program, its knobs, the corpus, the smoke cases' version and the cases' folder. */
-export function passKey(o: { exeSha256: string; knobs: Record<string, string>; corpusSha256: string; caseIds: string[]; root: string }): string {
-  return sha256Bytes(JSON.stringify([o.exeSha256, Object.entries(o.knobs).sort(), o.corpusSha256, SMOKE_VERSION, o.caseIds, o.root]))
+/**
+ * What makes a pass: the program, its knobs, the corpus, the smoke cases' version and the cases'
+ * folder, and for a pass that keeps dumps the boundaries it keeps (so a pass kept from before
+ * dumps were kept, or before a boundary was added, runs again).
+ */
+export function passKey(o: { exeSha256: string; knobs: Record<string, string>; corpusSha256: string; caseIds: string[]; root: string; dumps?: readonly string[] }): string {
+  const parts: unknown[] = [o.exeSha256, Object.entries(o.knobs).sort(), o.corpusSha256, SMOKE_VERSION, o.caseIds, o.root]
+  if (o.dumps && o.dumps.length > 0) parts.push(['dumps', ...o.dumps])
+  return sha256Bytes(JSON.stringify(parts))
+}
+
+// ---------------------------------------------------------------- the dumps a pass keeps
+
+/**
+ * The boundaries whose dumps parity record keeps of the oracle's passes and certify compares, by
+ * the name part of the dump's file (<boundary>-<n>.sop1, parity/SOP1.md "Files"). Phase O2 keeps
+ * front-objects, the model once the objects are placed; O3 adds its boundaries here.
+ */
+export const KEPT_DUMPS: readonly string[] = ['front-objects']
+
+/** The boundary a dump's file is of (front-objects for front-objects-1.sop1), or undefined for a file that is no dump. */
+export function dumpBoundary(file: string): string | undefined {
+  const m = /^(.+)-(\d+)\.sop1$/.exec(file)
+  return m ? m[1] : undefined
+}
+
+/** Whether a dump's file is of a boundary in `kept`. */
+export function keptDump(file: string, kept: readonly string[] = KEPT_DUMPS): boolean {
+  const b = dumpBoundary(file)
+  return b !== undefined && kept.includes(b)
+}
+
+/** The dumps folder of one pass's engine runs: <dir>/<label>-dumps (knobRunner's <case>/<n>/ under it). */
+export function dumpsRoot(dir: string, label: string): string {
+  return join(dir, `${label}-dumps`)
+}
+
+/**
+ * Moves the kept dumps of every run (knobRunner's <dumps>/<case>/<n>/) beside the run in the store
+ * (<store>/<case>/<n>/dumps/) and names them in the run's record, sorted; then removes `dumps`.
+ * Every run gets `dumps`, empty when it wrote none.
+ */
+export function collectDumps(dumps: string, store: string, cases: CaseRecord[], kept: readonly string[] = KEPT_DUMPS): void {
+  for (const c of cases) {
+    for (const r of c.runs) {
+      const from = join(dumps, c.id, String(r.index))
+      const names = existsSync(from) ? readdirSync(from).filter((f) => keptDump(f, kept)).sort() : []
+      const to = runStore(join(store, c.id), r.index).dumps
+      rmSync(to, { recursive: true, force: true })
+      if (names.length > 0) mkdirSync(to, { recursive: true })
+      for (const f of names) renameSync(join(from, f), join(to, f))
+      r.dumps = names
+    }
+  }
+  rmSync(dumps, { recursive: true, force: true })
+}
+
+/** Every dump of a case's run `index` across passes, sorted. */
+export function dumpNames(runs: (CaseRecord['runs'][number] | undefined)[]): string[] {
+  return [...new Set(runs.flatMap((r) => r?.dumps ?? []))].sort()
+}
+
+/** The bytes of a kept dump of one run in a pass's store, or undefined when the run did not keep it. */
+export function dumpBytes(store: string, caseId: string, run: CaseRecord['runs'][number] | undefined, file: string): Buffer | undefined {
+  if (!run || !(run.dumps ?? []).includes(file)) return undefined
+  return readFileSync(join(runStore(join(store, caseId), run.index).dumps, file))
+}
+
+/** A kept dump with its side's paths portable (neutral.ts portableDump, portableRoots). */
+export function portableDumpBytes(store: string, caseId: string, run: CaseRecord['runs'][number] | undefined, file: string, roots: { root: string; resources: string; work: string }): Buffer | undefined {
+  return portableDump(dumpBytes(store, caseId, run, file), portableRoots({ root: roots.root, caseId, resources: roots.resources, work: roots.work }))
+}
+
+/** A kept dump's class across the oracle's thread counts, as goldens.json lists it. */
+export interface DumpClass {
+  case: string
+  run: number
+  dump: string
+  /** B: the same at every thread count, its RUN record left out; T: not. */
+  class: 'B' | 'T'
+  detail?: string
+}
+
+/**
+ * Each kept dump of the oracle's passes against the first pass's (the one-thread pass): B when every
+ * pass wrote it and its records are the same, the RUN record left out (it names the thread count),
+ * T when a pass did not write it or a record differs. The passes ran in one cases' folder, so no
+ * path differs between them.
+ */
+export function classifyDumps(passes: Pass[], stores: (label: string) => string): DumpClass[] {
+  const oracle = passes.filter((p) => p.label.startsWith('oracle-'))
+  const first = oracle[0]
+  if (!first) return []
+  const out: DumpClass[] = []
+  for (const c of first.cases) {
+    const byPass = (p: Pass) => p.cases.find((x) => x.id === c.id)
+    const runCount = Math.max(...oracle.map((p) => byPass(p)?.runs.length ?? 0))
+    for (let i = 0; i < runCount; i++) {
+      const runs = oracle.map((p) => byPass(p)?.runs[i])
+      for (const dump of dumpNames(runs)) {
+        const bytes = oracle.map((p) => dumpBytes(stores(p.label), c.id, byPass(p)?.runs[i], dump))
+        const missing = oracle.filter((_, k) => bytes[k] === undefined).map((p) => p.label)
+        let detail: string | undefined
+        if (missing.length > 0) detail = `not written by ${missing.join(', ')}`
+        for (let k = 1; k < oracle.length && detail === undefined; k++) {
+          try {
+            const d = sop1Differences(readSop1(bytes[0]!), readSop1(bytes[k]!))
+            if (d.length > 0) detail = `${oracle[k]!.label} differs from ${first.label}: ${d.slice(0, 3).join('; ')}`
+          } catch (err) {
+            detail = `unreadable: ${(err as Error).message}`
+          }
+        }
+        out.push({ case: c.id, run: i, dump, class: detail === undefined ? 'B' : 'T', ...(detail === undefined ? {} : { detail }) })
+      }
+    }
+  }
+  return out
 }
 
 interface PassFile {
@@ -104,6 +226,8 @@ export interface RecordOptions {
   platform: Platform
   timeoutMs: number
   run?: RunProcess
+  /** The boundaries whose dumps the oracle's passes keep; KEPT_DUMPS when not given. */
+  keptDumps?: readonly string[]
   log: (msg: string) => void
 }
 
@@ -111,31 +235,36 @@ export interface RecordOptions {
 export async function runPasses(o: RecordOptions): Promise<Pass[]> {
   const base = o.run ?? runHidden
   const caseIds = o.cases.map((c) => c.id)
-  const plan: { label: string; knobs: Record<string, string>; exe: { label: string; exe: string; resources: string; libraryPath: string }; exeSha256: string }[] = [
+  const kept = o.keptDumps ?? KEPT_DUMPS
+  const plan: { label: string; knobs: Record<string, string>; exe: { label: string; exe: string; resources: string; libraryPath: string }; exeSha256: string; dumps: readonly string[] }[] = [
     ...o.threads.map((p) => ({
       label: oracleLabel(p),
       knobs: { ...PINNED_KNOBS, [ORACLE_KNOBS.threads]: String(p) },
       exe: { label: oracleLabel(p), exe: o.oracle.exe, resources: o.oracle.resources, libraryPath: o.oracle.libraryPath },
       exeSha256: o.oracle.manifest.exe.sha256,
+      dumps: kept,
     })),
     ...Array.from({ length: o.engineRuns }, (_, i) => ({
       label: engineLabel(i + 1),
       knobs: {},
       exe: { label: engineLabel(i + 1), exe: o.engine.exe, resources: o.engine.resources, libraryPath: o.engine.libraryPath },
       exeSha256: o.engineExeSha256,
+      dumps: [] as readonly string[],
     })),
   ]
   const out: Pass[] = []
   for (const step of plan) {
     const store = o.files.store(step.label)
-    const key = passKey({ exeSha256: step.exeSha256, knobs: step.knobs, corpusSha256: o.corpusSha256, caseIds, root: o.files.root })
+    const key = passKey({ exeSha256: step.exeSha256, knobs: step.knobs, corpusSha256: o.corpusSha256, caseIds, root: o.files.root, dumps: step.dumps })
     const kept = readPass(store, key)
     if (kept) {
       o.log(`${step.label}: kept from an earlier run (the same program, knobs and corpus)`)
       out.push({ label: step.label, knobs: step.knobs, cases: kept.cases })
       continue
     }
-    o.log(`${step.label}: ${o.cases.length} cases${Object.keys(step.knobs).length > 0 ? ` with ${Object.entries(step.knobs).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}`)
+    o.log(`${step.label}: ${o.cases.length} cases${Object.keys(step.knobs).length > 0 ? ` with ${Object.entries(step.knobs).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}${step.dumps.length > 0 ? `, keeping the dumps of ${step.dumps.join(', ')}` : ''}`)
+    const dumps = step.dumps.length > 0 ? dumpsRoot(o.files.dir, step.label) : undefined
+    if (dumps !== undefined) rmSync(dumps, { recursive: true, force: true })
     const cases = await runEngineCases(step.exe, {
       root: o.files.root,
       store,
@@ -146,9 +275,10 @@ export async function runPasses(o: RecordOptions): Promise<Pass[]> {
       baseEnv: o.baseEnv,
       platform: o.platform,
       timeoutMs: o.timeoutMs,
-      run: Object.keys(step.knobs).length > 0 ? knobRunner(step.knobs, undefined, base) : base,
+      run: dumps !== undefined ? knobRunner(step.knobs, dumps, base, (f) => keptDump(f, step.dumps)) : Object.keys(step.knobs).length > 0 ? knobRunner(step.knobs, undefined, base) : base,
       log: o.log,
     })
+    if (dumps !== undefined) collectDumps(dumps, store, cases, step.dumps)
     const file: PassFile = { key, label: step.label, knobs: step.knobs, cases }
     writeFileSync(join(store, 'pass.json'), JSON.stringify(file, null, 1) + '\n')
     out.push({ label: step.label, knobs: step.knobs, cases })
@@ -327,6 +457,11 @@ export interface GoldensIndex {
    * them (certify.ts oracleChainProblems).
    */
   oracle?: GoldensOracle
+  /**
+   * The class of each dump the goldens keep (classifyDumps), across the oracle's thread counts.
+   * Goldens recorded before dumps were kept have none, and certify compares no dumps against them.
+   */
+  dumps?: DumpClass[]
   cases: CaseRecord[]
 }
 
@@ -336,13 +471,13 @@ export interface GoldensOracle {
   cli: string
 }
 
-/** Keeps a pass's store as the goldens: <goldens>/cases/<case>/<n>/ and <goldens>/goldens.json. */
-export function keepGoldens(o: { pass: Pass; store: string; goldens: string; corpusSha256: string; root: string; resources: string; work: string; oracle: GoldensOracle }): GoldensIndex {
+/** Keeps a pass's store as the goldens: <goldens>/cases/<case>/<n>/ (its dumps/ too) and <goldens>/goldens.json. */
+export function keepGoldens(o: { pass: Pass; store: string; goldens: string; corpusSha256: string; root: string; resources: string; work: string; oracle: GoldensOracle; dumps?: DumpClass[] }): GoldensIndex {
   rmSync(o.goldens, { recursive: true, force: true })
   const cases = join(o.goldens, 'cases')
   mkdirSync(cases, { recursive: true })
   for (const c of o.pass.cases) if (existsSync(join(o.store, c.id))) copyTree(join(o.store, c.id), join(cases, c.id), undefined, { link: true })
-  const index: GoldensIndex = { format: GOLDENS_FORMAT, pass: o.pass.label, knobs: o.pass.knobs, corpusSha256: o.corpusSha256, root: o.root, resources: o.resources, work: o.work, oracle: o.oracle, cases: o.pass.cases }
+  const index: GoldensIndex = { format: GOLDENS_FORMAT, pass: o.pass.label, knobs: o.pass.knobs, corpusSha256: o.corpusSha256, root: o.root, resources: o.resources, work: o.work, oracle: o.oracle, ...(o.dumps ? { dumps: o.dumps } : {}), cases: o.pass.cases }
   writeJsonAtomic(join(o.goldens, 'goldens.json'), index)
   return index
 }
