@@ -214,7 +214,7 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | `orca-config` | Orca's configuration: every option's `ConfigOptionDef`, generated from the configdef probe; the option values with `ConfigOption`'s serialisation and deserialisation; `handle_legacy`. |
 | `orca-cli` | The program, `sketch-orca-rs`. |
 | `orca-eigen` | Phase O2: the Eigen 5.0.1 operations libslic3r's geometry reaches, evaluated as MSVC compiles them (o2-geom). |
-| `orca-geom` | Phase O2: Clipper 6.4.2, `ClipperUtils` and libslic3r's points, lines, polygons, ExPolygons, boxes, hulls and `Transformation` (o2-geom). |
+| `orca-geom` | Phase O2: Clipper 6.4.2, `ClipperUtils` and libslic3r's points, lines, polygons, ExPolygons, boxes, convex hulls and the `Geometry` predicates and transform builders (o2-geom; `Geometry::Transformation` comes with the task that first needs it). |
 | `orca-exact` | Phase O2: Boost's signed-magnitude `int128_t` and `rational`, which arrangement computes with (o2-arrange). |
 | `orca-qhull` | Phase O2: Qhull 2015.2, the convex hulls of meshes (o2-mesh). |
 | `orca-mesh` | Phase O2: admesh's reading and repair and libslic3r's `TriangleMesh` (o2-mesh). |
