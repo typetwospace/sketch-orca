@@ -1,0 +1,25 @@
+# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "orca-mesh"
+description = "Triangle meshes: admesh's reading and repair, and libslic3r's TriangleMesh with its transforms"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Every dependency the crate will need, declared up front (o2-geom, 2026-11-07), so that
+# no task of phase O2 that fills a crate changes Cargo.toml or Cargo.lock.
+[dependencies]
+orca-crt = { workspace = true }
+orca-stl = { workspace = true }
+orca-tbb = { workspace = true }
+orca-fmt = { workspace = true }
+orca-eigen = { workspace = true }
+orca-geom = { workspace = true }
+orca-qhull = { workspace = true }
+
+[dev-dependencies]
+orca-probe = { workspace = true }

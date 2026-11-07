@@ -184,6 +184,113 @@ crates/orca-fmt/tests/fmt.rs), and the STL functions they sit in were translated
 STL. The earlier version remains in this repository's history (README.md, open items).
 
 
+Phase O2's crates, one by one
+-----------------------------
+
+Phase O2 of the Rust translation (added 2026-11-07) reads models, places them and answers info
+jobs. It adds ten crates. Each has a section of its own here, naming the code of others it carries
+and the OrcaSlicer files it translates. A crate whose task has not run yet carries nothing so far:
+its section names what it will carry, and the task that fills it keeps the section true. Each file
+that carries such code says what it carries, from which file, under "Carries ... code" in its
+header. The OrcaSlicer files are copyright the OrcaSlicer contributors (and, through OrcaSlicer,
+Bambu Lab, Prusa Research and the Slic3r authors), under the GNU Affero General Public License,
+version 3 (LICENSE).
+
+orca-eigen (filled by the o2-geom task)
+  - Eigen 5.0.1 (https://gitlab.com/libeigen/eigen, the archive eigen-5.0.1.zip that OrcaSlicer
+    v2.4.2's dependency build pins; its headers number it 3.5.0), by Benoit Jacob, Gael Guennebaud
+    and the Eigen contributors, under the Mozilla Public License, version 2.0 (MPL-2.0;
+    licenses/MPL-2.0.txt): the fixed-size vectors and matrices, Transform, AngleAxis and the
+    reductions libslic3r's geometry reaches (Eigen/src/Core and Eigen/src/Geometry). As section 3
+    of that licence asks, the files that carry Eigen code stay under MPL-2.0, say so with its
+    Exhibit A notice, and keep their source available here; its section 3.3 lets the program
+    combine them with code under the GNU Affero General Public License, version 3.
+
+orca-geom (filled by the o2-geom task)
+  - Clipper 6.4.2, by Angus Johnson (http://www.angusj.com), Copyright Angus Johnson 2010-2017, as
+    OrcaSlicer v2.4.2 carries it in deps_src/clipper, under the Boost Software License, version 1.0
+    (BSL-1.0; licenses/BSL-1.0.txt): the clipper, the offsetter and the helpers of clipper.cpp and
+    clipper.hpp; and the excerpt of Clipper 6.2.9 in src/libslic3r/Int128.hpp (Copyright Angus
+    Johnson 2010-2015, extended by Vojtech Bubnik), under the same licence.
+  - OrcaSlicer's src/libslic3r/ClipperUtils.cpp, Point.cpp, Polygon.cpp, Polyline.cpp,
+    MultiPoint.cpp, Line.cpp, ExPolygon.cpp, BoundingBox.cpp, Geometry.cpp and
+    Geometry/ConvexHull.cpp, with their headers and libslic3r.h.
+
+orca-exact (filled by the o2-arrange task)
+  - Boost.Multiprecision of Boost 1.84.0 (cpp_int's fixed-width signed-magnitude backend, as
+    int128_t), Copyright 2012-2022 John Maddock and Copyright 2022 Christopher Kormanyos, under
+    the Boost Software License, version 1.0 (licenses/BSL-1.0.txt).
+  - Boost.Rational of Boost 1.84.0 (boost/rational.hpp), under its own terms, which ask for its
+    notice in all copies:
+
+      (C) Copyright Paul Moore 1999. Permission to copy, use, modify, sell and distribute this
+      software is granted provided this copyright notice appears in all copies. This software is
+      provided "as is" without express or implied warranty, and with no claim as to its
+      suitability for any purpose.
+
+orca-qhull (filled by the o2-mesh task)
+  - Qhull 2015.2 (qhull_r 7.2.0, "2015.2.r 2016/01/18"), Copyright (c) 1993-2015 C.B. Barber,
+    Arlington, MA, and The National Science and Technology Research Center for Computation and
+    Visualization of Geometric Structures (The Geometry Center), University of Minnesota, as
+    OrcaSlicer v2.4.2 carries it in deps_src/qhull (src/libqhull_r and src/libqhullcpp), under
+    the Qhull licence (licenses/Qhull.txt). As that licence asks: this is a modified version of
+    Qhull, translated into Rust by the sketch-orca authors from 2026-11-07 so that sketch-orca-rs
+    computes the same hulls without the C code, and the original source code may be obtained from
+    http://www.qhull.org.
+
+orca-mesh (filled by the o2-mesh task)
+  - ADMesh, Copyright (C) 1995, 1996 Anthony D. Martin and Copyright (C) 2013, 2014 several
+    contributors, as OrcaSlicer v2.4.2 carries it, modified by PrusaSlicer, in deps_src/admesh,
+    under the GNU General Public License, version 2 or (at your option) any later version
+    (licenses/GPL-2.0.txt); sketch-orca takes it under version 3 (licenses/GPL-3.0.txt), which
+    section 13 of the GNU Affero General Public License lets it combine with.
+  - OrcaSlicer's src/libslic3r/TriangleMesh.cpp, with its header.
+
+orca-zip (filled by the o2-model task)
+  - miniz, based on miniz 2.1.0 (amalgamated) with Prusa Research's additions, as OrcaSlicer
+    v2.4.2 carries it in deps_src/miniz, Copyright 2013-2014 RAD Game Tools and Valve Software
+    and Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC, under the MIT licence
+    (licenses/MIT-miniz.txt).
+  - OrcaSlicer's src/libslic3r/miniz_extension.cpp, with its header.
+
+orca-xml (filled by the o2-model task)
+  - Expat 2.5.0, Copyright (c) 1998-2000 Thai Open Source Software Center Ltd and Clark Cooper
+    and Copyright (c) 2001-2022 Expat maintainers, as OrcaSlicer v2.4.2's dependency build
+    compiles it from deps/EXPAT/expat, under the MIT licence (licenses/MIT-expat.txt).
+
+orca-placeholder (filled by the o2-front task)
+  - OrcaSlicer's src/libslic3r/PlaceholderParser.cpp, with its header. Its grammar is written with
+    Boost.Spirit of Boost 1.84.0 (Copyright (c) 2001-2011 Joel de Guzman, Hartmut Kaiser and the
+    Spirit contributors, under the Boost Software License, version 1.0; licenses/BSL-1.0.txt);
+    where the crate takes the behaviour of Spirit's own parsers, such as its number parsers, it
+    carries that code under that licence.
+
+orca-arrange (filled by the o2-arrange task)
+  - libnest2d, by Tamas Meszaros (https://github.com/tamasmeszaros/libnest2d), as OrcaSlicer
+    v2.4.2 carries it, modified by PrusaSlicer and OrcaSlicer, in deps_src/libnest2d, under the
+    GNU Lesser General Public License, version 3 (licenses/LGPL-3.0.txt), which supplements the
+    GNU General Public License, version 3 (licenses/GPL-3.0.txt).
+  - NLopt 2.5.0 (https://github.com/stevengj/nlopt, tag v2.5.0), by Steven G. Johnson, Copyright
+    (c) 2007-2014 Massachusetts Institute of Technology, under the MIT licence
+    (licenses/MIT-NLopt.txt): the subplex and Nelder-Mead algorithms (src/algs/neldermead/sbplx.c
+    and nldrmd.c), the red-black tree (src/util/redblack.c), the stopping tests (src/util/stop.c)
+    and the API they are called through (src/api/general.c, options.c, optimize.c and
+    nlopt-in.hpp). NLopt's luksan code, under the GNU LGPL, is not carried.
+  - Boost.Geometry's R-tree of Boost 1.84.0 (boost/geometry/index, with its R* insertion),
+    Copyright (c) 2008 Federico J. Fernandez, Copyright (c) 2011-2023 Adam Wulkiewicz and
+    Copyright (c) 2020 Caian Benedicto, under the Boost Software License, version 1.0
+    (licenses/BSL-1.0.txt).
+  - OrcaSlicer's src/libslic3r/Arrange.cpp, with its header.
+
+orca-model (filled by the o2-model task)
+  - OrcaSlicer's src/libslic3r/Model.cpp, BuildVolume.cpp, ModelArrange.cpp, Format/STL.cpp,
+    Format/OBJ.cpp, Format/objparser.cpp and Format/bbs_3mf.cpp, with their headers.
+
+The staged engine does not carry these crates yet. Of them, sketch-orca-rs links only
+orca-placeholder until the o2-info task links the rest; the licence texts above join its
+LICENSES/sketch-orca-rs then.
+
+
 What was changed, and when
 --------------------------
 
@@ -239,6 +346,9 @@ newest date of the patch headers.
       crates/orca-config/src/legacy.rs       (src/libslic3r/PrintConfig.cpp)
       crates/orca-config/src/def_generated.rs (src/libslic3r/PrintConfig.cpp, src/libslic3r/Preset.cpp,
                                               generated from the configdef probe)
+    On 2026-11-07 phase O2 added ten crates (orca-eigen, orca-geom, orca-exact, orca-qhull,
+    orca-mesh, orca-zip, orca-xml, orca-placeholder, orca-arrange and orca-model), each described,
+    with what it carries, in "Phase O2's crates, one by one" above.
   - parity/ holds what holds the translation to the C++ engine, added 2026-11-06: the record
     format (parity/SOP1.md), the masks of what may differ between runs (parity/masks.json), and
     the oracle (parity/oracle/): the C++ engine built with knobs that pin its clock, seeds,

@@ -45,6 +45,19 @@ orca-probe = { path = "crates/orca-probe" }
 orca-stl = { path = "crates/orca-stl" }
 orca-tbb = { path = "crates/orca-tbb" }
 
+# Phase O2's crates (2026-11-07): each declares every dependency it will need up front, so that the
+# tasks that fill them in parallel never change this file or Cargo.lock.
+orca-arrange = { path = "crates/orca-arrange" }
+orca-eigen = { path = "crates/orca-eigen" }
+orca-exact = { path = "crates/orca-exact" }
+orca-geom = { path = "crates/orca-geom" }
+orca-mesh = { path = "crates/orca-mesh" }
+orca-model = { path = "crates/orca-model" }
+orca-placeholder = { path = "crates/orca-placeholder" }
+orca-qhull = { path = "crates/orca-qhull" }
+orca-xml = { path = "crates/orca-xml" }
+orca-zip = { path = "crates/orca-zip" }
+
 # No target-cpu: the program runs on any x64 machine and must give the same bytes on all of them.
 [profile.release]
 opt-level = 3

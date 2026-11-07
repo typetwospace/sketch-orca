@@ -22,5 +22,9 @@ orca-tbb = { workspace = true }
 orca-probe = { workspace = true }
 orca-json = { workspace = true }
 orca-config = { workspace = true }
+# Of phase O2's crates only the placeholder parser for now (the presets' compatibility conditions);
+# o2-info adds the other nine when it runs alone, so building this crate never compiles a crate
+# another task is filling.
+orca-placeholder = { workspace = true }
 sha2 = { workspace = true }
 windows-sys = { workspace = true }

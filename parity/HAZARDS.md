@@ -223,6 +223,64 @@ folded; other file systems: no order).
 | `src/libslic3r/Format/bbs_3mf.cpp:8541` | a 3MF's temporary folder | open (check) |
 | `src/libslic3r/utils.cpp:950`, `:1633`, `src/libslic3r/CutSurface.cpp:3629`, `src/libslic3r/Emboss.cpp:1011` | copies, removals, fonts | n/a (O) |
 
+## Phase O2's crates (2026-11-07)
+
+Phase O2 reads models, places them and answers info jobs. Each of its ten crates has a section
+here: what it translates, the probe file that holds its C++ behaviour (`parity/SOP1.md`, "Probe
+files"), and the hazards it owns. The task that fills a crate keeps its section current. Until
+then the crate holds only its name, its probe file is a stub (HEAD, PRUN, END), and every hazard
+of its code is **open**.
+
+### orca-eigen
+
+Eigen 5.0.1's operations, as MSVC 14.42 compiles them with the engine's flags (`/O2`,
+`/fp:precise`, no `/arch`, so SSE2 packets). Probe file `geom.sop1`. Filled by o2-geom.
+
+### orca-geom
+
+Clipper 6.4.2, `ClipperUtils` and libslic3r's geometry (points, lines, polygons, polylines,
+ExPolygons, bounding boxes, convex hulls, `Geometry::Transformation`). Probe file `geom.sop1`.
+Filled by o2-geom.
+
+### orca-exact
+
+Boost 1.84.0's `boost::multiprecision::int128_t` (signed magnitude, unchecked) and
+`boost::rational`. Probe file `arrange.sop1`. Filled by o2-arrange.
+
+### orca-qhull
+
+Qhull 2015.2 (`libqhull_r` 7.2.0 and `libqhullcpp`), with its `qsort` calls through `orca-crt`'s
+`qsort`, the static UCRT's own. Probe file `qhull.sop1`. Filled by o2-mesh.
+
+### orca-mesh
+
+admesh and `TriangleMesh`. Probe files `mesh.sop1` and, for the C runtime's stdio that admesh
+reads with (`orca-fmt`'s `stdio` and `scanf`), `cstdio.sop1`. Filled by o2-mesh.
+
+### orca-zip
+
+miniz, as the 3MF reader and writer use it through `miniz_extension.cpp`. Probe file `zip.sop1`.
+Filled by o2-model.
+
+### orca-xml
+
+expat 2.5.0, the dependency build's. Probe file `xml.sop1`. Filled by o2-model.
+
+### orca-placeholder
+
+The placeholder parser, for the presets' compatibility conditions. Probe file `placeholder.sop1`.
+Filled by o2-front.
+
+### orca-arrange
+
+libnest2d, `Arrange.cpp`, NLopt 2.5.0's subplex and Nelder-Mead, and Boost.Geometry's R*-tree.
+Probe file `arrange.sop1`. Filled by o2-arrange.
+
+### orca-model
+
+The STL, OBJ and 3MF readers, `Model`, `BuildVolume` and `ModelArrange`. Probe file `model.sop1`.
+Filled by o2-model.
+
 ## What the probe gate and the first record found (2026-11-06)
 
 - `__vdecl_floor2` gives each lane's UCRT `floor` on every recorded case of both sets, so

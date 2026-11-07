@@ -213,6 +213,22 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | `orca-json` | JSON with `nlohmann::json`'s semantics: parsing with its errors, the key order of `json` and of `ordered_json`, and `dump` with nlohmann's own number output. |
 | `orca-config` | Orca's configuration: every option's `ConfigOptionDef`, generated from the configdef probe; the option values with `ConfigOption`'s serialisation and deserialisation; `handle_legacy`. |
 | `orca-cli` | The program, `sketch-orca-rs`. |
+| `orca-eigen` | Phase O2: the Eigen 5.0.1 operations libslic3r's geometry reaches, evaluated as MSVC compiles them (o2-geom). |
+| `orca-geom` | Phase O2: Clipper 6.4.2, `ClipperUtils` and libslic3r's points, lines, polygons, ExPolygons, boxes, hulls and `Transformation` (o2-geom). |
+| `orca-exact` | Phase O2: Boost's signed-magnitude `int128_t` and `rational`, which arrangement computes with (o2-arrange). |
+| `orca-qhull` | Phase O2: Qhull 2015.2, the convex hulls of meshes (o2-mesh). |
+| `orca-mesh` | Phase O2: admesh's reading and repair and libslic3r's `TriangleMesh` (o2-mesh). |
+| `orca-zip` | Phase O2: ZIP archives as miniz reads and writes them, for 3MF files (o2-model). |
+| `orca-xml` | Phase O2: XML as expat 2.5.0 parses it, for 3MF files (o2-model). |
+| `orca-placeholder` | Phase O2: Orca's placeholder parser, for the presets' compatibility conditions (o2-front). |
+| `orca-arrange` | Phase O2: arrangement with libnest2d, `Arrange.cpp`, NLopt 2.5.0 and Boost.Geometry's R*-tree (o2-arrange). |
+| `orca-model` | Phase O2: the STL, OBJ and 3MF readers, `Model`, `BuildVolume` and `ModelArrange` (o2-model). |
+
+Phase O2's crates (added 2026-11-07) declare every dependency they will need from the start, so
+the tasks that fill them in parallel never change `Cargo.toml` or `Cargo.lock`. A crate whose task
+has not run yet holds only its name, and its probe file is a stub. `orca-cli` links only
+`orca-placeholder` of them until the o2-info task links the rest. What each carries of others'
+code is in `NOTICE`, in a section of its own, and its hazards are in `parity/HAZARDS.md`.
 
 The Rust scripts run cargo with `--locked`, inside the environment of the same Visual Studio the
 C++ engine is built in, so `link.exe` takes the same static `libucrt` (`BUILDING.md`):

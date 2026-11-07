@@ -99,6 +99,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "orca-arrange"
+version = "0.2.0"
+dependencies = [
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-probe",
+ "orca-stl",
+ "orca-tbb",
+]
+
+[[package]]
 name = "orca-cli"
 version = "0.2.0"
 dependencies = [
@@ -106,6 +120,7 @@ dependencies = [
  "orca-crt",
  "orca-fmt",
  "orca-json",
+ "orca-placeholder",
  "orca-probe",
  "orca-stl",
  "orca-tbb",
@@ -131,10 +146,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "orca-eigen"
+version = "0.2.0"
+dependencies = [
+ "orca-crt",
+ "orca-probe",
+ "orca-stl",
+]
+
+[[package]]
+name = "orca-exact"
+version = "0.2.0"
+dependencies = [
+ "orca-crt",
+ "orca-probe",
+ "orca-stl",
+]
+
+[[package]]
 name = "orca-fmt"
 version = "0.2.0"
 dependencies = [
  "orca-probe",
+]
+
+[[package]]
+name = "orca-geom"
+version = "0.2.0"
+dependencies = [
+ "orca-crt",
+ "orca-eigen",
+ "orca-fmt",
+ "orca-probe",
+ "orca-stl",
+ "orca-tbb",
 ]
 
 [[package]]
@@ -146,8 +191,64 @@ dependencies = [
 ]
 
 [[package]]
+name = "orca-mesh"
+version = "0.2.0"
+dependencies = [
+ "orca-crt",
+ "orca-eigen",
+ "orca-fmt",
+ "orca-geom",
+ "orca-probe",
+ "orca-qhull",
+ "orca-stl",
+ "orca-tbb",
+]
+
+[[package]]
+name = "orca-model"
+version = "0.2.0"
+dependencies = [
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-json",
+ "orca-mesh",
+ "orca-probe",
+ "orca-qhull",
+ "orca-stl",
+ "orca-tbb",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
+name = "orca-placeholder"
+version = "0.2.0"
+dependencies = [
+ "orca-config",
+ "orca-crt",
+ "orca-fmt",
+ "orca-probe",
+ "orca-stl",
+]
+
+[[package]]
 name = "orca-probe"
 version = "0.2.0"
+
+[[package]]
+name = "orca-qhull"
+version = "0.2.0"
+dependencies = [
+ "orca-crt",
+ "orca-fmt",
+ "orca-probe",
+ "orca-stl",
+]
 
 [[package]]
 name = "orca-stl"
@@ -163,6 +264,25 @@ dependencies = [
  "orca-probe",
  "rayon",
  "windows-sys",
+]
+
+[[package]]
+name = "orca-xml"
+version = "0.2.0"
+dependencies = [
+ "orca-crt",
+ "orca-fmt",
+ "orca-probe",
+ "orca-stl",
+]
+
+[[package]]
+name = "orca-zip"
+version = "0.2.0"
+dependencies = [
+ "orca-crt",
+ "orca-probe",
+ "orca-stl",
 ]
 
 [[package]]

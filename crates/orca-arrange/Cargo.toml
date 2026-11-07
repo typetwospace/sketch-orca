@@ -1,0 +1,25 @@
+# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "orca-arrange"
+description = "Arrangement: libnest2d, Arrange.cpp, NLopt 2.5.0 and Boost.Geometry's R*-tree"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Every dependency the crate will need, declared up front (o2-geom, 2026-11-07), so that
+# no task of phase O2 that fills a crate changes Cargo.toml or Cargo.lock.
+[dependencies]
+orca-crt = { workspace = true }
+orca-stl = { workspace = true }
+orca-tbb = { workspace = true }
+orca-fmt = { workspace = true }
+orca-eigen = { workspace = true }
+orca-geom = { workspace = true }
+orca-exact = { workspace = true }
+
+[dev-dependencies]
+orca-probe = { workspace = true }

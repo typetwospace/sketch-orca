@@ -1,0 +1,21 @@
+# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "orca-qhull"
+description = "Qhull 2015.2 (libqhull_r 7.2.0 and libqhullcpp), as OrcaSlicer builds it from deps_src/qhull"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Every dependency the crate will need, declared up front (o2-geom, 2026-11-07), so that
+# no task of phase O2 that fills a crate changes Cargo.toml or Cargo.lock.
+[dependencies]
+orca-crt = { workspace = true }
+orca-stl = { workspace = true }
+orca-fmt = { workspace = true }
+
+[dev-dependencies]
+orca-probe = { workspace = true }

@@ -1,0 +1,20 @@
+# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "orca-eigen"
+description = "The Eigen 5.0.1 operations libslic3r's geometry reaches, evaluated as MSVC 14.42 compiles them"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Every dependency the crate will need, declared up front (o2-geom, 2026-11-07), so that
+# no task of phase O2 that fills a crate changes Cargo.toml or Cargo.lock.
+[dependencies]
+orca-crt = { workspace = true }
+orca-stl = { workspace = true }
+
+[dev-dependencies]
+orca-probe = { workspace = true }
