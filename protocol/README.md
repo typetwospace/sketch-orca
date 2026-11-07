@@ -282,7 +282,8 @@ OrcaSlicer reads it as) and `stillDefined` (the obsolete keys OrcaSlicer still d
 A staged engine is a folder:
 
 ```
-bin/            the executable (sketch-orca.exe on Windows) and the libraries it loads
+bin/            the executable (sketch-orca.exe on Windows) and the libraries it loads; from stage
+                version 4 on Windows also sketch-orca-rs.exe, the Rust translation
 resources/      what OrcaSlicer's library reads at run time: profiles/, info/, flush/
 LICENSES/       the licences of the engine and of the code built into it, NOTICE.txt and AUTHORS.txt
 manifest.json   sketch-orca-engine/1
@@ -296,6 +297,13 @@ date, licence); `platform` and `arch`; the patches with their SHA-256; whether t
 its tests (`smoke`); the libraries shipped next to the engine (`runtime`) and those the system
 provides (`system`); and every other file of the folder, sorted by path, with its size and
 SHA-256 (`files`), so a client can check the folder before it runs the engine.
+
+From stage version 4, a folder staged on Windows also holds `sketch-orca-rs`, named in the
+optional `rust` block: its executable (`exe`, one of `files`), the engine version it reports
+(`engineVersion`, the C++ engine's), `implementation` (`rust`) and its SHA-256 (`sha256`, that of
+its `files` entry). It takes the same command line and files as the C++ engine and declines with
+`not-ported` what it does not do yet (above); `engine.exe` stays the C++ engine
+(`examples/engine-manifest.json`).
 
 ## Rules the schemas cannot state
 

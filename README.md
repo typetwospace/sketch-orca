@@ -107,8 +107,10 @@ system must make hard links). A record that cannot be read is never taken over, 
 into Rust, built to give the same bytes as the C++ engine. It is a separate program from the same
 repository, under the same licence (AGPL-3.0-only): `sketch-orca-rs`, the binary of
 `crates/orca-cli`, which speaks the same command line and files (`protocol/`) as the C++
-`sketch-orca` of `cli/` and runs beside it. The C++ engine is unchanged and stays what ships until
-the translation covers the whole protocol.
+`sketch-orca` of `cli/` and runs beside it. The C++ engine is unchanged and stays the engine a
+manifest's `engine.exe` names until the translation covers the whole protocol; from 0.2.0 the
+staged folder carries both (`bin/sketch-orca-rs.exe`, the manifest's `rust` block; "The staged
+engine" below).
 
 What `sketch-orca-rs` answers so far (`crates/orca-cli/README.md`):
 
@@ -234,14 +236,16 @@ run.lock.d/     the lock; its newest record: the command that writes, its proces
 ### The staged engine
 
 ```
-bin/            sketch-orca(.exe) and the libraries it loads
+bin/            sketch-orca(.exe) and the libraries it loads; on Windows also sketch-orca-rs.exe,
+                the Rust translation (stage version 4)
 resources/      profiles/, info/ and flush/ from Orca's resources: what libslic3r reads at run time
 LICENSES/       OrcaSlicer/LICENSE.txt (AGPL-3.0); NOTICE.txt and AUTHORS.txt (this repository's
                 NOTICE and AUTHORS); deps/<Name>/ and deps_src/<name>/, the licences of the code
                 built into the engine: a deps_src part whose licence is stated only in a source
                 file gets that notice as <file>.notice.txt (DEPS_SRC_NOTICES in stage.ts), and
                 OpenCV's notices for the code it builds in are in deps/OpenCV/third-party/;
-                README.txt, which also dates our modifications
+                README.txt, which also dates our modifications; sketch-orca-rs/, the licence
+                texts of what sketch-orca-rs carries and is built with (RUST_LICENSE_TEXTS)
 manifest.json   sketch-orca-engine/1 (protocol/schema/engine-manifest.schema.json)
 ```
 
@@ -249,8 +253,19 @@ The manifest holds the engine (name, version, `exe`, `resources` and `libraryPat
 folder), the lock (`orca`), platform and arch, the patches with their SHA-256, the hash of the
 `cli/` the engine was built from, the libraries in `bin/` (`runtime`) and those the system
 provides (`system`), the smoke result, what the dependencies were built from (`deps`: the hash of
-the dependency build's inputs and of the MinGW-w64 pins), the hash of the staging inputs, the time,
-and every other file with its size and SHA-256. `stage.ts` `readManifest` reads and checks it.
+the dependency build's inputs and of the MinGW-w64 pins), on Windows the Rust program (`rust`: its
+`exe`, the `engineVersion` it reports, `implementation` `rust` and its `sha256`; `engine.exe` stays
+the C++ engine), the hash of the staging inputs, the time, and every other file with its size and
+SHA-256. `stage.ts` `readManifest` reads and checks it.
+
+On Windows `stage` first builds `sketch-orca-rs` itself, in release with `--locked`
+(`scripts/lib/rust.ts` `buildRustRelease`, logged to `<work>/logs/stage-cargo.log`); its SHA-256 is
+one of the staging inputs. The staged copy must report the C++ engine's version with
+`implementation: "rust"` and pass the Rust smoke cases (`smoke.ts` `RUST_SMOKE_CASES`, in
+`<work>/smoke/staged-rust`), each held to the staged C++ engine: `rs-version`, `rs-config-def`
+(the C++ program's file, byte for byte), `rs-intake` (the refusals' C++ results, or `not-ported`
+for a job the C++ got past reading) and `rs-decline` (a slice job ends `not-ported`, exit -8, with
+no output); otherwise nothing is swapped in.
 
 Before staging, `stage` checks that the checkout is at the locked commit; that the patches `build`
 last applied (`state/patches.json`, names and SHA-256) are `patches/` as it is now (`build`
@@ -307,6 +322,11 @@ dependencies/BINARIES.txt      every binary in those packages (found by its byte
                                source is (PACKAGE_BINARIES, scripts/lib/packagebins.ts)
 dependencies/LICENSES/         licence texts those binaries need that their packages lack
                                (CPL-1.0 for the JUnit jar in OpenCV's package)
+rust-vendor/<crate>-<version>/ the crates sketch-orca-rs is built from (engine/'s crates/,
+                               Cargo.toml, Cargo.lock, rust-toolchain.toml and .cargo/ are the
+                               rest of its source), as cargo vendor --locked writes them from
+                               Cargo.lock, each with its licence files; BUILDING.md says how to
+                               build it with no network
 LICENSES/                      the staged engine's licences
 BUILDING.md                    how to build the engine from the bundle alone
 bundle.json                    sketch-orca-source/1: the engine it belongs to (its manifest's

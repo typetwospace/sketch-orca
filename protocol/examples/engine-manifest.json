@@ -1,7 +1,7 @@
 {
   "format": "sketch-orca-engine/1",
-  "stageVersion": 3,
-  "engine": { "name": "sketch-orca", "version": "0.1.0", "exe": "bin/sketch-orca.exe", "resources": "resources", "libraryPath": "bin" },
+  "stageVersion": 4,
+  "engine": { "name": "sketch-orca", "version": "0.2.0", "exe": "bin/sketch-orca.exe", "resources": "resources", "libraryPath": "bin" },
   "orca": {
     "repo": "OrcaSlicer/OrcaSlicer",
     "tag": "v2.4.2",
@@ -19,8 +19,9 @@
   "cli": "3333333333333333333333333333333333333333333333333333333333333333",
   "runtime": ["libgmp-10.dll", "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"],
   "system": ["KERNEL32.dll", "USER32.dll"],
-  "smoke": { "passed": true, "smokeVersion": 12 },
+  "smoke": { "passed": true, "smokeVersion": 10 },
   "deps": { "inputs": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mingw": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+  "rust": { "exe": "bin/sketch-orca-rs.exe", "engineVersion": "0.2.0", "implementation": "rust", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
   "inputs": "4444444444444444444444444444444444444444444444444444444444444444",
   "stagedAt": "2026-10-30T18:00:00.000Z",
   "files": [
@@ -29,6 +30,7 @@
     { "path": "LICENSES/OrcaSlicer/LICENSE.txt", "size": 34520, "sha256": "57c8ff33c9c0cfc3ef00e650a1cc910d7ee479a8bc509f6c9209a7c2a11399d6" },
     { "path": "LICENSES/README.txt", "size": 1290, "sha256": "7777777777777777777777777777777777777777777777777777777777777777" },
     { "path": "bin/libgmp-10.dll", "size": 543027, "sha256": "fec43cb18ce0ec8a5dd6ad1db745747167310ccb92b5acff0d445a8b3013f009" },
+    { "path": "bin/sketch-orca-rs.exe", "size": 2560000, "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
     { "path": "bin/sketch-orca.exe", "size": 41943040, "sha256": "8888888888888888888888888888888888888888888888888888888888888888" },
     { "path": "resources/info/nozzle_info.json", "size": 2048, "sha256": "9999999999999999999999999999999999999999999999999999999999999999" }
   ]

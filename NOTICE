@@ -68,7 +68,28 @@ or the source of:
 On Windows the engine and the libraries it loads that are built from source with MSVC
 (OpenCASCADE, FreeType) are linked with Microsoft's static C and C++ runtime libraries, which come
 with the Visual C++ compiler (/MT; patches/0005). GMP's DLL, built with MinGW-w64, loads Windows'
-own msvcrt.dll. No Visual C++ runtime DLL is shipped with the engine.
+own msvcrt.dll. No Visual C++ runtime DLL is shipped with the engine. sketch-orca-rs, the Rust
+translation staged beside the engine on Windows (bin/sketch-orca-rs.exe, from 0.2.0), is linked
+the same way: with the static Universal C Runtime (libucrt) and vcruntime of the same Visual C++
+compiler (.cargo/config.toml, +crt-static), the compiler's runtime, and it loads no DLL but the
+system's.
+
+The Rust crates sketch-orca-rs is built with (Cargo.lock; the source bundle carries each one, with
+its licence files, in rust-vendor/), each under the MIT licence or the Apache License, version 2.0,
+at the recipient's choice (MIT OR Apache-2.0), and shipped in the staged engine under the Apache
+License, version 2.0 (LICENSES/sketch-orca-rs/Apache-2.0.txt); none has a NOTICE file:
+
+  - rayon 1.12.0 and rayon-core 1.13.0, Copyright (c) 2010 The Rust Project Developers;
+  - crossbeam-deque 0.8.8, crossbeam-epoch 0.9.21 and crossbeam-utils 0.8.23, Copyright (c) 2019
+    The Crossbeam Project Developers;
+  - either 1.19.0, Copyright (c) 2015 (its LICENSE-MIT names no holder);
+  - windows-sys 0.61.2 and windows-link 0.2.1, Copyright (c) Microsoft Corporation (windows-sys
+    links through windows-link's raw-dylib, so no import library is carried);
+  - sha2 0.11.1, digest 0.11.3, block-buffer 0.12.1, crypto-common 0.2.2, const-oid 0.10.2,
+    cpufeatures 0.3.1 and hybrid-array 0.4.15, by the RustCrypto Developers; typenum 1.20.1,
+    Copyright (c) 2014 Paho Lurie-Gregg; cfg-if 1.0.5, by Alex Crichton; libc 0.2.191, Copyright
+    (c) The Rust Project Developers (vendored, but built only on other systems);
+  - and Rust's standard library, by the Rust Project Developers, under MIT OR Apache-2.0.
 
 Code of others that the Rust translation of the engine (crates/, added 2026-11-06) carries,
 translated into Rust. Each file that carries it says what it carries, from which file, under

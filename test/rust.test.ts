@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BUILT_WITH } from '../scripts/lib/bundle.ts'
 import { EXIT, UsageError } from '../scripts/lib/run.ts'
-import { cargoBinDir, isRustSteeringEnv, parseRustArgs, pinnedEnvProblems, RUST_PINS, rustBuildEnv, rustcProblems } from '../scripts/lib/rust.ts'
+import { cargoBinDir, isRustSteeringEnv, parseRustArgs, pinnedEnvProblems, RUST_PINS, RUST_PROGRAM, rustBuildEnv, rustcProblems, rustReleaseExe, rustTimeoutMs, vendoredProblems } from '../scripts/lib/rust.ts'
 
 const ROOT = join(import.meta.dir, '..')
 
@@ -26,6 +26,25 @@ describe('the pins', () => {
     expect(RUST_PINS.windowsSdk).toBe('10.0.22000.0')
     expect(readFileSync(join(ROOT, 'rust-toolchain.toml'), 'utf8')).toContain(`channel = "${RUST_PINS.rustc}"`)
     expect(readFileSync(join(ROOT, 'Cargo.toml'), 'utf8')).toContain('rust-version = "1.94"')
+    expect(RUST_PINS.rustc).toBe(BUILT_WITH.rust)
+    expect(BUILT_WITH.rust).toBe('1.94.1')
+  })
+})
+
+describe('what the pipeline runs', () => {
+  test('stage builds the program in release with --locked; source vendors the crates with --locked', () => {
+    expect(parseRustArgs(['build', '--release', '--bin', RUST_PROGRAM]).cargoArgs).toEqual(['build', '--locked', '--release', '--bin', 'sketch-orca-rs'])
+    expect(parseRustArgs(['vendor', '--versioned-dirs', 'v']).cargoArgs).toEqual(['vendor', '--locked', '--versioned-dirs', 'v'])
+    expect(rustReleaseExe(join('r'))).toBe(join('r', 'target', 'release', 'sketch-orca-rs.exe'))
+    expect(rustTimeoutMs({})).toBe(45 * 60 * 1000)
+    expect(rustTimeoutMs({ SKETCH_ORCA_RUST_TIMEOUT_MS: '1000' })).toBe(1000)
+  })
+
+  test('a vendored crate ships with a licence file and no prebuilt library', () => {
+    expect(vendoredProblems([{ name: 'rayon-1.12.0', files: ['Cargo.toml', 'LICENSE-APACHE', 'LICENSE-MIT', 'src/lib.rs'] }])).toEqual([])
+    expect(vendoredProblems([{ name: 'windows-sys-0.61.2', files: ['license-mit', 'src/lib.rs'] }])).toEqual([])
+    expect(vendoredProblems([{ name: 'x-1.0.0', files: ['Cargo.toml', 'src/LICENSE'] }])).toEqual(['x-1.0.0 has no licence file'])
+    expect(vendoredProblems([{ name: 'y-1.0.0', files: ['COPYING', 'lib/y.lib'] }])).toEqual(['y-1.0.0 holds prebuilt libraries (lib/y.lib)'])
   })
 })
 

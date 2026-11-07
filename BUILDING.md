@@ -130,7 +130,10 @@ bun run rs:fmt:check
 ```
 
 `scripts/rust.ts` runs them and stops (exit 3) when the Visual Studio, MSVC, Windows SDK or rustc
-found is not the pinned one, naming which. A first build of a new dependency set fetches the crates
+found is not the pinned one, naming which. The pipeline needs Rust too from 0.2.0: `stage` builds
+`sketch-orca-rs` itself (`cargo build --locked --release`) and stages it beside the engine, and
+`source` vendors its crates (`cargo vendor --locked`, `bun scripts/rust.ts vendor`) into the
+bundle's `rust-vendor/`, whose `BUILDING.md` builds it with no network. A first build of a new dependency set fetches the crates
 from crates.io once: run `cargo generate-lockfile` (or `cargo update -p <crate>`) when a
 dependency pin changes, which is a task of its own (`CONTRIBUTING.md`), and commit `Cargo.lock`.
 Builds go to `target/`.

@@ -16,6 +16,11 @@
 //   dependencies/BINARIES.txt       the binaries in those packages, found by their bytes at any depth,
 //                                   each with its licence and source (packagebins.ts)
 //   dependencies/LICENSES/          licence texts those binaries need that their packages lack
+//   rust-vendor/<crate>-<version>/  the crates the Rust program (sketch-orca-rs, engine/crates) is
+//                                   built from, as cargo vendor --locked writes them from Cargo.lock,
+//                                   each with the licence files its package carries (rust.ts
+//                                   vendorRustCrates); engine/ holds crates/, Cargo.toml, Cargo.lock,
+//                                   rust-toolchain.toml and .cargo/ (RUST_SOURCE_FILES)
 //   LICENSES/                       the licence texts shipped with the engine
 //   BUILDING.md                     how to build the engine from this folder, with the pinned
 //                                   MinGW-w64 toolchain on Windows
@@ -51,7 +56,7 @@ import { currentPlatform, findDepsTools } from './toolchain.ts'
 
 export const SOURCE_FORMAT = 'sketch-orca-source/1'
 /** Bump when the bundle's layout changes: a bundle of an older version is made again. */
-export const SOURCE_VERSION = 7
+export const SOURCE_VERSION = 8
 
 /**
  * The toolchain the engine has been built with, on Windows x64 (2026-10-30, 2026-11-01), as BUILDING.md (the
@@ -67,6 +72,8 @@ export const BUILT_WITH = {
   cmake: '3.29.2',
   ninja: '1.12.0',
   strawberryPerl: '5.42.3.1',
+  /** rustc and cargo, for sketch-orca-rs (rust-toolchain.toml; rust.ts RUST_PINS). */
+  rust: '1.94.1',
   mingw: 'MSYS2 (base system of 2026-09-27) with the GCC 16.2.0 of its mingw64 environment (mingw-w64 14.0.0, binutils 2.47)',
 } as const
 
@@ -365,8 +372,23 @@ export interface BundleInfo {
    * toolchain that builds GMP and MPFR (mingwToolchain); none elsewhere.
    */
   toolchain: { mingw: MingwPackage[] }
+  /** The Rust program's crates in rust-vendor/ (<name>-<version>), when the staged engine carries sketch-orca-rs; null otherwise. */
+  rust: { vendor: string; crates: string[] } | null
   inputs: string
   createdAt: string
+}
+
+/** The files of this repository the Rust program is built from, beside crates/: the bundle refuses to ship a stage-4 engine without them. */
+export const RUST_SOURCE_FILES = ['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml'] as const
+
+/** Where the bundle keeps the vendored crates. */
+export const RUST_VENDOR = 'rust-vendor'
+
+/** What of the Rust program's sources `engineFiles` lacks (RUST_SOURCE_FILES and crates/). */
+export function missingRustSources(engineFiles: string[]): string[] {
+  const out: string[] = RUST_SOURCE_FILES.filter((f) => !engineFiles.includes(f))
+  if (!engineFiles.some((f) => f.startsWith('crates/') && f.endsWith('/Cargo.toml'))) out.push('crates/')
+  return out
 }
 
 /**
@@ -398,7 +420,7 @@ export function sourceGaps(o: { plan: DependencyPlan; withDeps: boolean; archive
  * says the bundle is complete corresponding source only when neither `incomplete` nor its own
  * plan and --no-deps (sourceGaps) name a gap.
  */
-export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patches: string[]; plan: DependencyPlan; withDeps: boolean; orcaExcluded?: string[]; incomplete?: string[] }): string {
+export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patches: string[]; plan: DependencyPlan; withDeps: boolean; orcaExcluded?: string[]; incomplete?: string[]; rustCrates?: string[] }): string {
   const own = sourceGaps(o)
   const incomplete = [...new Set([...(o.incomplete ?? []), ...own.missing, ...own.omitted])]
   const { lock, manifest: m } = o
@@ -455,6 +477,7 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
     `- CMake ${BUILT_WITH.cmake} and Ninja ${BUILT_WITH.ninja} (the copies Strawberry Perl ships in its c\\bin; the CMake files ask for CMake 3.13 or later).`,
     `- Strawberry Perl ${BUILT_WITH.strawberryPerl} (64-bit), for OpenSSL's build.`,
     `- ${BUILT_WITH.mingw}, which builds GMP and MPFR on Windows (patch 0007); the pipeline fetches its pinned packages itself${win ? ' (see "MinGW-w64" below)' : ''}.`,
+    `- Rust ${BUILT_WITH.rust} (rustup's x86_64-pc-windows-msvc toolchain, as engine/rust-toolchain.toml pins it), for sketch-orca-rs.`,
     '- Linux and macOS: a C and C++ compiler (gcc or clang), make, autoconf, automake, libtool, m4',
     '  and perl. These platforms have not been tried yet.',
     '',
@@ -562,20 +585,42 @@ export function buildingText(o: { lock: OrcaLock; manifest: EngineManifest; patc
     ...o.plan.inTree.map((n) => `- ${n}: built from its sources inside the OrcaSlicer tree`),
     ...o.plan.missing.map((n) => `- ${n}: built, but its source package is NOT in this bundle`),
     '',
+    ...(o.rustCrates && o.rustCrates.length > 0
+      ? [
+          '## sketch-orca-rs',
+          '',
+          `bin/sketch-orca-rs${win ? '.exe' : ''} is the Rust translation of the engine (engine/crates, engine/README.md). It is built`,
+          `with Rust ${BUILT_WITH.rust} and the MSVC tools above, in the environment of vcvars64.bat, from engine/ and the`,
+          `crates in ${RUST_VENDOR}/, with no network:`,
+          '',
+          '```',
+          `cd engine`,
+          `cargo build --release --locked --offline --bin sketch-orca-rs --config "source.crates-io.replace-with='vendored'" --config "source.vendored.directory='../${RUST_VENDOR}'"`,
+          '```',
+          '',
+          `The program is engine/target/release/sketch-orca-rs${win ? '.exe' : ''}. engine/.cargo/config.toml links it with the static C runtime.`,
+          `With network access, \`bun engine/scripts/orca.ts stage\` builds it itself (cargo build --release --locked).`,
+          `The crates in ${RUST_VENDOR}/, each with its licence files, as cargo vendor writes them from engine/Cargo.lock:`,
+          '',
+          ...o.rustCrates.map((c) => `- ${c}`),
+          '',
+        ]
+      : []),
   ]
   return lines.join('\n')
 }
 
 /**
- * The bundle's files that privacyProblems reads: all but the packages of others (Orca's archive and
- * the packages in dependencies/), which are as their projects publish them, each pinned (the locked
- * commit, the SHA-256 of each package), so that nothing of this build can be in them. The
+ * The bundle's files that privacyProblems reads: all but the packages of others (Orca's archive,
+ * the packages in dependencies/ and the crates in rust-vendor/), which are as their projects publish
+ * them, each pinned (the locked commit, the SHA-256 of each package, Cargo.lock's checksum of each
+ * crate), so that nothing of this build can be in them. The
  * binaries the Orca archive keeps, if any, are read apart (archivedPrivacyProblems), and so are the
  * binaries in the packages (packagebins.ts). dependencies/BINARIES.txt and dependencies/LICENSES/
  * are the bundle's own.
  */
 export function ownBundleFiles(rels: string[]): string[] {
-  return rels.filter((rel) => !rel.startsWith('orca/') && (!rel.startsWith('dependencies/') || rel === BINARIES_NOTICE || rel.startsWith(`${BINARY_LICENSES}/`)))
+  return rels.filter((rel) => !rel.startsWith('orca/') && !rel.startsWith(`${RUST_VENDOR}/`) && (!rel.startsWith('dependencies/') || rel === BINARIES_NOTICE || rel.startsWith(`${BINARY_LICENSES}/`)))
 }
 
 /** The bundle's list of the binaries in its packages (packagebins.ts binariesNotice). */
@@ -717,6 +762,9 @@ export async function runSource(ctx: Context, log: Log): Promise<number> {
   if (archivedPersonal.length > 0) throw new StepError(`binaries the Orca archive keeps record a person's or a machine's folder: ${archivedPersonal.join('; ')}. They ship as OrcaSlicer publishes them: leave them out (orcaArchiveExcludes, scripts/lib/bundle.ts) or allow the folder in ALLOWED_BUILD_PATHS (scripts/lib/stage.ts), saying why`)
   const repository = repositoryFiles(git, ctx.engine.engine)
   const engineFiles = repository.files
+  // A stage-4 engine ships sketch-orca-rs: its sources are engine/'s, its crates rust-vendor/'s.
+  const rustMissing = m.rust ? missingRustSources(engineFiles) : []
+  if (rustMissing.length > 0) throw new StepError(`the staged engine carries sketch-orca-rs, and ${ctx.engine.engine} lacks ${rustMissing.join(', ')} of its sources`)
   if (repository.commit === null) log.line(`source: ${ctx.engine.engine} is not a git checkout: every file in it but the local work folders goes in`)
   // Every binary in the dependency packages, at any depth, by its bytes (packagebins.ts): known, with
   // its licence and source, and recording none of this build's needles nor any folder its entry does
@@ -760,6 +808,7 @@ export async function runSource(ctx: Context, log: Log): Promise<number> {
       inventory: INVENTORY_VERSION,
       binaries: knownBinaries,
       binaryTexts: binaryTexts.map((t) => [t, sha256File(join(ctx.engine.licenses, t))]),
+      rust: m.rust ? m.rust.sha256 : null,
     }),
   )
   const name = bundleName(m)
@@ -802,8 +851,15 @@ export async function runSource(ctx: Context, log: Log): Promise<number> {
     writeText(join(tmp, BINARIES_NOTICE), binariesNotice(knownBinaries))
     for (const t of binaryTexts) copyFile(join(ctx.engine.licenses, t), nativePath(tmp, `${BINARY_LICENSES}/${t}`))
   }
+  let rustCrates: string[] | undefined
+  if (m.rust) {
+    // Imported here: rust.ts reads BUILT_WITH from this module when it loads.
+    const { vendorRustCrates } = await import('./rust.ts')
+    log.line(`source: vendoring the Rust program's crates (cargo vendor --locked) into ${RUST_VENDOR}/`)
+    rustCrates = await vendorRustCrates(ctx.engine.engine, join(tmp, RUST_VENDOR), join(w.logs, 'source-cargo-vendor.log'))
+  }
   const patches = listPatches(ctx.engine.patches)
-  writeText(join(tmp, 'BUILDING.md'), buildingText({ lock: ctx.lock, manifest: m, patches: patches.map((p) => p.name), plan, withDeps, orcaExcluded, incomplete }))
+  writeText(join(tmp, 'BUILDING.md'), buildingText({ lock: ctx.lock, manifest: m, patches: patches.map((p) => p.name), plan, withDeps, orcaExcluded, incomplete, ...(rustCrates ? { rustCrates } : {}) }))
   const info: BundleInfo = {
     format: SOURCE_FORMAT,
     sourceVersion: SOURCE_VERSION,
@@ -824,6 +880,7 @@ export async function runSource(ctx: Context, log: Log): Promise<number> {
       binaries: knownBinaries.map((e) => ({ dependency: e.dependency, file: e.file, path: e.path, sha256: e.sha256, license: e.license, source: e.source })),
     },
     toolchain,
+    rust: rustCrates ? { vendor: RUST_VENDOR, crates: rustCrates } : null,
     inputs,
     createdAt: new Date().toISOString(),
   }

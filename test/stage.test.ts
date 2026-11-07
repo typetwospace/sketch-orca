@@ -1,6 +1,6 @@
 // privacy-fixtures: /home/me /Users/me /home/李 /Users/李 /Users/PreviousBuilder D:/build-cache/orca me@example.org
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { listPatches } from '../scripts/lib/checkout.ts'
@@ -38,6 +38,8 @@ import {
   readManifest,
   requiredLicenses,
   resourceCopies,
+  RUST_LICENSE_TEXTS,
+  rustLicenseCopies,
   runtimeRefusal,
   serializeManifest,
   STAGED_CASES,
@@ -146,6 +148,34 @@ describe('manifest', () => {
     for (const [value, re] of bad) expect(() => validateManifest(value)).toThrow(re)
   })
 
+  test('stage 4: the Rust program beside the engine, in the rust block and in files; engine.exe stays the C++ engine', () => {
+    const files = [...parts().files, { path: 'bin/sketch-orca-rs.exe', size: 3, sha256: H('e') }]
+    const m = buildManifest(parts({ files, rust: { exe: 'bin/sketch-orca-rs.exe', engineVersion: '0.2.0', sha256: H('e') } }))
+    expect(STAGE_VERSION).toBe(4)
+    expect(m.engine.exe).toBe('bin/sketch-orca.exe')
+    expect(m.rust).toEqual({ exe: 'bin/sketch-orca-rs.exe', engineVersion: '0.2.0', implementation: 'rust', sha256: H('e') })
+    expect(m.files.map((f) => f.path)).toEqual(['bin/sketch-orca-rs.exe', 'bin/sketch-orca.exe', 'resources/profiles/BBL.json'])
+    expect(validateManifest(JSON.parse(serializeManifest(m)))).toEqual(m)
+    // A folder without it (another platform) has no rust block.
+    expect(buildManifest(parts()).rust).toBeUndefined()
+    // Its licence texts, beside the engine's: each one licenses/ has.
+    const own = join(import.meta.dir, '..', 'licenses')
+    expect(rustLicenseCopies(own).map((c) => c.to)).toEqual(RUST_LICENSE_TEXTS.map((f) => `LICENSES/sketch-orca-rs/${f}`))
+    for (const c of rustLicenseCopies(own)) expect(existsSync(c.from)).toBe(true)
+    const good = JSON.parse(serializeManifest(m)) as Record<string, unknown>
+    const rust = good.rust as Record<string, unknown>
+    const bad: [Record<string, unknown>, RegExp][] = [
+      [{ ...good, rust: { ...rust, exe: 'bin/missing.exe' } }, /rust\.exe "bin\/missing\.exe" is not one of the files/],
+      [{ ...good, rust: { ...rust, exe: '../x.exe' } }, /rust\.exe/],
+      [{ ...good, rust: { ...rust, implementation: 'cpp' } }, /rust\.implementation/],
+      [{ ...good, rust: { ...rust, sha256: H('f') } }, /rust\.sha256 is not the SHA-256 files gives/],
+      [{ ...good, rust: { ...rust, sha256: 'x' } }, /rust\.sha256 must be 64 hex/],
+      [{ ...good, rust: { ...rust, engineVersion: 2 } }, /rust\.engineVersion/],
+      [{ ...good, rust: 'x' }, /rust must be an object/],
+    ]
+    for (const [value, re] of bad) expect(() => validateManifest(value)).toThrow(re)
+  })
+
   test('isSafeRelPath allows only relative forward-slash paths inside the folder', () => {
     for (const p of ['bin/sketch-orca.exe', 'resources/profiles/BBL/machine/a b.json', 'a']) expect(isSafeRelPath(p)).toBe(true)
     for (const p of ['', '/abs', 'C:/x', 'a\\b', '../x', 'a/../b', 'a//b', './a', 'a/']) expect(isSafeRelPath(p)).toBe(false)
@@ -181,6 +211,7 @@ describe('manifest', () => {
       { ...base, smokePassed: false },
       { ...base, platform: 'linux' as const },
       { ...base, depsInputs: H('9') },
+      { ...base, rustSha256: H('a') },
     ]) {
       expect(stageInputs(changed)).not.toBe(h)
     }

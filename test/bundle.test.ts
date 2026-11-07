@@ -22,6 +22,7 @@ import {
   listDownloads,
   LOCAL_WORK_FOLDERS,
   mingwToolchain,
+  missingRustSources,
   orcaArchiveExcludes,
   orcaArchiveName,
   ownBundleFiles,
@@ -30,6 +31,8 @@ import {
   pinnedSources,
   planDependencies,
   repositoryFiles,
+  RUST_SOURCE_FILES,
+  RUST_VENDOR,
   shippedTreeBinaries,
   SOURCE_VERSION,
   sourceGaps,
@@ -526,8 +529,25 @@ describe("the binaries of Orca's tree", () => {
     expect(mingwToolchain('win32').map((p) => p.file)).toEqual([MSYS2_BASE, ...MINGW_PACKAGES].map((p) => p.file))
     expect(mingwToolchain('win32')[0]).toEqual(MSYS2_BASE)
     expect(mingwToolchain('linux')).toEqual([])
-    // dependencies/BINARIES.txt and dependencies/LICENSES/: a bundle of version 6 is made again.
-    expect(SOURCE_VERSION).toBe(7)
+    // dependencies/BINARIES.txt and dependencies/LICENSES/ (7); rust-vendor/ and bundle.json's rust (8):
+    // a bundle of an older version is made again.
+    expect(SOURCE_VERSION).toBe(8)
+  })
+
+  test("the Rust program's sources: engine/ holds crates/ and the Cargo files, rust-vendor/ the crates, BUILDING.md how to build it offline", () => {
+    const all = [...RUST_SOURCE_FILES, 'crates/orca-cli/Cargo.toml', 'crates/orca-cli/src/main.rs']
+    expect(RUST_SOURCE_FILES).toEqual(['Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml'])
+    expect(missingRustSources(all)).toEqual([])
+    expect(missingRustSources(all.filter((f) => f !== 'Cargo.lock' && !f.startsWith('crates/')))).toEqual(['Cargo.lock', 'crates/'])
+    // The vendored crates are as their projects publish them: privacyProblems does not read them.
+    expect(ownBundleFiles([`${RUST_VENDOR}/rayon-1.12.0/src/lib.rs`, 'engine/crates/orca-cli/src/main.rs'])).toEqual(['engine/crates/orca-cli/src/main.rs'])
+    const plan = { archives: [], inTree: [], missing: [], unpinned: [] }
+    const text = buildingText({ lock: LOCK, manifest: manifest(), patches: [], plan, withDeps: true, rustCrates: ['rayon-1.12.0', 'windows-sys-0.61.2'] })
+    expect(text).toContain('## sketch-orca-rs')
+    expect(text).toContain(`cargo build --release --locked --offline --bin sketch-orca-rs --config "source.crates-io.replace-with='vendored'" --config "source.vendored.directory='../${RUST_VENDOR}'"`)
+    expect(text.split('\n')).toContain('- windows-sys-0.61.2')
+    expect(text).toContain(`- Rust ${BUILT_WITH.rust} (rustup's x86_64-pc-windows-msvc toolchain`)
+    expect(buildingText({ lock: LOCK, manifest: manifest(), patches: [], plan, withDeps: true })).not.toContain('## sketch-orca-rs')
   })
 
   test.skipIf(firstExisting(gitCandidates(currentPlatform(), process.env)) === undefined)('excludePathspecs: git archive leaves out what orcaArchiveExcludes names', () => {

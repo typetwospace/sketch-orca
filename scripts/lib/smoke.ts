@@ -57,6 +57,14 @@
 //                    G-code folder that cannot be made and a work folder from the root of the current drive
 //                    (\sketch-smoke-work, absolute on no system) get their named errors, exit codes and object, and
 //                    write no G-code
+// The Rust program's cases (RUST_SMOKE_CASES; `stage` runs them on the staged folder, each held to
+// the C++ engine beside it):
+//   rs-version       sketch-orca-rs version: the C++ program's fields, plus implementation rust
+//   rs-config-def    sketch-orca-rs config-def: the C++ program's file, byte for byte
+//   rs-intake        the refusals (and a file that is not JSON, and a job with a field of the wrong
+//                    type): the C++ result, exit code and progress file, or not-ported for a job the
+//                    C++ got past reading
+//   rs-decline       a slice job: not-ported, exit -8 (low byte 248), the missing steps, no output
 // Every run's exit code must be the one its result gives (exitCode). The engine is run hidden, with
 // a timeout; on Windows its libraries are checked first, so a missing DLL fails the case instead of
 // raising a system dialog. `stage` runs some of these cases again on the staged copy (runCases).
@@ -86,7 +94,7 @@ import { currentPlatform } from './toolchain.ts'
 import { extractZipEntry, readZipEntries } from './zip.ts'
 
 /** Bump when the cases or their expectations change: a passed stamp of an older version does not count. */
-export const SMOKE_VERSION = 9
+export const SMOKE_VERSION = 10
 /** Folders of Orca's resources/ that libslic3r reads (resources_dir()): presets, nozzle tables, flush volumes. */
 export const ENGINE_RESOURCES = ['profiles', 'info', 'flush'] as const
 
@@ -2102,6 +2110,214 @@ export const SMOKE_CASES: SmokeCase[] = [
     },
   },
 ]
+
+// ---------------------------------------------------------------- the Rust program's cases
+
+/**
+ * What a case of sketch-orca-rs gets: both programs of the staged folder (the Rust program and the
+ * C++ engine it is held to), its folder, the staged resources and the generic presets, and a way to
+ * run either one hidden in the folder.
+ */
+export interface RustCaseEnv {
+  rust: string
+  cpp: string
+  dir: string
+  resources: string
+  lock: OrcaLock
+  files: PresetFiles
+  exec(exe: string, args: string[]): Promise<EngineRun>
+}
+
+export interface RustSmokeCase {
+  id: string
+  title: string
+  run(env: RustCaseEnv): Promise<CaseOutcome>
+}
+
+/** A process exit code's low byte (Bun on Windows reports -8 as 248, Node as 4294967288). */
+export function lowByte(code: number | null): number | null {
+  return code === null ? null : ((code % 256) + 256) % 256
+}
+
+/** A result of either program with its engine block made alike: the Rust program's `implementation` gone. */
+export function withoutImplementation(text: string): unknown {
+  const v = JSON.parse(text) as Record<string, unknown>
+  const e = v.engine
+  if (typeof e === 'object' && e !== null && !Array.isArray(e)) delete (e as Record<string, unknown>).implementation
+  return v
+}
+
+/** The stages a progress file names. */
+function stagesOf(text: string): string[] {
+  const out: string[] = []
+  for (const line of text.split(/\r?\n/)) {
+    try {
+      const v = JSON.parse(line) as { stage?: unknown }
+      if (typeof v.stage === 'string') out.push(v.stage)
+    } catch {
+      // Not a line of JSON.
+    }
+  }
+  return out
+}
+
+/**
+ * Runs one job with both programs in `dir` (the C++ engine first), each with its own result and
+ * progress file, and compares them: the Rust program gives the C++ result (as JSON, the engine block
+ * made alike), exit code and progress file, or declines (not-ported) a job the C++ got past reading.
+ * Returns the problems and whether the job was compared or declined.
+ */
+async function compareIntake(env: RustCaseEnv, dir: string, jobPath: string): Promise<{ problems: string[]; declined: boolean }> {
+  const files = (who: string) => ({ out: join(dir, `result-${who}.json`), progress: join(dir, `progress-${who}.ndjson`) })
+  const runs: { code: number | null; result?: string; progress: string }[] = []
+  for (const [who, exe] of [['cpp', env.cpp], ['rs', env.rust]] as const) {
+    const f = files(who)
+    rmSync(f.out, { force: true })
+    rmSync(f.progress, { force: true })
+    const r = await env.exec(exe, ['run', '--job', jobPath, '--out', f.out, '--progress', f.progress])
+    if (r.timedOut) return { problems: [`the ${who === 'cpp' ? 'C++' : 'Rust'} program did not finish in time`], declined: false }
+    runs.push({ code: r.code, ...(existsSync(f.out) ? { result: readFileSync(f.out, 'utf8') } : {}), progress: existsSync(f.progress) ? readFileSync(f.progress, 'utf8') : '' })
+  }
+  const [cpp, rs] = runs as [(typeof runs)[number], (typeof runs)[number]]
+  if (cpp.result === undefined || rs.result === undefined) return { problems: [`a result is missing (C++ exit ${cpp.code}, Rust exit ${rs.code})`], declined: false }
+  const rsResult = withoutImplementation(rs.result) as Record<string, unknown>
+  if (rsResult.code === 'not-ported') {
+    const problems: string[] = []
+    if (lowByte(rs.code) !== 248 || rsResult.exitCode !== -8) problems.push(`a decline exited with ${rs.code} (result ${JSON.stringify(rsResult.exitCode)}), not -8`)
+    if (!stagesOf(cpp.progress).some((s) => s !== 'job' && s !== 'failed' && s !== 'done')) problems.push(`the Rust program declined a job the C++ refused while reading it: ${JSON.stringify((withoutImplementation(cpp.result) as Record<string, unknown>).message)}`)
+    return { problems, declined: true }
+  }
+  const problems: string[] = []
+  if (JSON.stringify(rsResult) !== JSON.stringify(withoutImplementation(cpp.result))) problems.push(`the results differ: C++ ${JSON.stringify(withoutImplementation(cpp.result))}, Rust ${JSON.stringify(rsResult)}`)
+  if (lowByte(cpp.code) !== lowByte(rs.code)) problems.push(`the exit codes differ: C++ ${cpp.code}, Rust ${rs.code}`)
+  if (cpp.progress !== rs.progress) problems.push(`the progress files differ: C++ ${JSON.stringify(cpp.progress)}, Rust ${JSON.stringify(rs.progress)}`)
+  return { problems, declined: false }
+}
+
+/**
+ * The cases of sketch-orca-rs, the Rust translation (crates/orca-cli), each held to the C++ engine
+ * beside it. `stage` runs them on the staged folder and stages no folder that fails one.
+ */
+export const RUST_SMOKE_CASES: RustSmokeCase[] = [
+  {
+    id: 'rs-version',
+    title: "sketch-orca-rs version gives the C++ program's fields, and implementation rust",
+    async run(env) {
+      const [rs, cpp] = [await env.exec(env.rust, ['version']), await env.exec(env.cpp, ['version'])]
+      if (rs.timedOut || cpp.timedOut) return { problems: ['version did not finish in time'], warnings: [] }
+      if (rs.code !== 0) return { problems: [`version exited with ${rs.code}`], warnings: [] }
+      const problems = checkVersion(rs.stdout, env.lock)
+      if (problems.length > 0) return { problems, warnings: [] }
+      const r = JSON.parse(rs.stdout.trim()) as Record<string, unknown>
+      const c = JSON.parse(cpp.stdout.trim()) as Record<string, unknown>
+      if (r.implementation !== 'rust') problems.push(`implementation is ${JSON.stringify(r.implementation)}, not "rust"`)
+      for (const [k, v] of Object.entries(c)) if (r[k] !== v) problems.push(`${k} is ${JSON.stringify(r[k])}; the C++ program says ${JSON.stringify(v)}`)
+      for (const k of Object.keys(r)) if (k !== 'implementation' && !(k in c)) problems.push(`${k} is not one of the C++ program's fields`)
+      return { problems, warnings: [] }
+    },
+  },
+  {
+    id: 'rs-config-def',
+    title: "sketch-orca-rs config-def writes the C++ program's file, byte for byte",
+    async run(env) {
+      const out = { cpp: join(env.dir, 'config-def-cpp.json'), rs: join(env.dir, 'config-def-rs.json') }
+      for (const f of Object.values(out)) rmSync(f, { force: true })
+      const [rs, cpp] = [await env.exec(env.rust, ['config-def', '--out', out.rs]), await env.exec(env.cpp, ['config-def', '--out', out.cpp])]
+      if (rs.code !== 0 || cpp.code !== 0) return { problems: [`config-def exited with ${rs.code} (Rust) and ${cpp.code} (C++)`], warnings: [] }
+      if (!existsSync(out.rs) || !existsSync(out.cpp)) return { problems: ['config-def wrote no file'], warnings: [] }
+      const [a, b] = [readFileSync(out.cpp), readFileSync(out.rs)]
+      if (a.equals(b)) return { problems: [], warnings: [] }
+      let i = 0
+      while (i < a.length && i < b.length && a[i] === b[i]) i++
+      return { problems: [`the files differ from byte ${i} (C++ ${a.length} bytes, Rust ${b.length})`], warnings: [] }
+    },
+  },
+  {
+    id: 'rs-intake',
+    title: 'sketch-orca-rs refuses the refused jobs with the C++ results, and declines only jobs the C++ read',
+    async run(env) {
+      const problems: string[] = []
+      let compared = 0
+      for (const want of REFUSALS) {
+        const dir = join(env.dir, want.id)
+        mkdirSync(dir, { recursive: true })
+        const { job, model } = want.make(dir, env.resources, env.files)
+        if (model) writeStl(job.model.path, model, want.id)
+        if (isEngineAbsolute(job.workDir)) mkdirSync(job.workDir, { recursive: true })
+        const jobPath = join(dir, 'job.json')
+        if (want.unchecked) writeFileSync(jobPath, JSON.stringify(job, null, 2) + '\n')
+        else writeJob(jobPath, job)
+        const r = await compareIntake(env, dir, jobPath)
+        problems.push(...r.problems.map((p) => `${want.id}: ${p}`))
+        if (!r.declined) compared++
+      }
+      // A file that is not a job at all, and a job with a field of the wrong type: refused while it is read.
+      for (const [id, text] of [
+        ['not-json', '{'],
+        ['orient-not-boolean', JSON.stringify({ ...smokeJob({ command: 'info', dir: env.dir, resources: env.resources, presets: env.files }), orient: 'yes' }, null, 2)],
+      ] as const) {
+        const dir = join(env.dir, id)
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(join(dir, 'job.json'), text)
+        const r = await compareIntake(env, dir, join(dir, 'job.json'))
+        problems.push(...r.problems.map((p) => `${id}: ${p}`))
+        if (r.declined) problems.push(`${id}: declined; it is refused while the job is read`)
+        else compared++
+      }
+      if (compared < 3) problems.push(`only ${compared} refusals were compared; the rest were declined`)
+      return { problems, warnings: [] }
+    },
+  },
+  {
+    id: 'rs-decline',
+    title: 'sketch-orca-rs declines a slice job: not-ported, exit -8, the missing steps, and no output',
+    async run(env) {
+      const job = smokeJob({ command: 'slice', dir: env.dir, resources: env.resources, presets: env.files, overrides: cubeOverrides })
+      writeStl(job.model.path, cube(CUBE.size), 'cube 20 mm')
+      mkdirSync(job.workDir, { recursive: true })
+      const jobPath = join(env.dir, 'job.json')
+      writeJob(jobPath, job)
+      const out = join(env.dir, 'result.json')
+      const r = await env.exec(env.rust, ['run', '--job', jobPath, '--out', out, '--progress', join(env.dir, 'progress.ndjson')])
+      if (r.timedOut) return { problems: ['the run did not finish in time'], warnings: [] }
+      const problems: string[] = []
+      if (lowByte(r.code) !== 248) problems.push(`it exited with ${r.code}; a decline exits with -8 (248)`)
+      if (r.stdout !== '') problems.push(`it wrote to stdout: ${JSON.stringify(r.stdout.slice(0, 200))}`)
+      if (!existsSync(out)) return { problems: [...problems, 'it wrote no result'], warnings: [] }
+      const v = JSON.parse(readFileSync(out, 'utf8')) as Record<string, unknown>
+      if (v.ok !== false || v.code !== 'not-ported' || v.exitCode !== -8) problems.push(`its result is ${JSON.stringify(v.code)} with exit code ${JSON.stringify(v.exitCode)}, not not-ported and -8`)
+      if (!Array.isArray(v.missing) || v.missing.length === 0 || !v.missing.every((m) => typeof m === 'string')) problems.push('its result names no missing steps')
+      const gcodeDir = dirname(job.output.gcode!)
+      const left = existsSync(gcodeDir) ? readdirSync(gcodeDir).filter((f) => f.startsWith(basename(job.output.gcode!))) : []
+      if (left.length > 0) problems.push(`it left ${left.join(', ')}`)
+      return { problems, warnings: [] }
+    },
+  },
+]
+
+/** Runs the Rust program's cases one after the other, logging as runCases does. */
+export async function runRustCases(cases: RustSmokeCase[], o: { rust: string; cpp: string; resources: string; env: Record<string, string>; root: string; lock: OrcaLock; sets: SmokePresetSets; timeoutMs: number }, log: Log, label = 'stage'): Promise<CaseReport[]> {
+  mkdirSync(o.root, { recursive: true })
+  const files = writePresetSet(join(o.root, 'presets', 'generic'), o.sets.generic)
+  const out: CaseReport[] = []
+  for (const c of cases) {
+    const dir = join(o.root, c.id)
+    rmSync(dir, { recursive: true, force: true })
+    mkdirSync(dir, { recursive: true })
+    const logPath = join(dir, 'engine.log')
+    let outcome: CaseOutcome
+    try {
+      outcome = await c.run({ rust: o.rust, cpp: o.cpp, dir, resources: o.resources, lock: o.lock, files, exec: (exe, args) => runEngine(exe, args, { cwd: dir, env: o.env, logPath, timeoutMs: o.timeoutMs }) })
+    } catch (err) {
+      outcome = { problems: [(err as Error).message], warnings: [] }
+    }
+    const ok = outcome.problems.length === 0
+    out.push({ id: c.id, title: c.title, ok, problems: outcome.problems, warnings: outcome.warnings })
+    log.line(`${label}: ${ok ? 'pass' : 'FAIL'} ${c.id}: ${c.title}`)
+    for (const p of outcome.problems) log.line(`${label}:   ${p}`)
+  }
+  return out
+}
 
 // ---------------------------------------------------------------- the step
 

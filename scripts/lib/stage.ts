@@ -1,6 +1,7 @@
 // `stage`: the engine as it ships, in <work>/dist/engine:
 //
-//   bin/              sketch-orca(.exe) and the libraries it loads, next to it
+//   bin/              sketch-orca(.exe) and the libraries it loads, next to it; on Windows also
+//                     sketch-orca-rs.exe, the Rust translation (crates/), which loads no library
 //   resources/        what libslic3r reads at run time (STAGED_RESOURCES)
 //   LICENSES/         Orca's licence (AGPL-3.0) and the licences of the code built into the engine
 //   manifest.json     sketch-orca-engine/1: versions, lock, patches, and every file with its size and sha256
@@ -14,6 +15,12 @@
 // slices smoke's STAGED_CASES with the staged resources, which proves the folder is complete; then
 // it is swapped in. Run again, staging skips when its inputs are unchanged and every file still
 // matches the manifest.
+//
+// On Windows, stage first builds sketch-orca-rs itself (rust.ts buildRustRelease: cargo build
+// --locked --release), stages it beside the C++ engine and names it in the manifest's `rust` block
+// (its file, engine version, `implementation` and SHA-256; engine.exe stays the C++ engine). The
+// staged copy must report the engine's version and pass the Rust smoke cases (smoke.ts
+// RUST_SMOKE_CASES), held to the staged C++ engine, or nothing is swapped in.
 
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { homedir, userInfo } from 'node:os'
@@ -28,12 +35,12 @@ import { MINGW_RUNTIME_LICENSES, mingwRoot } from './mingw.ts'
 import { builtCliSha256, depsStampProblems, readStamp, sha256File, sha256Text, writeStamp, type WorkPaths } from './paths.ts'
 import { readPeDebugPaths, resolveRuntime, windowsRuntimeIo, type RuntimeIo } from './pe.ts'
 import { capture, Log, StepError } from './run.ts'
-import { checkVersion, ENGINE_RESOURCES, engineEnv, engineLibraryDirs, engineRuntime, runCases, runEngine, SMOKE_CASES, smokeFingerprint, smokePassedFor, smokePresetSets, smokeTimeoutMs, SMOKE_VERSION } from './smoke.ts'
+import { checkVersion, ENGINE_RESOURCES, engineEnv, engineLibraryDirs, engineRuntime, runCases, runEngine, runRustCases, RUST_SMOKE_CASES, SMOKE_CASES, smokeFingerprint, smokePassedFor, smokePresetSets, smokeTimeoutMs, SMOKE_VERSION } from './smoke.ts'
 import { currentPlatform, findDepsTools } from './toolchain.ts'
 
 export const ENGINE_FORMAT = 'sketch-orca-engine/1'
 /** Bump when the staged layout or the manifest changes: a stage of an older version is redone. */
-export const STAGE_VERSION = 3
+export const STAGE_VERSION = 4
 /** Folders of Orca's resources/ that libslic3r reads (ENGINE_RESOURCES, smoke.ts): presets, nozzle tables, flush volumes. */
 export const STAGED_RESOURCES = ENGINE_RESOURCES
 /**
@@ -73,6 +80,12 @@ export interface EngineManifest {
    * of stage version 2 or older.
    */
   deps?: { inputs: string; mingw: string | null }
+  /**
+   * The Rust translation staged beside the engine (stage version 4, on Windows): its file, relative
+   * to the engine folder, the engine version it reports, `rust`, and its SHA-256 (the files entry's).
+   * Undefined when the folder has none.
+   */
+  rust?: RustProgram
   /** Hash of what staging read; with the same inputs and matching files, staging has nothing to do. */
   inputs: string
   stagedAt: string
@@ -80,7 +93,29 @@ export interface EngineManifest {
   files: FileEntry[]
 }
 
+export interface RustProgram {
+  exe: string
+  engineVersion: string
+  implementation: 'rust'
+  sha256: string
+}
+
 export const MANIFEST_FILE = 'manifest.json'
+
+/**
+ * The licence texts sketch-orca-rs needs beside the engine's, from licenses/, staged as
+ * LICENSES/sketch-orca-rs/<file>: the code of others it carries, translated (NOTICE: the Microsoft
+ * STL with the LLVM exception, oneTBB, Ryu, nlohmann/json, Boost.Filesystem), and the crates it is
+ * built with (NOTICE: rayon, crossbeam, either, windows-sys, sha2 and the rest, each MIT OR
+ * Apache-2.0, taken under Apache-2.0, none with a NOTICE file of its own), and Rust's standard
+ * library (MIT OR Apache-2.0).
+ */
+export const RUST_LICENSE_TEXTS = ['Apache-2.0.txt', 'LLVM-exception.txt', 'BSL-1.0.txt', 'MIT-nlohmann-json.txt'] as const
+
+/** The copies of RUST_LICENSE_TEXTS from `ownDir` (licenses/). */
+export function rustLicenseCopies(ownDir: string): StageCopy[] {
+  return RUST_LICENSE_TEXTS.map((f) => ({ from: join(ownDir, f), to: `LICENSES/sketch-orca-rs/${f}` }))
+}
 
 const HEX64 = /^[0-9a-f]{64}$/
 
@@ -140,6 +175,20 @@ export function validateManifest(value: unknown): EngineManifest {
     if (d.mingw !== null && (typeof d.mingw !== 'string' || !HEX64.test(d.mingw))) throw new Error('manifest: deps.mingw must be a sha256 or null')
     deps = { inputs: d.inputs, mingw: d.mingw }
   }
+  let rust: RustProgram | undefined
+  if (value.rust !== undefined) {
+    const r = rec(value.rust, 'rust')
+    const rexe = str(r, 'exe', 'rust')
+    if (!isSafeRelPath(rexe)) throw new Error(`manifest: rust.exe ${JSON.stringify(rexe)} is not a relative path inside the engine folder`)
+    if (r.implementation !== 'rust') throw new Error(`manifest: rust.implementation must be "rust", got ${JSON.stringify(r.implementation)}`)
+    const sha = str(r, 'sha256', 'rust')
+    if (!HEX64.test(sha)) throw new Error('manifest: rust.sha256 must be 64 hex characters')
+    const entry = files.find((f) => f.path === rexe)
+    if (!entry) throw new Error(`manifest: rust.exe ${JSON.stringify(rexe)} is not one of the files`)
+    if (entry.sha256 !== sha) throw new Error(`manifest: rust.sha256 is not the SHA-256 files gives ${rexe}`)
+    if (rexe === exe) throw new Error('manifest: rust.exe is engine.exe')
+    rust = { exe: rexe, engineVersion: str(r, 'engineVersion', 'rust'), implementation: 'rust', sha256: sha }
+  }
   return {
     format: ENGINE_FORMAT,
     stageVersion: value.stageVersion,
@@ -153,6 +202,7 @@ export function validateManifest(value: unknown): EngineManifest {
     system: strings(value.system, 'system'),
     smoke: { passed: s.passed, smokeVersion: s.smokeVersion },
     ...(deps ? { deps } : {}),
+    ...(rust ? { rust } : {}),
     inputs: value.inputs,
     stagedAt: typeof value.stagedAt === 'string' ? value.stagedAt : '',
     files,
@@ -793,6 +843,8 @@ export interface ManifestParts {
   runtime: RuntimePlan
   smokePassed: boolean
   deps: { inputs: string; mingw: string | null }
+  /** The Rust program staged beside the engine (its exe, relative, its engine version and SHA-256), if any. */
+  rust?: { exe: string; engineVersion: string; sha256: string }
   inputs: string
   files: FileEntry[]
   stagedAt: string
@@ -812,6 +864,7 @@ export function buildManifest(p: ManifestParts): EngineManifest {
     system: [...p.runtime.system].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())),
     smoke: { passed: p.smokePassed, smokeVersion: SMOKE_VERSION },
     deps: { inputs: p.deps.inputs, mingw: p.deps.mingw },
+    ...(p.rust ? { rust: { exe: p.rust.exe, engineVersion: p.rust.engineVersion, implementation: 'rust' as const, sha256: p.rust.sha256 } } : {}),
     inputs: p.inputs,
     stagedAt: p.stagedAt,
     files: [...p.files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)),
@@ -832,6 +885,8 @@ export function stageInputs(o: {
   platform: Platform
   /** The inputs of the dependency build (depsinputs.ts). */
   depsInputs: string
+  /** The SHA-256 of the Rust program staged beside the engine, or null. */
+  rustSha256?: string | null
 }): string {
   return sha256Text(
     JSON.stringify({
@@ -848,6 +903,7 @@ export function stageInputs(o: {
       smokeVersion: SMOKE_VERSION,
       platform: o.platform,
       deps: o.depsInputs,
+      rust: o.rustSha256 ?? null,
     }),
   )
 }
@@ -1025,6 +1081,17 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
   const depsSrcNames = existsSync(depsSrc) ? readdirSync(depsSrc, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name) : []
   const linkProblems = linkedPartProblems(libs, depsSrcNames, licenses)
   if (linkProblems.length > 0) throw new StepError(linkProblems.join('; '))
+  // The Rust program, built here in release with --locked (Windows: the toolchain it is pinned to).
+  let rustExe: string | undefined
+  let rustName = ''
+  if (platform === 'win32') {
+    // Imported here: rust.ts reads bundle.ts's BUILT_WITH when it loads, and bundle.ts imports this module.
+    const { buildRustRelease, RUST_PROGRAM } = await import('./rust.ts')
+    log.line('stage: building sketch-orca-rs (cargo build --locked --release)')
+    rustExe = await buildRustRelease(ctx.engine.engine, join(w.logs, 'stage-cargo.log'))
+    rustName = `${RUST_PROGRAM}.exe`
+  }
+  const rustSha256 = rustExe ? sha256File(rustExe) : null
   // What the engine was built from (the build checked that cli/ did not change meanwhile).
   const cli = builtCliSha256(w)!
   const inputs = stageInputs({
@@ -1038,6 +1105,7 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     smokePassed,
     platform,
     depsInputs: depsNow.inputs,
+    rustSha256,
   })
 
   // Nothing staged names the builder or the build machine (a staged engine that is current too).
@@ -1075,6 +1143,7 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
   const exeName = platform === 'win32' ? 'sketch-orca.exe' : 'sketch-orca'
   const copies: StageCopy[] = [
     { from: exe, to: `bin/${exeName}` },
+    ...(rustExe ? [{ from: rustExe, to: `bin/${rustName}` }, ...rustLicenseCopies(ctx.engine.licenses)] : []),
     ...runtime.copy.map((c) => ({ from: c.path, to: `bin/${c.name}` })),
     ...resourceCopies(w.src, (d) => listFiles(d)),
     ...licenses,
@@ -1085,6 +1154,18 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     else copyFile(c.from, nativePath(tmp, c.to))
   }
   writeText(join(tmp, 'LICENSES', 'README.txt'), licensesReadme(ctx.lock, modified))
+  // The staged Rust program runs on its own and reports what the engine reports, plus implementation rust.
+  let rust: ManifestParts['rust']
+  if (rustExe) {
+    const stagedRust = join(tmp, 'bin', rustName)
+    const rv = await runEngine(stagedRust, ['version'], { cwd: tmp, env: stagedEnv(process.env, platform, join(tmp, 'bin')), logPath: engineLog, timeoutMs: 60_000 })
+    const parsed = rv.code === 0 && !rv.timedOut ? parseVersionOutput(rv.stdout) : undefined
+    const rustProblems = rv.code === 0 && !rv.timedOut ? checkVersion(rv.stdout, ctx.lock) : [`it exited with ${rv.code}${rv.timedOut ? ' (timed out)' : ''}`]
+    if (parsed && parsed.implementation !== 'rust') rustProblems.push(`its implementation is ${JSON.stringify(parsed.implementation)}, not "rust"`)
+    if (parsed && parsed.engineVersion !== engineVersion) rustProblems.push(`it reports engine version ${JSON.stringify(parsed.engineVersion)}, the C++ engine ${engineVersion}`)
+    if (rustProblems.length > 0) throw new StepError(`the staged sketch-orca-rs does not report the engine: ${rustProblems.join('; ')} (log: ${engineLog})`)
+    rust = { exe: `bin/${rustName}`, engineVersion, sha256: rustSha256! }
+  }
   const manifest = buildManifest({
     lock: ctx.lock,
     engineVersion,
@@ -1096,6 +1177,7 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     runtime,
     smokePassed,
     deps: { inputs: depsNow.inputs, mingw: depsNow.mingw },
+    ...(rust ? { rust } : {}),
     inputs,
     files: treeEntries(tmp),
     stagedAt: new Date().toISOString(),
@@ -1130,6 +1212,20 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     const failed = done.filter((c) => !c.ok).map((c) => c.id)
     if (failed.length > 0) throw new StepError(`the staged engine fails ${failed.join(', ')} with its own resources (details in ${root})`)
   }
+  // And the Rust program does what the C++ engine beside it does, as far as it goes (smoke.ts RUST_SMOKE_CASES).
+  if (rust) {
+    const root = join(w.smoke, 'staged-rust')
+    rmSync(root, { recursive: true, force: true })
+    const resources = join(tmp, 'resources')
+    const done = await runRustCases(
+      RUST_SMOKE_CASES,
+      { rust: join(tmp, ...rust.exe.split('/')), cpp: stagedExe, resources, env: ownEnv, root, lock: ctx.lock, sets: smokePresetSets(join(resources, 'profiles')), timeoutMs: smokeTimeoutMs() },
+      log,
+      'stage',
+    )
+    const failed = done.filter((c) => !c.ok).map((c) => c.id)
+    if (failed.length > 0) throw new StepError(`the staged sketch-orca-rs fails ${failed.join(', ')} (details in ${root})`)
+  }
 
   const old = join(w.dist, 'engine.old')
   rmSync(old, { recursive: true, force: true })
@@ -1142,7 +1238,7 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
   rmSync(old, { recursive: true, force: true })
   const bytes = manifest.files.reduce((n, f) => n + f.size, 0)
   writeStamp(w.state, 'stage', inputs, { files: manifest.files.length, bytes, manifestSha256: sha256Bytes(serializeManifest(manifest)) })
-  log.line(`stage: ${dist}: sketch-orca ${engineVersion} on Orca ${ctx.lock.tag}, ${manifest.runtime.length} libraries, ${manifest.files.length} files, ${(bytes / 1048576).toFixed(1)} MB`)
+  log.line(`stage: ${dist}: sketch-orca ${engineVersion} on Orca ${ctx.lock.tag}${rust ? `, with ${rust.exe}` : ''}, ${manifest.runtime.length} libraries, ${manifest.files.length} files, ${(bytes / 1048576).toFixed(1)} MB`)
   return 0
 }
 

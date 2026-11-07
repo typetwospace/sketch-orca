@@ -1,6 +1,6 @@
 {
   "name": "sketch-orca",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A command-line slicer made of OrcaSlicer's slicing library and a JSON job interface, built without Orca's GUI",
   "license": "AGPL-3.0-only",
   "private": true,

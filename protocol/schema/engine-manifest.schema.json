@@ -56,6 +56,17 @@
       "required": ["inputs", "mingw"],
       "properties": { "inputs": { "$ref": "#/$defs/sha256" }, "mingw": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] } }
     },
+    "rust": {
+      "description": "sketch-orca-rs, the Rust translation of the engine, staged beside it (stage version 4 on, on Windows): it takes the same command line and files and answers what its parity record certifies, declining the rest with not-ported (protocol/README.md). engine.exe stays the C++ engine. exe must be one of the files, and sha256 that file's SHA-256.",
+      "type": "object",
+      "required": ["exe", "engineVersion", "implementation", "sha256"],
+      "properties": {
+        "exe": { "$ref": "#/$defs/relativePath", "description": "The Rust program, relative to the folder." },
+        "engineVersion": { "type": "string", "description": "The engine version it reports, the C++ engine's." },
+        "implementation": { "const": "rust" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
     "inputs": { "$ref": "#/$defs/sha256", "description": "A hash of what staging read." },
     "stagedAt": { "type": "string" },
     "files": {

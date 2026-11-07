@@ -8,18 +8,103 @@
 // 10.0.22000.0), so link.exe takes the same libucrt.lib the C++ engine links. The runner refuses a
 // machine, a Visual Studio or a rustc that is not that one, and an argument that would steer cargo
 // somewhere else: another toolchain (`+nightly`), another target, a RUSTFLAGS of the caller's.
+//
+// The pipeline uses it too: `stage` builds the program it ships with buildRustRelease (cargo build
+// --locked --release, target/release/sketch-orca-rs.exe), and `source` vendors the crates the
+// program is built from with vendorRustCrates (cargo vendor --locked --versioned-dirs).
 
-import { existsSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { appendFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { BUILT_WITH } from './bundle.ts'
 import { cleanWinBuildPath, findOnPath, isLeakyEnv, parseSetOutput, splitPathList, vcvarsBaseEnv, winBaselinePath } from './env.ts'
+import { listFiles } from './files.ts'
 import { capture, StepError, UsageError } from './run.ts'
 import { findVisualStudio } from './toolchain.ts'
 
-/** What the Rust program is built with. The Visual Studio, MSVC and SDK versions are BUILT_WITH's. */
+/** The Rust program's name, and where `cargo build --release` puts it. */
+export const RUST_PROGRAM = 'sketch-orca-rs'
+export function rustReleaseExe(root: string): string {
+  return join(root, 'target', 'release', `${RUST_PROGRAM}.exe`)
+}
+
+/** How long one cargo run of the pipeline may take: SKETCH_ORCA_RUST_TIMEOUT_MS, else 45 minutes. */
+export function rustTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const v = env.SKETCH_ORCA_RUST_TIMEOUT_MS
+  return v !== undefined && /^[1-9]\d*$/.test(v) ? Number(v) : 45 * 60 * 1000
+}
+
+/**
+ * Runs cargo with the pinned toolchain (parseRustArgs's command line for `argv`), hidden, in
+ * `root`, its output appended to `logPath`; stopped with the processes it started when the time
+ * limit runs out. Throws a StepError when it fails.
+ */
+export async function runCargo(root: string, argv: string[], o: { logPath: string; timeoutMs?: number; env?: NodeJS.ProcessEnv }): Promise<void> {
+  const inv = parseRustArgs(argv)
+  const tool = findRustToolchain(root, o.env ?? process.env)
+  mkdirSync(dirname(o.logPath), { recursive: true })
+  appendFileSync(o.logPath, `$ cargo ${inv.cargoArgs.join(' ')}\n${tool.notes.join('; ')}\n`)
+  const limit = o.timeoutMs ?? rustTimeoutMs(o.env ?? process.env)
+  const code = await new Promise<number | null>((resolve, reject) => {
+    const child = spawn(tool.cargo, inv.cargoArgs, { cwd: root, env: tool.env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    child.stdout.on('data', (d: Buffer) => appendFileSync(o.logPath, d))
+    child.stderr.on('data', (d: Buffer) => appendFileSync(o.logPath, d))
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      if (child.pid !== undefined) spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+    }, limit)
+    child.on('error', (e) => {
+      clearTimeout(timer)
+      reject(e)
+    })
+    child.on('close', (c) => {
+      clearTimeout(timer)
+      if (timedOut) reject(new StepError(`cargo ${inv.command} was stopped after ${Math.round(limit / 60000)} minutes (log: ${o.logPath})`))
+      else resolve(c)
+    })
+  })
+  if (code !== 0) throw new StepError(`cargo ${inv.cargoArgs.join(' ')} exited with ${code} (log: ${o.logPath})`)
+}
+
+/**
+ * The source of every crate Cargo.lock names, in `dir` (cargo vendor --locked --versioned-dirs:
+ * <dir>/<name>-<version>/), with the licence files each crate's package carries. Returns the
+ * crates' folders, sorted. Throws when a crate has no licence file or holds a library a linker
+ * would take (windows-sys 0.61 links through windows-link's raw-dylib, so none is expected).
+ */
+export async function vendorRustCrates(root: string, dir: string, logPath: string): Promise<string[]> {
+  await runCargo(root, ['vendor', '--versioned-dirs', dir], { logPath })
+  const crates = existsSync(dir) ? readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : []
+  if (crates.length === 0) throw new StepError(`cargo vendor put no crates in ${dir} (log: ${logPath})`)
+  const problems = vendoredProblems(crates.map((c) => ({ name: c, files: listFiles(join(dir, c)) })))
+  if (problems.length > 0) throw new StepError(`the vendored crates are not complete: ${problems.join('; ')}`)
+  return crates
+}
+
+/** Why vendored crates (each with its files, relative) cannot ship: no licence file, or a prebuilt library. */
+export function vendoredProblems(crates: { name: string; files: string[] }[]): string[] {
+  const out: string[] = []
+  for (const c of crates) {
+    if (!c.files.some((f) => !f.includes('/') && /^(licen[cs]e|copying|copyright|unlicense)/i.test(f))) out.push(`${c.name} has no licence file`)
+    const libs = c.files.filter((f) => /\.(lib|a|dll|so|dylib)$/i.test(f))
+    if (libs.length > 0) out.push(`${c.name} holds prebuilt libraries (${libs.slice(0, 3).join(', ')})`)
+  }
+  return out
+}
+
+/** Builds the Rust program in release with --locked, and returns it (target/release/sketch-orca-rs.exe). */
+export async function buildRustRelease(root: string, logPath: string): Promise<string> {
+  await runCargo(root, ['build', '--release', '--bin', RUST_PROGRAM], { logPath })
+  const exe = rustReleaseExe(root)
+  if (!existsSync(exe)) throw new StepError(`cargo build --release made no ${exe} (log: ${logPath})`)
+  return exe
+}
+
+/** What the Rust program is built with. rustc, Visual Studio, MSVC and the SDK are BUILT_WITH's. */
 export const RUST_PINS = {
-  rustc: '1.94.1',
+  rustc: BUILT_WITH.rust,
   host: 'x86_64-pc-windows-msvc',
   /** Visual Studio's major.minor, from BUILT_WITH.visualStudio. */
   visualStudio: BUILT_WITH.visualStudio.replace(/^.*\b(\d+\.\d+)$/, '$1'),
@@ -28,7 +113,7 @@ export const RUST_PINS = {
 } as const
 
 /** The commands of the runner, and the cargo subcommand each one runs. */
-export const RUST_COMMANDS = { build: 'build', test: 'test', clippy: 'clippy', fmt: 'fmt' } as const
+export const RUST_COMMANDS = { build: 'build', test: 'test', clippy: 'clippy', fmt: 'fmt', vendor: 'vendor' } as const
 export type RustCommand = keyof typeof RUST_COMMANDS
 
 export interface RustInvocation {

@@ -29,7 +29,13 @@ The maintainers follow these rules for their own changes:
 - Rust code (`crates/`, the translation described in `README.md`) follows these rules as well:
   - Run `bun run rs:build`, `bun run rs:test`, `bun run rs:clippy -- -D warnings` and
     `bun run rs:fmt:check` besides the two above, and format with `bun scripts/rust.ts fmt`.
-    Builds are `--locked`: the scripts add it, and `Cargo.lock` is committed.
+    Builds are `--locked`: the scripts add it, and `Cargo.lock` is committed. A new crate
+    dependency also needs its entry in `NOTICE` (its licence and holders): `stage` ships the
+    program, and `source` vendors every crate `Cargo.lock` names, refusing one with no licence
+    file or with a prebuilt library (`scripts/lib/rust.ts` `vendoredProblems`).
+  - The version moves in three places at once: `package.json`, `cli/CMakeLists.txt`
+    (`SKETCH_ORCA_VERSION`) and `Cargo.toml`'s workspace version, with `Cargo.lock`'s `orca-*`
+    entries following (`test/repo.test.ts` checks the three agree).
   - Every `.rs` file starts with the same nine-line copyright and licence header as `cli/*.cpp`
     (`test/repo.test.ts` checks it, and the same for the `.cpp` and `.hpp` files of
     `parity/oracle/`).

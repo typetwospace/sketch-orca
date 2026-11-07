@@ -27,7 +27,10 @@ import {
   REFUSALS,
   REFUSE,
   RUN_INPUTS,
+  RUST_SMOKE_CASES,
   SMOKE_CASES,
+  lowByte,
+  withoutImplementation,
   SMOKE_PRESETS,
   SMOKE_VERSION,
   TOWER_OFF_BED,
@@ -601,8 +604,9 @@ describe('jobs and the engine environment', () => {
     // since the G-code's config block gives the matrix times the multiplier; version 9 the H2D's
     // per-variant nozzle volumes and a volume past an int that Orca's own check takes
     // (flush-volumes), a corridor bed and a place set past the bed (prime-tower), and file-collisions'
-    // Windows names for a file (a trailing dot or space, \\?\, ::$DATA, a named stream).
-    expect(SMOKE_VERSION).toBe(9)
+    // Windows names for a file (a trailing dot or space, \\?\, ::$DATA, a named stream); version 10
+    // the Rust program's cases (RUST_SMOKE_CASES), which stage runs.
+    expect(SMOKE_VERSION).toBe(10)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
     expect(CAPITAL_KEY.key).not.toBe(CAPITAL_KEY.key.toLowerCase())
@@ -1134,5 +1138,28 @@ describe('exit codes, refusals and info', () => {
       "the bed is [[0,0],[256,0],[256,256],[0,256]], but the machine preset's printable_area is [[0,0],[300,0],[300,300],[0,300]]",
       "the bed's printable height is 250, but the machine preset's printable_height is 275",
     ])
+  })
+})
+
+describe("the Rust program's cases", () => {
+  test('rs-version, rs-config-def, rs-intake and rs-decline, in that order, none of them a C++ case', () => {
+    expect(RUST_SMOKE_CASES.map((c) => c.id)).toEqual(['rs-version', 'rs-config-def', 'rs-intake', 'rs-decline'])
+    for (const c of RUST_SMOKE_CASES) expect(SMOKE_CASES.some((s) => s.id === c.id)).toBe(false)
+    expect(SMOKE_CASES.length).toBe(19)
+  })
+
+  test('an exit code is compared by its low byte, as Bun and Node report -8', () => {
+    expect(lowByte(-8)).toBe(248)
+    expect(lowByte(248)).toBe(248)
+    expect(lowByte(4294967288)).toBe(248)
+    expect(lowByte(-2)).toBe(254)
+    expect(lowByte(null)).toBe(null)
+  })
+
+  test("a result's engine block loses the Rust program's implementation, and nothing else", () => {
+    const rs = '{"format":"sketch-orca-result/1","ok":false,"engine":{"engine":"sketch-orca","engineVersion":"0.2.0","implementation":"rust"}}'
+    const cpp = '{"format":"sketch-orca-result/1","ok":false,"engine":{"engine":"sketch-orca","engineVersion":"0.2.0"}}'
+    expect(JSON.stringify(withoutImplementation(rs))).toBe(JSON.stringify(withoutImplementation(cpp)))
+    expect(JSON.stringify(withoutImplementation(rs.replace('0.2.0', '0.1.0')))).not.toBe(JSON.stringify(withoutImplementation(cpp)))
   })
 })

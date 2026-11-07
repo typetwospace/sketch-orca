@@ -13,7 +13,7 @@ members = ["crates/*"]
 
 [workspace.package]
 # Equal to package.json's version and cli/CMakeLists.txt's SKETCH_ORCA_VERSION (test/repo.test.ts).
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.94"
 license = "AGPL-3.0-only"

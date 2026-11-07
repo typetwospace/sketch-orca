@@ -23,7 +23,7 @@
 cmake_minimum_required(VERSION 3.13)
 
 # The front end's own version; Orca's version and commit are reported next to it.
-set(SKETCH_ORCA_VERSION "0.1.0")
+set(SKETCH_ORCA_VERSION "0.2.0")
 if (NOT DEFINED SKETCH_ORCA_COMMIT)
     set(SKETCH_ORCA_COMMIT "")
 endif ()
