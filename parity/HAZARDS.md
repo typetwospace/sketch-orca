@@ -204,7 +204,14 @@ STL's `num_get`: `orca-fmt`'s `istream` translates MSVC 14.42's (`xlocnum`: the 
 digits, the sticky last digit, the exponent held to 1100, `_Stolx` for `int`), and `orca-config`
 reads every option value through it, but the probe does not hold `num_get` yet, so it is checked
 only through the configdef probe's round trips: open. `sscanf("%lf")` (a point's `x` and `y`) is
-modelled as the UCRT's `strtod` of the same characters: open, unprobed. nlohmann's number output
+**probed** (`cstdio.sop1` CSCN, 2026-11-07), and `orca-fmt`'s `scanf` reproduces it: `%lf` stores
+`strtod` of the characters it reads, but it reads them by a grammar of its own, and where that
+grammar stops inside a number (`1e`, `1e+`, `0x`, `infin`, `nan(ab`) it stores nothing (a
+matching failure, or `EOF` at the end of the input) where `strtod` takes the number before.
+`orca-config`'s point reader (`src/value.rs`, `scan_point`) still calls `strtod` on the rest of
+the text, so on those inputs it stores a coordinate the C++ leaves as it was and counts its
+conversions otherwise; calling `orca_fmt::scanf::sscanf` with the C++ formats would close it:
+open, for `orca-config`. nlohmann's number output
 is its own Grisu2 (`deps_src/nlohmann/json.hpp`), translated in `orca-json` (`src/dtoa.rs`) and
 held to the front end's goldens: done. The configdef probe records each default as its
 serialisation (six significant digits for a double), so `OptionDef::default_value` holds that
@@ -503,8 +510,30 @@ Qhull 2015.2 (`libqhull_r` 7.2.0 and `libqhullcpp`), with its `qsort` calls thro
 
 ### orca-mesh
 
-admesh and `TriangleMesh`. Probe files `mesh.sop1` and, for the C runtime's stdio that admesh
-reads with (`orca-fmt`'s `stdio` and `scanf`), `cstdio.sop1`. Filled by o2-mesh.
+admesh (`deps_src/admesh`) and libslic3r's `TriangleMesh` (`TriangleMesh.cpp`,
+`MeshSplitImpl.hpp`): the STL reader, the repair on import, the shared vertices, the statistics,
+the transforms, the bounding boxes, the split and the 2D hull. Probe files `mesh.sop1`: MCAS and
+MSTD (`parity/SOP1.md`), which `crates/orca-mesh/tests/probes.rs` replays; and, for the C
+runtime's stdio that admesh reads with (`orca-fmt`'s `stdio` and `scanf`), `cstdio.sop1`: CSCN
+and CFIL, which `crates/orca-fmt/tests/probes.rs` replays. Every record of both sets of both files
+matched on 2026-11-07. Filled by o2-mesh on 2026-11-07; `TriangleMesh::convex_hull_3d` and
+`its_convex_hull` come with orca-qhull. The hazards it owns:
+
+| What | Where (`deps_src/admesh/`, `src/libslic3r/`) | What the translation does |
+| --- | --- | --- |
+| The CR box: `fscanf(" solid %[^\n]")` into `char solid_name[256]` overruns the stack for a `solid` line of 256 bytes or more (any file with CR line ends), and the engine dies with 0xC0000409 | `stlinit.cpp:164-165` | a defined answer (`parity/CORPUS.md`, "An engine fault: 20mmbox-CR.stl"): `stl_open` refuses the file with `StlError::OverlongSolidLine`, as `orca-fmt`'s `fscanf` stops with `Overflow` there (`tests/stl_open.rs`); the probes make no such call (CFIL call 8) |
+| The `MW` name: `strstr(solid_name, "MW")`, then `sscanf(mw_position + 3, "%s %s %s")` into `char[16]`, `char[128]` and `char[16]` with no widths, so a longer word overruns the stack (a name such as `MW_cover_plate_with_holes`), and `mw_position + 3` is past the string when `MW` ends it | `stlinit.cpp:167-187` | open: undefined in the C++, not probed. What it reads reaches only the progress callback, which the engine does not pass, so the Rust leaves it out and reads on, where the C++ may die as on the CR box |
+| A failed `fgets` (at the end of the file) leaves `buf` as it was: the facet's line read before, or an uninitialised stack array before the first | `stlinit.cpp:245-252` | a failed read matches neither `endloop` nor `endfacet`, which is the C++'s answer wherever `buf` holds a line read before (an `endfacet` line cannot pass for `endloop`, nor the reverse); probed (MCAS files cut short, CFIL) |
+| An ASCII facet's two extra bytes are never set (`stl_facet facet;` uninitialised) | `stlinit.cpp:212` | zeros; nothing reads them for an ASCII mesh, and MSTD leaves them out |
+| `ftell` returns a `long`, which a file of 2 GiB or more passes | `stlinit.cpp:60` | `orca-fmt`'s `ftell` gives -1, C's failure value, so the file is refused for its size; not probed (no such file) |
+| A text stream's `fread` of 512 bytes or more at the stream's start leaves raw file bytes after what it returns (the OBJ reader reads with `fread`) | the static UCRT | `orca-fmt` writes only the bytes read: C leaves the rest unspecified, and no reader looks at it (CFIL records only the items read) |
+| `stl_check_facets_exact` on a mesh left with no facets (every one degenerate) sizes its hash table from `0 * 3 * 2 - 1` in `size_t`, so the largest prime: 1610612741 chain heads, 12.9 GB allocated and filled | `connect.cpp:125`, `:164-171` | the heads are allocated at the first insertion, so never there; the result is the C++'s whenever its allocation succeeds |
+| `remove_facet` stops early on broken connectivity (it logs "this is wrong"), leaving `facet_start` and `neighbors_start` longer than `number_of_facets` and neighbour indices past it | `connect.cpp:513-546` | kept: the arrays stay that long, every loop runs to `number_of_facets`, MSTD writes the arrays whole |
+| `stl_fix_normal_directions` marks facets in `norm_sw`, `number_of_facets` bytes long, and reads and writes it at those neighbour indices past its end | `normals.cpp:134-213` | open: a heap overrun, undefined; the Rust array covers the facet arrays' whole length, and its entries past `number_of_facets` start unfixed |
+| `get_volume` reads `facet_start[0]` when every facet was removed | `util.cpp:276-279` | 0, as the loop does not run (the vector keeps its buffer after `pop_back`, so the C++ reads stale memory and does not fault) |
+| `create_face_neighbors_index(ex_tbb, ...)`, which `its_split`, `its_is_splittable` and `its_number_of_patches` use without an index: tasks claim each other's edges with no synchronisation, so with more than one thread the index depends on timing | `MeshSplitImpl.hpp:224-270`, `TriangleMesh.cpp:1572` | probed under the oracle's threading (one thread in an arena of 8; MCAS is replayed in `orca_tbb::Arena::serial(8)`); in a parallel arena the Rust races as the C++ does, through atomics |
+| `x *= -1.f` and `x *= -1.0` on a `float` (`mulss`, `mulsd`) keep a NaN's sign and quiet it, where `-x` flips the sign | `TriangleMesh.cpp:316-334`, `util.cpp:210-242` | `admesh::times_minus_one` |
+| `m.block(0, 0, 3, 3).determinant()` is a block of runtime size, so Eigen takes it by partial-pivoting LU, not by the 3x3 cofactor formula | `TriangleMesh.cpp:340`, `:352` | probed (MCAS `transform` calls): `eigen_lu.rs` |
 
 ### orca-zip
 

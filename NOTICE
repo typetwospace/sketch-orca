@@ -247,7 +247,14 @@ orca-mesh (filled by the o2-mesh task)
     under the GNU General Public License, version 2 or (at your option) any later version
     (licenses/GPL-2.0.txt); sketch-orca takes it under version 3 (licenses/GPL-3.0.txt), which
     section 13 of the GNU Affero General Public License lets it combine with.
-  - OrcaSlicer's src/libslic3r/TriangleMesh.cpp, with its header.
+  - OrcaSlicer's src/libslic3r/TriangleMesh.cpp and MeshSplitImpl.hpp, with their headers.
+  - Eigen 5.0.1, as orca-eigen's entry above names it, under the Mozilla Public License, version
+    2.0 (MPL-2.0; licenses/MPL-2.0.txt): the determinant of a block of runtime size, by the
+    partial-pivoting LU of Eigen/src/LU/Determinant.h and PartialPivLU.h with the coefficient
+    search of Eigen/src/Core/FindCoeff.h (src/eigen_lu.rs). That file stays under MPL-2.0, says so
+    with its Exhibit A notice and keeps its source available here, as that licence's section 3
+    asks; its section 3.3 lets the program combine it with code under the GNU Affero General
+    Public License, version 3.
 
 orca-zip (filled by the o2-model task)
   - miniz, based on miniz 2.1.0 (amalgamated) with Prusa Research's additions, as OrcaSlicer

@@ -61,6 +61,16 @@ they are named as engine faults in `scripts/lib/parity/corpus.ts`, taken out of 
 cases with this reason, and the Rust program's defined answer for such a file (read it as the
 other boxes are read, or refuse it as `model-unreadable`) is chosen with the `model-load` work.
 
+The cause, confirmed (o2-mesh, 2026-11-07): the cstdio probe's first run made that same
+`fscanf(" solid %[^\n]")` call on text with CR line ends, with the static UCRT the engine links,
+and died the same way, exit code 9 with nothing written. The probe now leaves the call out
+wherever the line holds 256 bytes or more (CFIL call 8, `parity/SOP1.md`). The translation's
+answer: `orca-mesh`'s `stl_open` refuses any ASCII file whose `solid` line is longer than 255
+bytes with `StlError::OverlongSolidLine`, before it reads a facet, and leaves the mesh empty
+(`crates/orca-mesh/tests/stl_open.rs`: a CR copy of a 20 mm cube is refused, its LF and CR LF
+copies read, a 255-byte line reads and a 256-byte one is refused). The `model-load` work maps
+that error to the job's answer.
+
 ### model.stl as Sketch writes it
 
 Sketch hands the engine its model as a binary STL, `model.stl`. An OBJ mesh of the corpus becomes

@@ -19,6 +19,14 @@
 //! - PARS: `strtod`, `strtof` (with `errno`), `stod`, `stof` (with what they throw) and
 //!   `from_chars` in each format: the value's bits, the characters read and the status.
 //!
+//! And every record of `cstdio.sop1` (o2-mesh, 2026-11-07), against the `stdio` and `scanf`
+//! modules:
+//!
+//! - CSCN: `sscanf` of one input with one of the formats admesh passes: the count and what each
+//!   argument holds afterwards.
+//! - CFIL: a file opened with `"rb"`, `"r"` or `"rt"` and a script of `getc`, `fgets`, `fscanf`,
+//!   `fread`, `ftell`, `fseek`, `rewind` and `feof` calls, each with its result.
+//!
 //! The committed subset (`parity/probes/`) runs by default; `SKETCH_ORCA_PROBES_DEEP=<folder>`
 //! replays the full set from that folder (`<work>/parity/probes`).
 
@@ -26,8 +34,10 @@ use orca_fmt::Errc;
 use orca_fmt::ostream::{self, Adjust, FloatField, Numpunct, Stream};
 use orca_fmt::parse::{self, Errno, StoError};
 use orca_fmt::printf::{self, Arg};
+use orca_fmt::scanf::{ScanArg, fscanf, sscanf};
+use orca_fmt::stdio::{File, Mode};
 use orca_fmt::to_chars::{self, CharsFormat};
-use orca_probe::{Mismatches, ProbeFile, load_probe};
+use orca_probe::{Mismatches, ProbeFile, Reader, load_probe};
 
 fn file() -> ProbeFile {
     load_probe("fmt").unwrap_or_else(|e| panic!("{e}"))
@@ -352,4 +362,287 @@ fn parsers_read_what_msvc_reads() {
         "the PARS records: strtod, strtof, stod, stof and from_chars in four formats each width"
     );
     m.assert_none("PARS");
+}
+
+// cstdio.sop1 (o2-mesh, 2026-11-07).
+
+fn cstdio_file() -> ProbeFile {
+    load_probe("cstdio").unwrap_or_else(|e| panic!("{e}"))
+}
+
+/// The formats of the CSCN and CFIL records, by index, with their arguments: `f` a `float`, `d` a
+/// `double`, `s` a `char[32]`, `S` a `char[256]` (`parity/oracle/probe/cstdio.cpp`, FORMATS).
+const SCAN_FORMATS: [(&[u8], &str); 11] = [
+    (b"%f", "f"),
+    (b"%lf", "d"),
+    (b" vertex %f %f %f", "fff"),
+    (b" vertex %f %f %f ", "fff"),
+    (b" facet normal %31s %31s %31s", "sss"),
+    (b" outer loop", ""),
+    (b" endsolid%*[^\n]\n", ""),
+    (b" solid%*[^\n]\n", ""),
+    (b" solid %[^\n]", "S"),
+    (b" ", ""),
+    (b"%f %f %f", "fff"),
+];
+
+const FLOAT_SENTINEL: u32 = 0x1234_5678;
+const DOUBLE_SENTINEL: u64 = 0x1234_5678_9ABC_DEF0;
+const CHAR_SENTINEL: u8 = 0x55;
+
+/// The arguments of one call, set to the probe's sentinels.
+struct ScanArgs {
+    f: [f32; 3],
+    d: [f64; 3],
+    s: [[u8; 32]; 3],
+    big: [u8; 256],
+}
+
+impl ScanArgs {
+    fn new() -> Self {
+        ScanArgs {
+            f: [f32::from_bits(FLOAT_SENTINEL); 3],
+            d: [f64::from_bits(DOUBLE_SENTINEL); 3],
+            s: [[CHAR_SENTINEL; 32]; 3],
+            big: [CHAR_SENTINEL; 256],
+        }
+    }
+
+    /// The `ScanArg`s of a format's argument list.
+    fn args<'a>(&'a mut self, spec: &str) -> Vec<ScanArg<'a>> {
+        let ScanArgs { f, d, s, big } = self;
+        let mut f = f.iter_mut();
+        let mut d = d.iter_mut();
+        let mut s = s.iter_mut();
+        let mut big = Some(&mut big[..]);
+        spec.bytes()
+            .map(|c| match c {
+                b'f' => ScanArg::F32(f.next().expect("three floats at most")),
+                b'd' => ScanArg::F64(d.next().expect("three doubles at most")),
+                b's' => ScanArg::Chars(&mut s.next().expect("three buffers at most")[..]),
+                _ => ScanArg::Chars(big.take().expect("one big buffer at most")),
+            })
+            .collect()
+    }
+
+    /// Whether each argument holds what the record says, read from `r`: a description of the
+    /// first that does not.
+    fn compare(&self, spec: &str, r: &mut Reader<'_>) -> Option<String> {
+        let (mut nf, mut nd, mut ns) = (0, 0, 0);
+        let mut first = None;
+        for c in spec.bytes() {
+            let diff = match c {
+                b'f' => {
+                    let want = r.u32().unwrap();
+                    let got = self.f[nf].to_bits();
+                    nf += 1;
+                    (got != want).then(|| format!("float {got:#010x}, the UCRT {want:#010x}"))
+                }
+                b'd' => {
+                    let want = r.u64().unwrap();
+                    let got = self.d[nd].to_bits();
+                    nd += 1;
+                    (got != want).then(|| format!("double {got:#018x}, the UCRT {want:#018x}"))
+                }
+                b's' => {
+                    let want = r.bytes().unwrap();
+                    let got = &self.s[ns][..];
+                    ns += 1;
+                    (got != want).then(|| {
+                        format!(
+                            "buffer {:?}, the UCRT {:?}",
+                            String::from_utf8_lossy(got),
+                            String::from_utf8_lossy(want)
+                        )
+                    })
+                }
+                _ => {
+                    let want = r.bytes().unwrap();
+                    (self.big[..] != *want).then(|| {
+                        format!(
+                            "buffer {:?}, the UCRT {:?}",
+                            String::from_utf8_lossy(&self.big),
+                            String::from_utf8_lossy(want)
+                        )
+                    })
+                }
+            };
+            if first.is_none() {
+                first = diff;
+            }
+        }
+        first
+    }
+}
+
+#[test]
+fn sscanf_reads_what_the_ucrt_reads() {
+    let file = cstdio_file();
+    let mut m = Mismatches::default();
+    let mut cases = 0;
+    for rec in file.of_kind("CSCN") {
+        cases += 1;
+        let mut r = rec.reader();
+        let fi = usize::from(r.u8().unwrap());
+        let input = r.bytes().unwrap();
+        let want = r.i32().unwrap();
+        let (format, spec) = SCAN_FORMATS[fi];
+        let mut a = ScanArgs::new();
+        let got = sscanf(input, format, &mut a.args(spec));
+        let diff = a.compare(spec, &mut r);
+        r.finish("CSCN").unwrap();
+        m.check(got == Ok(want) && diff.is_none(), || {
+            format!(
+                "sscanf({:?}, {:?}) gave {got:?}, the UCRT {want}{}",
+                String::from_utf8_lossy(input),
+                String::from_utf8_lossy(format),
+                diff.map(|d| format!("; {d}")).unwrap_or_default()
+            )
+        });
+    }
+    assert!(cases > 0, "{}: no CSCN record", file.path.display());
+    m.assert_none("CSCN");
+}
+
+/// One CFIL script replayed: a description of its first call that differs from the record.
+fn replay_script(r: &mut Reader<'_>) -> Option<String> {
+    let raw = r.bytes().unwrap();
+    let mode = r.u8().unwrap();
+    let ops = r.u32().unwrap();
+    let mut fp = File::from_bytes(raw, if mode == 0 { Mode::Binary } else { Mode::Text });
+    let mut first: Option<String> = None;
+    let mut buf = vec![0u8; 4096];
+    for i in 0..ops {
+        let op = r.u8().unwrap();
+        let diff = match op {
+            0 => {
+                let want = r.i32().unwrap();
+                let got = fp.getc();
+                (got != want).then(|| format!("getc gave {got}, the UCRT {want}"))
+            }
+            1 => {
+                let n = usize::try_from(r.i32().unwrap()).unwrap();
+                let want_nonnull = r.bool().unwrap();
+                let want = r.bytes().unwrap();
+                buf.fill(CHAR_SENTINEL);
+                let got_nonnull = fp.fgets(&mut buf, n);
+                let k = buf[..n].iter().position(|&c| c == 0).map_or(n, |k| k + 1);
+                (got_nonnull != want_nonnull || buf[..k] != *want).then(|| {
+                    format!(
+                        "fgets({n}) gave {got_nonnull} {:?}, the UCRT {want_nonnull} {:?}",
+                        String::from_utf8_lossy(&buf[..k]),
+                        String::from_utf8_lossy(want)
+                    )
+                })
+            }
+            2 => {
+                let fi = usize::from(r.u8().unwrap());
+                let want = r.i32().unwrap();
+                let (format, spec) = SCAN_FORMATS[fi];
+                let mut a = ScanArgs::new();
+                let got = fscanf(&mut fp, format, &mut a.args(spec));
+                let diff = a.compare(spec, r);
+                (got != Ok(want) || diff.is_some()).then(|| {
+                    format!(
+                        "fscanf({:?}) gave {got:?}, the UCRT {want}{}",
+                        String::from_utf8_lossy(format),
+                        diff.map(|d| format!("; {d}")).unwrap_or_default()
+                    )
+                })
+            }
+            3 => {
+                let size = r.u32().unwrap() as usize;
+                let count = r.u32().unwrap() as usize;
+                let want_n = r.u64().unwrap();
+                let want = r.bytes().unwrap();
+                buf.fill(CHAR_SENTINEL);
+                let got_n = fp.fread(&mut buf, size, count) as u64;
+                // The whole buffer for a binary stream; for a text stream the whole items read
+                // only, as the probe records (cstdio.cpp, FREAD).
+                let keep = if mode == 0 {
+                    size * count
+                } else {
+                    got_n as usize * size
+                };
+                let got = &buf[..keep];
+                (got_n != want_n || got != want).then(|| {
+                    let at = got.iter().zip(want).position(|(a, b)| a != b);
+                    format!(
+                        "fread({size}, {count}) gave {got_n} items, the UCRT {want_n}{}",
+                        at.map(|k| format!(
+                            "; byte {k} is {:#04x}, the UCRT's {:#04x}",
+                            got[k], want[k]
+                        ))
+                        .unwrap_or_default()
+                    )
+                })
+            }
+            4 => {
+                let want = r.i32().unwrap();
+                let got = fp.ftell();
+                (got != want).then(|| format!("ftell gave {got}, the UCRT {want}"))
+            }
+            5 => {
+                let offset = r.i32().unwrap();
+                let whence = r.i32().unwrap();
+                let want = r.i32().unwrap();
+                let got = fp.fseek(offset, whence);
+                (got != want)
+                    .then(|| format!("fseek({offset}, {whence}) gave {got}, the UCRT {want}"))
+            }
+            6 => {
+                fp.rewind();
+                None
+            }
+            7 => {
+                let want = r.bool().unwrap();
+                let got = fp.feof();
+                (got != want).then(|| format!("feof gave {got}, the UCRT {want}"))
+            }
+            // `fscanf(" solid %[^\n]")` where the line holds 256 bytes or more: the probe does not
+            // make the C call, which would overrun its buffer, so the record holds nothing and the
+            // stream reads on as it was. The Rust call must stop with `Overflow`.
+            8 => {
+                let mut probe = fp.clone();
+                let mut line = [CHAR_SENTINEL; 256];
+                let got = fscanf(
+                    &mut probe,
+                    b" solid %[^\n]",
+                    &mut [ScanArg::Chars(&mut line)],
+                );
+                got.is_ok().then(|| {
+                    format!(
+                        "fscanf(\" solid %[^\\n]\") on a line of 256 bytes or more gave {got:?}"
+                    )
+                })
+            }
+            _ => panic!("a CFIL operation {op}"),
+        };
+        if first.is_none() {
+            first = diff.map(|d| {
+                format!(
+                    "{:?} opened {}: call {i}: {d}",
+                    String::from_utf8_lossy(raw),
+                    ["rb", "r", "rt"][usize::from(mode)]
+                )
+            });
+        }
+    }
+    first
+}
+
+#[test]
+fn streams_read_what_the_ucrt_reads() {
+    let file = cstdio_file();
+    let mut m = Mismatches::default();
+    let mut scripts = 0;
+    for rec in file.of_kind("CFIL") {
+        scripts += 1;
+        let mut r = rec.reader();
+        let diff = replay_script(&mut r);
+        r.finish("CFIL").unwrap();
+        m.check(diff.is_none(), || diff.unwrap_or_default());
+    }
+    assert!(scripts > 0, "{}: no CFIL record", file.path.display());
+    m.assert_none("CFIL");
 }

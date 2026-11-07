@@ -208,7 +208,7 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | Crate | What it is |
 | --- | --- |
 | `orca-crt` | The static UCRT's maths functions, float-to-integer conversions and `rand`, called as the C++ engine calls them. |
-| `orca-fmt` | `printf`, `to_chars`, `iostream` double output, `istream` input (`num_get`) and number parsing, with the C++ engine's digits. |
+| `orca-fmt` | `printf`, `to_chars`, `iostream` double output, `istream` input (`num_get`) and number parsing, with the C++ engine's digits; the C stdio and `scanf` that admesh's STL reader reads files with. |
 | `orca-stl` | The C++ standard library's sorts, selections, heaps, `min` and `max`, hash containers and `mt19937`, in Microsoft's order of operations. |
 | `orca-tbb` | oneTBB's concurrency and partitioners as fixed split trees, run on rayon. |
 | `orca-probe` | Reads the probe files (SOP1) the probe programs record, for the probe gate: each crate above has a `tests/probes.rs` that replays every record of its file, the committed subset by default and the full set with `SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes`. |
@@ -219,7 +219,7 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | `orca-geom` | Phase O2: Clipper 6.4.2, `ClipperUtils` and libslic3r's points, lines, polygons, ExPolygons, boxes, convex hulls and the `Geometry` predicates and transform builders (o2-geom; `Geometry::Transformation` comes with the task that first needs it). |
 | `orca-exact` | Phase O2: Boost's signed-magnitude `int128_t` and `rational`, which arrangement computes with (o2-arrange). |
 | `orca-qhull` | Phase O2: Qhull 2015.2, the convex hulls of meshes (o2-mesh). |
-| `orca-mesh` | Phase O2: admesh's reading and repair and libslic3r's `TriangleMesh` (o2-mesh). |
+| `orca-mesh` | Phase O2: admesh's STL reading and repair and libslic3r's `TriangleMesh` with its statistics, transforms, bounding boxes, split and 2D hull, proven by `mesh.sop1`'s MCAS and MSTD records (o2-mesh; the 3D hull comes with `orca-qhull`). |
 | `orca-zip` | Phase O2: ZIP archives as miniz reads and writes them, for 3MF files (o2-model). |
 | `orca-xml` | Phase O2: XML as expat 2.5.0 parses it, for 3MF files (o2-model). |
 | `orca-placeholder` | Phase O2: Orca's placeholder parser's boolean expressions, for the presets' compatibility conditions, with `boost::regex` as an MSVC build reads it; `placeholder.sop1` holds every condition of the vendor profiles (o2-front). |

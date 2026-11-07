@@ -212,6 +212,12 @@ impl File {
     /// `fread(buf, size, count, stream)`: reads up to `size * count` bytes into `buf` and returns
     /// the number of whole items read; a short read sets the end-of-file indicator.
     ///
+    /// Only the bytes read are written. The UCRT, asked at a text stream's start for 512 bytes or
+    /// more, reads the file straight into `buf` (a multiple of 512 bytes) and translates it
+    /// there, so the file's raw bytes are left after what it returns (`cstdio.sop1` showed it).
+    /// C leaves those bytes unspecified (C11 7.21.8.1) and no reader looks past the count `fread`
+    /// returns (`objparser.cpp`), so they are not written here (`parity/HAZARDS.md`, orca-mesh).
+    ///
     /// # Panics
     ///
     /// When `buf` is shorter than `size * count` bytes.

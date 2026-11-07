@@ -269,8 +269,8 @@ records below, END.
 | `configdef.json` | O1 | not SOP1: `print_config_def` with every field of each option, the preset sections' keys, and `handle_legacy` on the legacy and defined keys (`configdef.cpp` says what it holds) |
 | `geom.sop1` | o2-geom | EVEC, EMAT, ETRF, EROT, ESVD (`orca-eigen`); CCLP, COFF, CARE, CCLN, CSIM, CMNK, CINT, GPNT, GPLY, GCLU, GXFM (`orca-geom`) |
 | `qhull.sop1` | o2-mesh | none yet: a stub (`orca-qhull`) |
-| `mesh.sop1` | o2-mesh | none yet: a stub (`orca-mesh`) |
-| `cstdio.sop1` | o2-mesh | none yet: a stub (`orca-fmt`'s `stdio` and `scanf`) |
+| `mesh.sop1` | o2-mesh | MCAS, MSTD (`orca-mesh`) |
+| `cstdio.sop1` | o2-mesh | CSCN, CFIL (`orca-fmt`'s `stdio` and `scanf`) |
 | `zip.sop1` | o2-model | none yet: a stub (`orca-zip`) |
 | `xml.sop1` | o2-model | none yet: a stub (`orca-xml`) |
 | `model.sop1` | o2-model | none yet: a stub (`orca-model`) |
@@ -671,6 +671,114 @@ overlapping squares; a mirrored, scaled quarter-turn transform with squares apar
 random: 3 to 20 points in [-100, 100] cubed, now and then one more 1 above the first; soups of 3
 to 16 points in GPNT's ranges capped at 1e8, as `convex_polygons_intersect` loops forever on some
 larger ones (`parity/HAZARDS.md`); the committed set those and the first 16 of at most 3 KB.
+
+### CSCN
+
+`sscanf` of the static UCRT with one of the formats admesh's STL reader passes (`cstdio.sop1`,
+`parity/oracle/probe/cstdio.cpp`, added 2026-11-07): `u8` the format's index, `str` the input,
+`i32` what `sscanf` returned, then each argument after the call, in the format's order: a `float`
+as `u32` bits, a `double` as `u64` bits, a `char[32]` (`%31s`) or a `char[256]` (`%[^\n]`) as a
+`str` of all its bytes. Each argument holds a sentinel before the call (the `float` bits
+0x12345678, the `double` bits 0x123456789ABCDEF0, the byte 0x55 throughout), so that a conversion
+that stores nothing shows. The formats, by index: 0 `"%f"`, 1 `"%lf"`, 2 `" vertex %f %f %f"`, 3
+`" vertex %f %f %f "`, 4 `" facet normal %31s %31s %31s"`, 5 `" outer loop"`, 6
+`" endsolid%*[^\n]\n"`, 7 `" solid%*[^\n]\n"`, 8 `" solid %[^\n]"`, 9 `" "`, 10 `"%f %f %f"`.
+The inputs: 108 spellings of a number with formats 0 and 1 (whole ones, ones `strtod` stops inside,
+hexadecimal forms, infinities and NaNs with payloads, the limits of `float` and `double`, long
+digit strings, white space before), then 600 seeded inputs for each format, text that matches it
+or nearly does (the committed set the 108 twice and the first 40 of each format).
+`orca-fmt`'s `tests/probes.rs` replays every record: the count and every byte of every argument.
+
+### CFIL
+
+A file and a script of stdio calls on it (`cstdio.sop1`, added 2026-11-07): `str` the file's
+bytes, `u8` the mode it was opened in (0 `"rb"`, 1 `"r"`, 2 `"rt"`), `u32` the number of calls,
+then for each call `u8` what it is and what it gave: 0 `getc`, `i32` the result; 1
+`fgets(buf, n)` with `buf` filled with 0x55 first, `i32` n, `bool` the result was not null, `str`
+the buffer up to and with its first NUL (all n bytes when it holds none); 2 `fscanf` with a CSCN
+format, `u8` its index, `i32` the result and the arguments as CSCN writes them; 3
+`fread(buf, size, count)` with `buf` filled with 0x55 first, `u32` size, `u32` count, `u64` the
+result, `str` the buffer: `size * count` bytes for a binary stream, the result times `size` for a
+text stream (asked for 512 bytes or more at a text stream's start, the UCRT leaves raw file bytes
+after what it returns, which C leaves unspecified: `parity/HAZARDS.md`, orca-mesh); 4 `ftell`,
+`i32`; 5 `fseek(offset, whence)`, `i32` offset, `i32` whence, `i32` the result; 6 `rewind`,
+nothing; 7 `feof`, `bool`; 8 nothing: the reader's `fscanf(" solid %[^\n]")` at a `solid` line of
+256 bytes or more, which would overrun the C buffer, so the probe leaves the call out and the
+replay's call must stop with `Overflow`. Text streams take no `ftell` and no `fseek` but to the
+start (no reader calls them, and `orca-fmt` leaves them out); a binary stream's `fseek` never goes
+before the start. The scripts: the calls admesh's reader makes of an ASCII STL (the size by
+`fseek` and `ftell` in binary mode, the lines counted by `fgets(100)`, the header by `getc`, the
+`solid` line, then three facets' `fscanf` and `fgets(2047)` calls) on STL text with each line end
+(LF, CR LF, CR, CR CR LF, LF CR) in each mode; the same with mixed line ends and a Ctrl-Z inside,
+and on the files "", "solid", Ctrl-Z, CR and "a CR Ctrl-Z LF b", each with seeded calls after;
+then 1500 seeded scripts, half STL text (now and then with a Ctrl-Z or cut short) read as admesh
+reads it with seeded calls after, half random bytes (CR, LF and Ctrl-Z often, up to 9000 bytes)
+with seeded calls. The committed set holds the fixed scripts and the first 30 seeded ones of at
+most 8 KB. `orca-fmt`'s `tests/probes.rs` replays every call of every record.
+
+### MCAS
+
+One STL file through admesh and `TriangleMesh` (`mesh.sop1`, `parity/oracle/probe/mesh.cpp`,
+added 2026-11-07), under the oracle's threading (one thread in an arena of 8): `str` label, `str`
+the file's bytes, `i32` the header length passed to `stl_open` (`custom_header_length`), `bool`
+`stl_open` succeeded. When it did: `u32` the number of steps, then for each `u8` the step and
+`u64` the hash of admesh's state after it (the bytes MSTD writes); the steps are 0 `stl_open`, then
+those of `trianglemesh_repair_on_import` that run: 1 `stl_check_facets_exact` with the bad-edge
+counts set after it, 2 and 3 the first and second `stl_check_facets_nearby`, 4
+`stl_remove_unconnected_facets`, 5 `stl_fix_normal_directions`, 6 `stl_fix_normal_values`, 7
+`stl_calculate_volume`, 8 `stl_verify_neighbors`, 9 `stl_check_facets_exact` again (after
+degenerate facets); then `u64` the hash of `stl_generate_shared_vertices`'s indexed set. Then
+`bool` `TriangleMesh::ReadSTLFile(path, true)` succeeded, and when it did: the mesh, `u64`
+`facets_count()`, the box `bounding_box()`, three `f64` `size()`, three `f64` `center()`, `bool`
+`empty()` and `is_splittable()`, `u64` `its_num_open_edges` and `its_number_of_patches`, the
+polygon `convex_hull()`, `u32` the number of `split()`'s parts and each part as a mesh; then `u32`
+the length of a seeded chain of calls on a copy of the mesh (0 for an empty mesh, else 6 to 19),
+each `u8` the call, its inputs and its result: 0 `scale(float)`, `f32`, the mesh; 1
+`scale(Vec3f)`, three `f32`, the mesh; 2 `translate(Vec3f)`, three `f32`, the mesh; 3
+`rotate(float, Axis)`, `f32`, `u8` axis, the mesh; 4 `rotate(float, Vec3d)`, `f32`, three `f64`,
+the mesh; 5 `mirror(Axis)`, `u8`, the mesh; 6 `transform(Transform3d, fix_left_handed)`, the
+matrix's 16 `f64` row by row, `bool`, the mesh; 7 `transform(Matrix3d, fix_left_handed)`, nine
+`f64`, `bool`, the mesh; 8 `flip_triangles()`, the mesh; 9 `align_to_origin()`, the mesh; 10
+`merge` of the mesh as read, translated by a `Vec3f`: three `f32`, the mesh; 11
+`transformed_bounding_box(t)`, 16 `f64`, the box; 12 `transformed_bounding_box(t, z)`, 16 `f64`,
+`f64` z, the box; 13 `rotate(double, const Point*)`, `f64` angle, `i64` the center's x and y, the
+mesh; 14 `convex_hull()`, the polygon. A mesh is `u32` `number_of_facets`, three `f32` each of
+max, min and size, `f32` volume, `i32` `number_of_parts` and `open_edges`, the repaired errors
+`i32` `edges_fixed`, `degenerate_facets`, `facets_removed`, `facets_reversed` and
+`backwards_edges`, and `u64` the hash of its indexed set; a box is `bool` defined, three `f64` min
+and three max; a polygon is a `u64` count and each point's `i64` x and y. A hash is FNV-1a (64
+bits) of the bytes MSTD gives. The files: 28 made by hand (binary and ASCII cubes with a facet
+flipped, removed, doubled or degenerate, a vertex nudged or NaN, inside out, two boxes, no facets,
+four, cut short, a wrong count, a 100-byte header and header length 0, each line end but a lone
+CR, no final newline, `%f` numbers, a Ctrl-Z at the end and inside, an `endloop` missing, NaN
+normals, a second empty solid, too short), OrcaSlicer's five test STL files but `20mmbox-CR.stl`
+(`parity/CORPUS.md`), then 700 seeded: boxes of 1 to 8 quads a side in one to three parts, rotated
+or not, with facets flipped, removed, doubled or degenerate, vertices nudged, all inside out, a
+NaN, shuffled; normals right, zero, reversed, random or NaN; attribute bytes; a third ASCII with
+numbers as `%.9g`, `%e`, `%f` or `%.9E` and any line end but a lone CR, the binary ones now and
+then with a wrong count or cut short (the committed set the hand-made and OrcaSlicer files and the
+first 30 seeded ones of at most 4 KB). `orca-mesh`'s `tests/probes.rs` rebuilds every record from
+the Rust and compares it whole.
+
+### MSTD
+
+The full set only, after each MCAS whose file `stl_open` read into 24 facets or fewer: `str` the
+label, `u32` the number of steps, then for each `u8` the step and `str` admesh's state after it,
+then `str` the indexed set of `stl_generate_shared_vertices`. The state: `str` the 80-byte
+header, `u8` the type (0 binary, 1 ASCII), `u32` `number_of_facets`, three `f32` each of max, min
+and size, `f32` `bounding_diameter`, `shortest_edge` and `volume`, `i32` `connected_edges`,
+`connected_facets_1_edge`, `connected_facets_2_edge`, `connected_facets_3_edge`,
+`facets_w_1_bad_edge`, `facets_w_2_bad_edge`, `facets_w_3_bad_edge`, `original_num_facets`,
+`edges_fixed`, `degenerate_facets`, `facets_removed`, `facets_added`, `facets_reversed`,
+`backwards_edges`, `normals_fixed` and `number_of_parts`; `u64` the length of `facet_start` and
+for each facet twelve `f32` (the normal, then the vertices), then for a binary file its two extra
+bytes as `u8` (an ASCII facet leaves them unset); `u64` the length of `neighbors_start` and for
+each entry three `i32` neighbours and three `i32` `which_vertex_not`. Both arrays are written
+whole, which after `stl_remove_unconnected_facets` is longer than `number_of_facets`. An indexed
+set is `u64` the vertex count and each vertex's three `f32`, `u64` the face count and each face's
+three `i32`, `u64` the property count and each property's `u8` type and `f64` area.
+`orca-mesh`'s `tests/probes.rs` compares every MSTD whole, so that a difference an MCAS hash only
+shows is named there down to the field, the facet or the neighbour entry.
 
 ### PHCF
 

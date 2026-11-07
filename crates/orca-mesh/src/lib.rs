@@ -10,18 +10,33 @@
 
 //! Triangle meshes: admesh's reading and repair, and libslic3r's TriangleMesh with its transforms.
 //!
-//! Triangle meshes as the C++ engine reads and repairs them: admesh (`deps_src/admesh`: the STL
-//! reader's passes, the facet connectivity, the repair steps and the statistics) and libslic3r's
-//! `TriangleMesh` (`TriangleMesh.cpp`), with its transforms, its bounding boxes and its convex hull
-//! through `orca-qhull`. admesh reads files with the C runtime's stdio (`fopen`, `fread`,
-//! `fscanf`), which `orca-fmt`'s `stdio` and `scanf` modules reproduce.
+//! Triangle meshes as the C++ engine reads and repairs them, translated statement by statement:
 //!
-//! The o2-mesh task of phase O2 fills this crate; its records are in the probe file `mesh.sop1`,
-//! and those of the C runtime's stdio in `cstdio.sop1`. `tests/probes.rs` replays both until
-//! o2-mesh gives `cstdio.sop1` a test of its own.
+//! - [`admesh`]: admesh (`deps_src/admesh`): the STL reader ([`admesh::stlinit`]), the facet
+//!   connectivity and its repairs ([`admesh::connect`]), the facets' orientation
+//!   ([`admesh::normals`]), the shared vertices ([`admesh::shared`]) and the measures and
+//!   transforms of `util.cpp` ([`admesh::util`]). admesh reads files with the C runtime's stdio
+//!   (`fopen`, `fread`, `fscanf`, `fgets`), which `orca-fmt`'s `stdio` and `scanf` modules
+//!   reproduce.
+//! - [`triangle_mesh`]: libslic3r's `TriangleMesh` (`TriangleMesh.cpp`): the repair on import, the
+//!   statistics, the transforms, the bounding boxes, the split and the convex hulls (the 3D one
+//!   through `orca-qhull`).
+//! - [`its`]: the `its_*` helpers of `TriangleMesh.cpp`, `MeshSplitImpl.hpp` and `stl.h` that
+//!   those reach (the volume, the bounding box, the face neighbours, the split into patches, the
+//!   transforms, the projections for 2D hulls).
+//! - [`eigen_lu`]: the determinant Eigen takes of a block of runtime size, by LU factorisation.
+//! - [`log`]: the engine's `BOOST_LOG_TRIVIAL` messages these send, to a sink the caller sets.
 //!
-//! Until that task runs, the crate holds only its name, and `tests/probes.rs` passes trivially
-//! while its probe file is a stub (HEAD and PRUN only).
+//! Floats stay `f32` where the C++ has `float`, and every mixed `float`/`double` expression keeps
+//! the C++ promotions. Where the C++ reads or writes out of bounds or races, the Rust code does
+//! what the oracle shows for the inputs that reach it and `parity/HAZARDS.md` (orca-mesh) records
+//! the case. The probe file `mesh.sop1` records the oracle; `tests/probes.rs` replays it.
+
+pub mod admesh;
+pub mod eigen_lu;
+pub mod its;
+pub mod log;
+pub mod triangle_mesh;
 
 /// The crate's name, as Cargo has it.
 pub const NAME: &str = "orca-mesh";
