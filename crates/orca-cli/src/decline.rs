@@ -9,31 +9,42 @@
 // (LICENSE) for more details.
 
 //! The decline: sketch-orca-rs does only what the parity harness has certified it to do the C++
-//! engine's way. A valid job is checked before any of its work, against `parity/parity.json` as
-//! this program was built with it: a job that reaches a family (a step of the engine, as the
-//! harness names them) that this program has no code for, or that `parity certify` has not
-//! certified, gets the result code `not-ported`, exit code -8 (the stock command line's
-//! `CLI_UNSUPPORTED_OPERATION`, as `unsupported`), and `missing`, those families in
-//! parity.json's order. It is refused before any output file is written: the result and the
-//! progress file are the run's only files.
+//! engine's way. A job is checked once the steps this program does are behind it (`run.rs`: the
+//! presets stage and the model's file check), against `parity/parity.json` as this program was
+//! built with it: a job that reaches a family (a step of the engine, as the harness names them)
+//! that this program has no code for, or that `parity certify` has not certified, gets the result
+//! code `not-ported`, exit code -8 (the stock command line's `CLI_UNSUPPORTED_OPERATION`, as
+//! `unsupported`), and `missing`, those families in parity.json's order. It is refused before any
+//! output file is written: the result, the progress file, and the work folder and its orca-data
+//! folder (which the C++ engine makes before the presets, as this program does) are the run's
+//! only files. A job whose presets need a compatibility condition worked out, which this program
+//! cannot do yet (`presets.rs`), is declined in the presets stage with the family
+//! preset-conditions besides those it reaches ([`preset_conditions`]).
 //!
 //! The families a job reaches are those `scripts/lib/parity/corpus.ts` gives it (`familiesFor`).
 //! Some every job of a command reaches ([`command_families`]): model-load and placement for every
 //! command, info for info, slice-mesh for layers and slice, and for slice the internal concentric
 //! infill, the print steps every slice runs, and the G-code export and its processor. The others
 //! a slice's settings turn on ([`setting_families`]): the wall generator, the infill pattern of
-//! each surface, supports, raft, ironing, fuzzy skin, the prime tower and Z contouring. The
-//! settings are read as corpus.ts's `settingLookup` reads them: the job's override, else the
-//! process, machine and filament presets in that order (the job's flattened preset files; an
-//! array's first value), else Orca's default (orca-config). Each object's overrides (over the
-//! job's), and each height range's (over its object's), are read as well and their families
-//! added, since they can turn a family on for one object. A preset file that cannot be read, or
-//! a value that is not text, leaves the settings unknown, and the job then reaches every family a
-//! setting can turn on ([`unsettled_families`]), so a job is never let through for a family it
-//! might reach. The front end (version, config-def and intake) is decided before a job's work
-//! starts, so it is never missing; for now every info, layers and slice job is declined.
-//! `parity certify` holds the decline to the corpus: a declined job must name every family the
-//! corpus lists for it that parity.json does not certify (`scripts/lib/parity/certify.ts`).
+//! each surface, supports, raft, ironing, fuzzy skin, the prime tower and Z contouring. The prime
+//! tower is on, as Orca's `Print::has_wipe_tower` has it, with two filaments or more, with smooth
+//! timelapse, or with clumping detection (`enable_wrapping_detection`) and an exclusion area of
+//! more than two points (`wrapping_exclude_area`). The settings are read as corpus.ts's
+//! `settingLookup` reads them: the job's override, else the process, machine and filament presets
+//! in that order (the job's flattened preset files; an array's first value), else Orca's default
+//! (orca-config). A list of points is counted as corpus.ts's `settingPoints` counts it
+//! ([`comma_pieces`]): an override's text or a preset's string in pieces at its commas, as Orca's
+//! reader splits it, a preset's array by its length, and Orca's default (no points). Each
+//! object's overrides (over the job's), and each height range's (over its object's), are read as
+//! well and their families added, since they can turn a family on for one object. A preset file
+//! that cannot be read, or a value that is not text, leaves the settings unknown, and the job then
+//! reaches every family a setting can turn on ([`unsettled_families`]), so a job is never let
+//! through for a family it might reach. The front end (version, config-def and intake) is decided
+//! before this check, so it is never missing; for now every info, layers and slice job that gets
+//! past the presets and the model's file is declined. `parity certify` holds the decline to the
+//! corpus: a declined job must name every family the corpus lists for it that parity.json does not
+//! certify, and must have reached a step this program does not do in the C++ run
+//! (`scripts/lib/parity/certify.ts`).
 
 use orca_json::{Order, Value};
 
@@ -129,14 +140,27 @@ fn above_zero_or_unread(text: &str) -> bool {
     r.end == 0 || r.value.is_nan() || r.value > 0.0
 }
 
-/// The families a slice's settings turn on (corpus.ts `familiesFor`), `get` reading each setting
-/// and `filaments` the job's filament count; `Err` when a setting it reads is unknown.
+/// How many pieces Orca's reader of a list of points (`ConfigOptionPoints::deserialize`, a
+/// `std::getline` at each comma) splits `text` into: none for empty text, and none after a closing
+/// comma (corpus.ts `commaPieces`).
+#[must_use]
+pub fn comma_pieces(text: &str) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    text.split(',').count() - usize::from(text.ends_with(','))
+}
+
+/// The families a slice's settings turn on (corpus.ts `familiesFor`), `get` reading each setting,
+/// `points` counting the points of a list of them and `filaments` the job's filament count; `Err`
+/// when a setting it reads is unknown.
 ///
 /// # Errors
 ///
-/// [`Unknown`], from `get`.
+/// [`Unknown`], from `get` or `points`.
 pub fn setting_families(
     get: &dyn Fn(&str) -> Setting,
+    points: &dyn Fn(&str) -> Result<usize, Unknown>,
     filaments: usize,
     infill: &[String],
 ) -> Result<Vec<String>, Unknown> {
@@ -182,7 +206,11 @@ pub fn setting_families(
     ) {
         out.push("fuzzy-skin".to_string());
     }
-    if is("enable_prime_tower", "1")? && (filaments > 1 || is("timelapse_type", "1")?) {
+    if is("enable_prime_tower", "1")?
+        && (filaments > 1
+            || is("timelapse_type", "1")?
+            || (is("enable_wrapping_detection", "1")? && points("wrapping_exclude_area")? > 2))
+    {
         out.push("wipe-tower".to_string());
     }
     if is("zaa_enabled", "1")? {
@@ -239,6 +267,28 @@ fn lookup(layers: &[&Overrides], presets: &[Value], key: &str) -> Setting {
         .map(str::to_string))
 }
 
+/// The points of a list of them through `layers` of overrides, then the presets, then Orca's
+/// default, read as [`lookup`] reads a setting: an override's text or a preset's string in
+/// [`comma_pieces`], a preset's array by its length; a preset value that is neither is unknown.
+fn points(layers: &[&Overrides], presets: &[Value], key: &str) -> Result<usize, Unknown> {
+    for overrides in layers {
+        if let Some((_, v)) = overrides.iter().rev().find(|(k, _)| k == key) {
+            return Ok(comma_pieces(v));
+        }
+    }
+    for preset in presets {
+        if let Some(v) = preset.get(key) {
+            return match v {
+                Value::Array(a) => Ok(a.len()),
+                other => other.as_str().map(comma_pieces).ok_or(Unknown),
+            };
+        }
+    }
+    Ok(orca_config::get(key)
+        .and_then(|d| d.default)
+        .map_or(0, comma_pieces))
+}
+
 /// The families `job` reaches: its command's, then those its settings turn on, each once.
 #[must_use]
 pub fn reached(job: &Job) -> Vec<String> {
@@ -259,7 +309,8 @@ pub fn reached(job: &Job) -> Vec<String> {
             let mut all = Vec::new();
             for view in &views {
                 let get = |key: &str| lookup(view, &presets, key);
-                all.extend(setting_families(&get, job.filaments.len(), &infill).ok()?);
+                let count = |key: &str| points(view, &presets, key);
+                all.extend(setting_families(&get, &count, job.filaments.len(), &infill).ok()?);
             }
             Some(all)
         });
@@ -328,20 +379,30 @@ pub fn check(job: &Job) -> Result<(), Failure> {
     }
 }
 
+/// The decline of a job whose presets need a compatibility condition worked out (`presets.rs`),
+/// which this program cannot do yet: the family preset-conditions, besides those the job reaches.
+#[must_use]
+pub fn preset_conditions(job: &Job) -> Failure {
+    let mut reach = vec!["preset-conditions".to_string()];
+    reach.extend(reached(job));
+    not_ported(&job.command_name, missing_of(&reach))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Command, PORTED, Setting, Unknown, command_families, families, infill_families, missing_of,
-        not_ported, setting_families, unsettled_families,
+        Command, PORTED, Setting, Unknown, comma_pieces, command_families, families,
+        infill_families, missing_of, not_ported, setting_families, unsettled_families,
     };
 
     fn strings(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| (*s).to_string()).collect()
     }
 
-    /// The families `settings` turn on, with Orca's defaults (orca-config) under them.
+    /// The families `settings` turn on, with Orca's defaults (orca-config) under them; a list of
+    /// points is counted from the same text.
     fn with(settings: &[(&str, &str)], filaments: usize) -> Result<Vec<String>, Unknown> {
-        let get = |key: &str| -> Setting {
+        let text = |key: &str| -> Setting {
             if let Some((_, v)) = settings.iter().find(|(k, _)| *k == key) {
                 return if *v == "?" {
                     Err(Unknown)
@@ -353,7 +414,8 @@ mod tests {
                 .and_then(|d| d.default)
                 .map(str::to_string))
         };
-        setting_families(&get, filaments, &infill_families(&families()))
+        let points = |key: &str| Ok(comma_pieces(&text(key)?.unwrap_or_default()));
+        setting_families(&text, &points, filaments, &infill_families(&families()))
     }
 
     #[test]
@@ -484,5 +546,49 @@ mod tests {
         assert!(raft.iter().any(|x| x == "raft"));
         // A setting it cannot read leaves the job's settings unknown.
         assert_eq!(with(&[("enable_support", "?")], 1), Err(Unknown));
+    }
+
+    #[test]
+    fn clumping_detection_with_an_exclusion_area_puts_a_prime_tower_on_one_filament() {
+        let tower = |settings: &[(&str, &str)]| {
+            with(settings, 1).unwrap().iter().any(|x| x == "wipe-tower")
+        };
+        let area = "145x310,256x310,256x326,145x326";
+        let on = [
+            ("enable_prime_tower", "1"),
+            ("enable_wrapping_detection", "1"),
+            ("wrapping_exclude_area", area),
+        ];
+        assert!(tower(&on));
+        // Each of the three is needed; three points are enough, two are not.
+        assert!(!tower(&[on[0], on[1]]));
+        assert!(!tower(&[on[0], on[2]]));
+        assert!(!tower(&[on[1], on[2]]));
+        assert!(tower(&[
+            on[0],
+            on[1],
+            ("wrapping_exclude_area", "0x0,1x0,1x1")
+        ]));
+        assert!(!tower(&[
+            on[0],
+            on[1],
+            ("wrapping_exclude_area", "0x0,1x0,")
+        ]));
+        // An exclusion area it cannot read leaves the job's settings unknown.
+        assert_eq!(
+            with(&[on[0], on[1], ("wrapping_exclude_area", "?")], 1),
+            Err(Unknown)
+        );
+    }
+
+    #[test]
+    fn points_are_counted_as_orcas_reader_splits_them() {
+        assert_eq!(comma_pieces(""), 0);
+        assert_eq!(comma_pieces("0x0"), 1);
+        assert_eq!(comma_pieces("0x0,1x1"), 2);
+        assert_eq!(comma_pieces("0x0,1x1,"), 2);
+        assert_eq!(comma_pieces(","), 1);
+        assert_eq!(comma_pieces(",,"), 2);
+        assert_eq!(comma_pieces("0x0,,1x1"), 3);
     }
 }

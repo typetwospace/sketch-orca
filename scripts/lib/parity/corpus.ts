@@ -1,14 +1,20 @@
 // The parity corpus (parity/corpus.json, parity/CORPUS.md): the jobs the Rust translation is held to
 // the C++ engine on, and the families of Orca's work each case exercises. Four kinds of case:
-//   smoke    each of the smoke run's cases (smoke.ts SMOKE_CASES), run as the smoke run runs it;
+//   smoke    each of the smoke run's cases (smoke.ts SMOKE_CASES) but `refusals`, run as the smoke
+//            run runs it (the refusals are cases of their own, below);
 //   job      a job written from the protocol's job schema (protocol/schema/job.schema.json): each of
 //            Orca's 28 test meshes (<work>/src/tests/data) as an info, a layers and a slice job, and
 //            the Sketch-shaped jobs (layer profiles, pauses, colour changes, height ranges, custom
-//            G-code, a single-filament prime tower through smooth timelapse), and a slice for each
+//            G-code, a single-filament prime tower through smooth timelapse), and a job for each
 //            family the presets leave off (each sparse infill pattern, both wall generators,
-//            supports, tree supports, raft, ironing, fuzzy skin, Z contouring);
+//            supports, tree supports, raft, ironing, fuzzy skin, Z contouring, the prime tower
+//            clumping detection puts on with one filament, and a process preset whose
+//            compatibility is a condition);
 //   example  protocol/examples/invalid/job-*.json, its example paths moved into the case's folder;
-//   refusal  each of the smoke run's refused jobs (smoke.ts REFUSALS), one case each.
+//   refusal  each of the smoke run's refused jobs (smoke.ts REFUSALS), one case each, in the
+//            families of the steps the C++ engine reaches before it refuses the job
+//            (REFUSAL_FAMILIES): intake for a job it refuses while reading the job, the presets or
+//            the model's file, else the steps of the model, the placement or the slice.
 // The meshes stay in the work folder: `parity corpus` converts the 21 OBJ files to binary STL as
 // Sketch writes model.stl (objToBinaryStl, CORPUS.md) and copies the 6 STL files and the 3MF as they
 // are into <work>/parity/corpus/meshes/<mesh>/, and writes parity/corpus.json, which names each
@@ -20,9 +26,9 @@ import { basename, join } from 'node:path'
 import { sha256Bytes } from '../files.ts'
 import type { CustomGcode, Job, JobCommand, JobObject, Overrides } from '../job.ts'
 import { cube, encodeBinaryStl, writeStl } from '../models.ts'
-import type { PresetFiles, PresetSet } from '../profiles.ts'
+import { serializePreset, type PresetFiles, type PresetSet } from '../profiles.ts'
 import { StepError } from '../run.ts'
-import { PLAIN_OVERRIDES, REFUSALS, SMOKE_CASES, SMOKE_PRESETS, SMOKE_VERSION, type SmokeCase } from '../smoke.ts'
+import { cubeOverrides, PLAIN_OVERRIDES, REFUSALS, SMOKE_CASES, SMOKE_PRESETS, SMOKE_VERSION, type SmokeCase } from '../smoke.ts'
 
 export const CORPUS_FORMAT = 'sketch-orca-parity-corpus/1'
 
@@ -201,7 +207,8 @@ export interface Family {
 export const FAMILIES: Family[] = [
   { name: 'version', step: 'front end', what: 'sketch-orca version' },
   { name: 'config-def', step: 'front end', what: 'sketch-orca config-def' },
-  { name: 'intake', step: 'front end', what: 'reading and checking a job, and the refusals' },
+  { name: 'intake', step: 'front end', what: "reading and checking a job, its presets and its model's file, and the refusals" },
+  { name: 'preset-conditions', step: 'presets', what: "a preset's compatibility condition (compatible_printers_condition, compatible_prints_condition), worked out for the job's printer and process" },
   { name: 'model-load', step: 'load', what: "reading the model (STL, OBJ, 3MF) and Orca's mesh repairs" },
   { name: 'placement', step: 'arrange', what: 'arranging the objects on the plate' },
   { name: 'info', step: 'info', what: 'the info command' },
@@ -244,6 +251,34 @@ export function settingLookup(set: PresetSet | undefined, overrides: Overrides, 
   }
 }
 
+/** How many points a list of them holds as a job sees it (settingPoints). */
+export type SettingPoints = (key: string) => number
+
+/**
+ * How many pieces Orca's reader of a list of points (ConfigOptionPoints::deserialize, a
+ * std::getline at each comma) splits `text` into: none for empty text, and none after a closing
+ * comma (crates/orca-cli/src/decline.rs comma_pieces).
+ */
+export function commaPieces(text: string): number {
+  return text === '' ? 0 : text.split(',').length - (text.endsWith(',') ? 1 : 0)
+}
+
+/**
+ * The points of a list of them (wrapping_exclude_area), looked up as settingLookup looks a setting
+ * up, which gives only an array's first value: the job's override and a preset's string in
+ * commaPieces, a preset's array by its length, else Orca's default in commaPieces.
+ */
+export function settingPoints(set: PresetSet | undefined, overrides: Overrides, defaults: Map<string, string>): SettingPoints {
+  return (key) => {
+    if (key in overrides) return commaPieces(overrides[key] ?? '')
+    for (const p of set ? [set.process, set.machine, ...set.filaments] : []) {
+      const v = (p as Record<string, unknown>)[key]
+      if (v !== undefined) return Array.isArray(v) ? v.length : commaPieces(String(v))
+    }
+    return commaPieces(defaults.get(key) ?? '')
+  }
+}
+
 /** Orca's defaults by key, from the probe's configdef.json (each option's `default`). */
 export function configDefaults(configdef: unknown): Map<string, string> {
   const out = new Map<string, string>()
@@ -260,8 +295,10 @@ const PATTERN_KEYS = new Map<string, string>(INFILL_PATTERNS.map((p) => [p, `inf
 /**
  * The families a job exercises, as its command and settings name them: the patterns it fills with,
  * the wall generator, supports, raft, ironing, fuzzy skin and the prime tower when they are on.
+ * The prime tower is on as Orca's Print::has_wipe_tower has it: with two filaments or more, smooth
+ * timelapse, or clumping detection with an exclusion area of more than two points (`points`).
  */
-export function familiesFor(command: JobCommand, get: SettingLookup, filaments: number): string[] {
+export function familiesFor(command: JobCommand, get: SettingLookup, filaments: number, points: SettingPoints): string[] {
   const out = new Set<string>(['model-load', 'placement'])
   if (command === 'info') out.add('info')
   if (command === 'layers' || command === 'slice') out.add('slice-mesh')
@@ -278,7 +315,8 @@ export function familiesFor(command: JobCommand, get: SettingLookup, filaments: 
     if (Number(get('raft_layers') ?? '0') > 0) out.add('raft')
     if ((get('ironing_type') ?? 'no ironing') !== 'no ironing') out.add('ironing')
     if (!['none', 'disabled_fuzzy', undefined].includes(get('fuzzy_skin'))) out.add('fuzzy-skin')
-    if (get('enable_prime_tower') === '1' && (filaments > 1 || get('timelapse_type') === '1')) out.add('wipe-tower')
+    const wrapping = get('enable_wrapping_detection') === '1' && points('wrapping_exclude_area') > 2
+    if (get('enable_prime_tower') === '1' && (filaments > 1 || get('timelapse_type') === '1' || wrapping)) out.add('wipe-tower')
     if (get('zaa_enabled') === '1') out.add('step-contouring')
     // Fill.cpp turns narrow internal solid infill into this pattern on any slice that has some.
     out.add('infill-concentricinternal')
@@ -286,8 +324,46 @@ export function familiesFor(command: JobCommand, get: SettingLookup, filaments: 
     out.add('gcode-export')
     out.add('gcode-processor')
   }
+  return inFamilyOrder(out)
+}
+
+/** Families once each, in parity.json's order (FAMILIES). */
+export function inFamilyOrder(families: Iterable<string>): string[] {
   const order = new Map(FAMILIES.map((f, i) => [f.name, i]))
-  return [...out].sort((a, b) => order.get(a)! - order.get(b)!)
+  return [...new Set(families)].sort((a, b) => order.get(a)! - order.get(b)!)
+}
+
+/**
+ * A preset's compatibility as Orca has it (Preset.cpp is_compatible_with_printer and
+ * is_compatible_with_print): `undefined` where Orca works its condition out (a condition, no
+ * list), else whether its list takes one of `names` (true with no list or no name).
+ */
+function compatibleByList(preset: Record<string, unknown>, list: string, condition: string, names: string[]): boolean | undefined {
+  const l = Array.isArray(preset[list]) ? (preset[list] as unknown[]) : []
+  if (l.length === 0) return typeof preset[condition] === 'string' && preset[condition] !== '' ? undefined : true
+  return names[0] === '' || names.some((n) => l.includes(n))
+}
+
+/**
+ * The families a job's presets reach besides those of its settings: preset-conditions where Orca
+ * works a compatibility condition out, in the order crates/orca-cli/src/presets.rs checks them
+ * (and declines at the first): the process's with the printer (a process the printer's list
+ * leaves out is refused there), then each filament's with the printer and, when that holds, with
+ * the process.
+ */
+export function presetFamilies(set: PresetSet): string[] {
+  const name = (p: Record<string, unknown>) => (typeof p.name === 'string' ? p.name : '')
+  const machine = set.machine as Record<string, unknown>
+  const printer = [name(machine), ...(machine.from !== 'system' && typeof machine.inherits === 'string' ? [machine.inherits] : [])]
+  const process = compatibleByList(set.process, 'compatible_printers', 'compatible_printers_condition', printer)
+  if (process === undefined) return ['preset-conditions']
+  if (!process) return []
+  for (const f of set.filaments) {
+    const forPrinter = compatibleByList(f, 'compatible_printers', 'compatible_printers_condition', printer)
+    if (forPrinter === undefined) return ['preset-conditions']
+    if (forPrinter && compatibleByList(f, 'compatible_prints', 'compatible_prints_condition', [name(set.process)]) === undefined) return ['preset-conditions']
+  }
+  return []
 }
 
 // ---------------------------------------------------------------- cases
@@ -309,6 +385,33 @@ export interface JobTemplate {
   gcode: boolean
   bambu3mf: boolean
   stats: boolean
+  /** How many of its set's filaments it uses, the first ones (all of them when left out). */
+  filaments?: number
+  /** Settings written over its set's process preset, in the case's own copy of it (process.json). */
+  processChanges?: Record<string, unknown>
+}
+
+/** The preset set a job template uses: its set's first `filaments`, its process with its changes. */
+export function templateSet(t: JobTemplate, sets: Record<PresetKey, PresetSet>): PresetSet {
+  const set = sets[t.presets]
+  return {
+    machine: set.machine,
+    process: t.processChanges ? { ...set.process, ...t.processChanges } : set.process,
+    filaments: t.filaments === undefined ? set.filaments : set.filaments.slice(0, t.filaments),
+  }
+}
+
+/**
+ * The preset files a job template runs with in `dir`: its set's files, its first `filaments`, and
+ * with process changes the case's own copy of the process preset (dir/process.json).
+ */
+export function templateFiles(t: JobTemplate, files: PresetFiles, sets: Record<PresetKey, PresetSet>, dir: string): PresetFiles {
+  let process = files.process
+  if (t.processChanges) {
+    process = join(dir, 'process.json')
+    writeFileSync(process, serializePreset(templateSet(t, sets).process))
+  }
+  return { machine: files.machine, process, filaments: t.filaments === undefined ? files.filaments : files.filaments.slice(0, t.filaments) }
 }
 
 export type CaseKind = 'smoke' | 'job' | 'example' | 'refusal'
@@ -334,12 +437,32 @@ export interface CorpusCase {
 export const SMOKE_FAMILIES: Record<string, string[]> = {
   version: ['version'],
   'config-def': ['config-def'],
-  refusals: ['intake'],
   'file-collisions': ['intake'],
-  'crash-result': ['intake'],
   info: ['model-load', 'placement', 'info'],
   'layers-only': ['model-load', 'placement', 'slice-mesh'],
   'sphere-adaptive': ['model-load', 'placement', 'slice-mesh'],
+}
+
+/**
+ * The smoke case the corpus leaves out: `refusals` runs every refused job in one case, across the
+ * families they reach; each is a refusal case of its own instead (corpusCases).
+ */
+export const SMOKE_LEFT_OUT = ['refusals']
+
+/**
+ * The families of the refusals the C++ engine makes past reading the job, its presets and its
+ * model's file (smoke.ts REFUSALS): those of the steps it reaches before it refuses, so a
+ * refusal is held to them. `slice` is every family of the refusal's slice (its generic presets
+ * and the cube's overrides, familiesFor), `slice-before-gcode` those but the G-code export and its
+ * processor. Every other refusal is intake's.
+ */
+export const REFUSAL_FAMILIES: Record<string, string[] | 'slice' | 'slice-before-gcode'> = {
+  'flat-model': ['model-load'],
+  'lone-triangle': ['model-load'],
+  'too-big-for-the-bed': ['model-load', 'placement'],
+  'layers-above-the-nozzle': ['model-load', 'placement', 'slice-mesh'],
+  'pause-below-first-layer': 'slice-before-gcode',
+  'gcode-folder-unmakeable': 'slice',
 }
 
 /** Smoke cases that run a prime tower (two filaments, or the tower case). */
@@ -417,15 +540,30 @@ export const SPARSE_PATTERNS = INFILL_PATTERNS.filter((p) => !['monotonic', 'mon
 export const FAMILY_MESHES = { fill: '20mm-cube', overhang: 'overhang' } as const
 
 /**
- * A slice for each family no other case reaches as the presets stand: each sparse infill pattern
- * on the 20 mm cube, both wall generators, and supports, tree supports, a raft, ironing, fuzzy skin
- * and Z contouring, each switched on by its setting.
+ * The compatibility condition the preset-conditions job's process gets in place of its list of
+ * printers: the generic printer's nozzle, so Orca finds the process made for it.
+ */
+export const PROCESS_CONDITION = 'nozzle_diameter[0]==0.4'
+
+/**
+ * A job for each family no other case reaches as the presets stand: a slice of each sparse infill
+ * pattern on the 20 mm cube, both wall generators, and supports, tree supports, a raft, ironing,
+ * fuzzy skin and Z contouring, each switched on by its setting; the prime tower clumping detection
+ * puts on, a slice on the H2D with one filament (its machine preset has an exclusion area of four
+ * points); and the cube's info with a process whose compatibility with the printer is a condition.
  */
 export function familyJobs(): CorpusCase[] {
   const mesh = (id: string) => CORPUS_MESHES.find((x) => x.id === id)!
   const fill = mesh(FAMILY_MESHES.fill)
   const overhang = mesh(FAMILY_MESHES.overhang)
-  const job = (id: string, title: string, m: CorpusMesh, overrides: Overrides): CorpusCase => ({ id, kind: 'job', title, families: [], mesh: m.id, job: plainJob('slice', m.file, { overrides }) })
+  const job = (id: string, title: string, m: CorpusMesh, overrides: Overrides, extra: Partial<JobTemplate> = {}): CorpusCase => ({
+    id,
+    kind: 'job',
+    title,
+    families: [],
+    mesh: m.id,
+    job: plainJob(extra.command ?? 'slice', m.file, { overrides, ...extra }),
+  })
   return [
     ...SPARSE_PATTERNS.map((p) => job(`family-infill-${p}`, `the 20 mm cube with ${p} sparse infill`, fill, { sparse_infill_pattern: p, sparse_infill_density: '25%' })),
     job('family-perimeters-classic', 'the 20 mm cube with the classic wall generator', fill, { wall_generator: 'classic' }),
@@ -436,6 +574,14 @@ export function familyJobs(): CorpusCase[] {
     job('family-ironing', 'the 20 mm cube with its top ironed', fill, { ironing_type: 'top' }),
     job('family-fuzzy-skin', 'the 20 mm cube with fuzzy skin on its outer walls', fill, { fuzzy_skin: 'external' }),
     job('family-contouring', 'the 20 mm cube with Z contouring (zaa_enabled)', fill, { zaa_enabled: '1' }),
+    job('family-wipe-tower-clumping', 'the 20 mm cube on the H2D with one filament and clumping detection, which puts the prime tower on', fill, { enable_wrapping_detection: '1' }, { presets: 'h2d', filaments: 1 }),
+    job(
+      'family-preset-conditions',
+      "the 20 mm cube's info with a process whose compatibility with the printer is a condition (compatible_printers_condition, no list)",
+      fill,
+      {},
+      { command: 'info', processChanges: { compatible_printers: [], compatible_printers_condition: PROCESS_CONDITION } },
+    ),
   ]
 }
 
@@ -452,26 +598,41 @@ export function exampleJobs(protocolDir: string, names: string[]): CorpusCase[] 
 
 /** Every case, in the corpus's order (families of jobs are filled in by withFamilies). */
 export function corpusCases(protocolDir: string, exampleNames: string[]): CorpusCase[] {
-  const smoke = SMOKE_CASES.map((c): CorpusCase => ({ id: `smoke-${c.id}`, kind: 'smoke', title: c.title, families: [], smoke: c.id }))
+  // smoke-refusals is left out (SMOKE_LEFT_OUT): its jobs are the refusal cases below.
+  const smoke = SMOKE_CASES.filter((c) => !SMOKE_LEFT_OUT.includes(c.id)).map((c): CorpusCase => ({ id: `smoke-${c.id}`, kind: 'smoke', title: c.title, families: [], smoke: c.id }))
   const meshes = CORPUS_MESHES.flatMap((m) =>
     (['info', 'layers', 'slice'] as const).map((command): CorpusCase => ({ id: `mesh-${m.id}-${command}`, kind: 'job', title: `${m.source}, ${command}`, families: [], mesh: m.id, job: plainJob(command, m.file) })),
   )
-  const refusals = REFUSALS.map((r): CorpusCase => ({ id: `refusal-${r.id}`, kind: 'refusal', title: `the smoke refusal ${r.id} (${r.code})`, families: ['intake'], refusal: r.id }))
+  const refusals = REFUSALS.map((r): CorpusCase => {
+    const f = REFUSAL_FAMILIES[r.id]
+    return { id: `refusal-${r.id}`, kind: 'refusal', title: `the smoke refusal ${r.id} (${r.code})`, families: f === undefined ? ['intake'] : Array.isArray(f) ? f : [], refusal: r.id }
+  })
   return [...smoke, ...meshes, ...sketchJobs(), ...familyJobs(), ...exampleJobs(protocolDir, exampleNames), ...refusals]
 }
 
-/** Fills in each case's families: jobs from their settings, smoke cases from SMOKE_FAMILIES or as a generic slice. */
+/**
+ * Fills in each case's families: jobs from their settings (familiesFor) and presets
+ * (presetFamilies), smoke cases from SMOKE_FAMILIES or as a generic slice, and the refusals of a
+ * slice (REFUSAL_FAMILIES) as their generic slice with the cube's overrides.
+ */
 export function withFamilies(cases: CorpusCase[], sets: Record<PresetKey, PresetSet>, defaults: Map<string, string>): CorpusCase[] {
+  const genericSlice = (overrides: Overrides) => familiesFor('slice', settingLookup(sets.generic, overrides, defaults), 1, settingPoints(sets.generic, overrides, defaults))
   return cases.map((c) => {
     if (c.kind === 'job') {
       const j = c.job!
-      return { ...c, families: familiesFor(j.command, settingLookup(sets[j.presets], j.overrides, defaults), sets[j.presets].filaments.length) }
+      const set = templateSet(j, sets)
+      return { ...c, families: inFamilyOrder([...presetFamilies(set), ...familiesFor(j.command, settingLookup(set, j.overrides, defaults), set.filaments.length, settingPoints(set, j.overrides, defaults))]) }
     }
     if (c.kind === 'smoke') {
       const fixed = SMOKE_FAMILIES[c.smoke!]
       if (fixed) return { ...c, families: fixed }
-      const f = familiesFor('slice', settingLookup(sets.generic, PLAIN_OVERRIDES, defaults), 1)
-      return { ...c, families: SMOKE_TOWER_CASES.includes(c.smoke!) ? [...new Set([...f, 'wipe-tower'])].sort((a, b) => FAMILIES.findIndex((x) => x.name === a) - FAMILIES.findIndex((x) => x.name === b)) : f }
+      const f = genericSlice(PLAIN_OVERRIDES)
+      return { ...c, families: SMOKE_TOWER_CASES.includes(c.smoke!) ? inFamilyOrder([...f, 'wipe-tower']) : f }
+    }
+    if (c.kind === 'refusal') {
+      const f = REFUSAL_FAMILIES[c.refusal!]
+      if (f === 'slice') return { ...c, families: genericSlice(cubeOverrides) }
+      if (f === 'slice-before-gcode') return { ...c, families: genericSlice(cubeOverrides).filter((x) => x !== 'gcode-export' && x !== 'gcode-processor') }
     }
     return c
   })
@@ -638,7 +799,8 @@ export function corpusSmokeCases(doc: CorpusDocument, o: { corpusDir: string; pr
           title: c.title,
           run: async (env) => {
             copyFileSync(meshPath(o.corpusDir, m), join(env.dir, c.job!.model))
-            return runCorpusJob(env, instantiateJob(c.job!, env.dir, env.resources, env.files[c.job!.presets]) as unknown as Record<string, unknown>)
+            const files = templateFiles(c.job!, env.files[c.job!.presets], env.sets, env.dir)
+            return runCorpusJob(env, instantiateJob(c.job!, env.dir, env.resources, files) as unknown as Record<string, unknown>)
           },
         }
       }

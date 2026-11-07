@@ -9,14 +9,15 @@
 // (LICENSE) for more details.
 //
 // Carries Boost code: is_absolute_path follows find_root_directory_start and path::is_absolute of
-// libs/filesystem/src/path.cpp and include/boost/filesystem/path.hpp, and same_file's last step
-// follows equivalent and status of libs/filesystem/src/operations.cpp, of Boost 1.84.0, the Boost
-// OrcaSlicer v2.4.2's dependency build pins, on 2026-11-06; their copyright holders are Beman Dawes,
-// Andrey Semashev and the Boost.Filesystem contributors, under the Boost Software License 1.0
-// (licenses/BSL-1.0.txt).
+// libs/filesystem/src/path.cpp and include/boost/filesystem/path.hpp, and is_file, is_directory
+// and same_file's last step follow equivalent and status of libs/filesystem/src/operations.cpp,
+// of Boost 1.84.0, the Boost OrcaSlicer v2.4.2's dependency build pins, on 2026-11-06; their
+// copyright holders are Beman Dawes, Andrey Semashev and the Boost.Filesystem contributors, under
+// the Boost Software License 1.0 (licenses/BSL-1.0.txt).
 
 //! Paths as the C++ front end reads them (cli/common.cpp): [`is_absolute_path`] (Boost.Filesystem's
-//! `is_absolute`), and [`same_file`], whether two paths may name one file, as Windows opens them
+//! `is_absolute`), [`is_file`] and [`is_directory`] (its `is_regular_file` and `is_directory`,
+//! by `status`), and [`same_file`], whether two paths may name one file, as Windows opens them
 //! (`GetFullPathNameW`'s conversion, the `\\?\`-style prefixes and NTFS stream names dropped, the
 //! longest existing part resolved by the file system, letter case ignored as NTFS ignores it), or
 //! as two existing names of one file (a hard link).
@@ -400,6 +401,31 @@ mod win {
         }
     }
 
+    /// `boost::filesystem::is_directory(p, ec)`: the path opens (links followed) and is a folder,
+    /// or it is refused (access denied) and `GetFileAttributesW` reads a folder that is no
+    /// reparse point.
+    pub fn is_directory(path: &str) -> bool {
+        let w = widen(path);
+        match open_or_error(&w, FILE_READ_ATTRIBUTES | FILE_READ_EA) {
+            Ok(h) => {
+                // SAFETY: zeroed is a valid BY_HANDLE_FILE_INFORMATION; the handle is open.
+                let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+                // SAFETY: as above.
+                let read = unsafe { GetFileInformationByHandle(h.0, &raw mut info) };
+                read != 0 && info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0
+            }
+            Err(ERROR_ACCESS_DENIED) => {
+                let z = with_nul(&w);
+                // SAFETY: z is NUL-terminated.
+                let attrs = unsafe { GetFileAttributesW(z.as_ptr()) };
+                attrs != INVALID_FILE_ATTRIBUTES
+                    && attrs & FILE_ATTRIBUTE_REPARSE_POINT == 0
+                    && attrs & FILE_ATTRIBUTE_DIRECTORY != 0
+            }
+            Err(_) => false,
+        }
+    }
+
     /// `boost::filesystem::equivalent(a, b, ec)`: both open and are one file by volume, index,
     /// size and last write time; an error (neither opens) is not one file.
     pub fn equivalent(a: &str, b: &str) -> bool {
@@ -480,9 +506,22 @@ pub fn is_file(path: &str) -> bool {
     }
 }
 
+/// `is_directory(path)`: Boost.Filesystem's `is_directory`, links followed.
+#[must_use]
+pub fn is_directory(path: &str) -> bool {
+    #[cfg(windows)]
+    {
+        win::is_directory(path)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::metadata(path).is_ok_and(|m| m.is_dir())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_absolute_path, same_file};
+    use super::{is_absolute_path, is_directory, is_file, same_file};
 
     #[test]
     fn absolute_paths_are_boosts() {
@@ -527,6 +566,19 @@ mod tests {
         assert!(same_file(&p, &link.to_string_lossy()));
         assert!(!same_file(&p, &format!("{d}\\other.stl")));
         assert!(!same_file(&p, ""));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn files_and_folders_are_told_apart() {
+        let dir = std::env::temp_dir().join(format!("orca-cli-kinds-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("profiles")).unwrap();
+        std::fs::write(dir.join("model.stl"), b"solid").unwrap();
+        let path = |rel: &str| dir.join(rel).to_string_lossy().into_owned();
+        assert!(is_directory(&path("profiles")) && !is_file(&path("profiles")));
+        assert!(is_file(&path("model.stl")) && !is_directory(&path("model.stl")));
+        assert!(!is_directory(&path("none")) && !is_file(&path("none")));
+        assert!(!is_directory(""));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -9,8 +9,10 @@
 // (LICENSE) for more details.
 
 //! What the `run` tests share (intake.rs, decline.rs, crash.rs): the program run hidden, a
-//! scratch folder of the test's own, a valid job in it, and a result's engine block made
-//! comparable with the C++ program's goldens (parity/goldens/front/).
+//! scratch folder of the test's own, a valid job in it and the files its work reads up to the
+//! decline (a resources folder with a profiles folder, three preset files and a model file), the
+//! progress files the C++ program writes, and a result's engine block made comparable with the C++
+//! program's goldens (parity/goldens/front/).
 
 #![allow(dead_code)]
 
@@ -128,6 +130,83 @@ pub fn write_job(dir: &Scratch, job: &Object) -> String {
     path
 }
 
+/// Writes the preset file `presets/<file>.json` of `kind` ("Test <kind>", from the system) with
+/// `settings` besides, in their order.
+pub fn write_preset(dir: &Scratch, file: &str, kind: &str, settings: &[(&str, Value)]) {
+    std::fs::create_dir_all(dir.path("presets")).unwrap();
+    let mut p = Object::new(Order::Insertion);
+    p.insert("type", kind);
+    p.insert("name", format!("Test {kind}"));
+    p.insert("from", "system");
+    for (k, v) in settings {
+        p.insert(*k, v.clone());
+    }
+    std::fs::write(
+        dir.path(&format!("presets/{file}.json")),
+        Value::Object(p).dump(Some(2)) + "\n",
+    )
+    .unwrap();
+}
+
+/// The files a valid job of [`valid_job`] reads up to the decline (`run.rs`): the resources folder
+/// with its profiles folder, the three preset files with no settings of their own (Orca's
+/// defaults), and the model's file, whose bytes are not read before the decline.
+pub fn write_fixtures(dir: &Scratch) {
+    std::fs::create_dir_all(dir.path("resources/profiles")).unwrap();
+    write_preset(dir, "machine", "machine", &[]);
+    write_preset(dir, "process", "process", &[]);
+    write_preset(dir, "filament_1", "filament", &[]);
+    std::fs::write(dir.path("model.stl"), b"solid").unwrap();
+}
+
+/// The files [`write_fixtures`] and [`write_job`] write, with `more` (forward slashes), sorted.
+pub fn fixture_files(more: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = [
+        "job.json",
+        "model.stl",
+        "presets/filament_1.json",
+        "presets/machine.json",
+        "presets/process.json",
+    ]
+    .iter()
+    .chain(more)
+    .map(|s| (*s).to_string())
+    .collect();
+    orca_stl::sort(&mut out);
+    out
+}
+
+/// A progress file as the C++ program writes it: a line for each of `stages`, then, with a
+/// message, the failure at the last stage's percent.
+pub fn progress_text(stages: &[&str], failed: Option<&str>) -> String {
+    let mut out = String::new();
+    let mut last = 0.0;
+    for stage in stages {
+        let (percent, message) = match *stage {
+            "job" => (1.0, "reading the job"),
+            "presets" => (3.0, "reading the presets"),
+            "model" => (8.0, "reading the model"),
+            other => panic!("no progress line for the stage {other}"),
+        };
+        let mut line = Object::new(Order::Insertion);
+        line.insert("stage", *stage);
+        line.insert("percent", percent);
+        line.insert("message", message);
+        out.push_str(&Value::Object(line).dump(None));
+        out.push('\n');
+        last = percent;
+    }
+    if let Some(message) = failed {
+        let mut line = Object::new(Order::Insertion);
+        line.insert("stage", "failed");
+        line.insert("percent", last);
+        line.insert("message", message);
+        out.push_str(&Value::Object(line).dump(None));
+        out.push('\n');
+    }
+    out
+}
+
 /// The golden's engine version (the C++ program's when it was recorded).
 pub fn golden_engine_version() -> String {
     let v = std::fs::read(repo().join("parity/goldens/front/version.json")).unwrap();
@@ -150,14 +229,13 @@ pub fn as_cpp_result(text: &str) -> String {
 
 /// The progress file of a run that failed at intake: the job line, then the failure.
 pub fn failed_at_intake_progress(message: &str) -> String {
-    let mut failed = Object::new(Order::Insertion);
-    failed.insert("stage", "failed");
-    failed.insert("percent", 1.0);
-    failed.insert("message", message);
-    format!(
-        "{{\"stage\":\"job\",\"percent\":1.0,\"message\":\"reading the job\"}}\n{}\n",
-        Value::Object(failed).dump(None)
-    )
+    progress_text(&["job"], Some(message))
+}
+
+/// The progress file of a run declined after the model's file check: the job, presets and model
+/// lines, then the failure.
+pub fn declined_progress(message: &str) -> String {
+    progress_text(&["job", "presets", "model"], Some(message))
 }
 
 /// The text a C++ stream of the program writes for `text` (line feeds as CR LF on Windows).

@@ -11,20 +11,28 @@
 //   - an output record.json classes R (the shipped engine differs between its own runs) within
 //     the envelope of that variance (<work>/parity/envelope/envelope.json): its other lines the
 //     same, and each number of a varying line within the least and greatest of the five runs.
-// A run sketch-orca-rs declines (exit -8, the low byte 248; result not-ported with the families it
-// is missing) counts for the front families alone (FRONT_FAMILIES: they are decided before a job's
-// work starts), and only when the C++ run got past reading the job (its progress has a stage after
-// `job`), the program wrote nothing the C++ run did not, and no family it misses is a front family
-// or certified. A family is certified when every run of every case of it passes. parity.json's
-// flags are raised, never lowered; --check writes no parity.json and fails on a regression (a
-// family parity.json certifies that does not pass now). Before any of it, the oracle staged in the
-// work folder must be the one this checkout makes (cli/ included), parity neutral must have passed
-// with it and the goldens must have been recorded with it (oracleChainProblems), so a change to
-// cli/ cannot reach certify without parity oracle, neutral and record run again. Apart from the
-// families, the decline itself is held to the corpus (declineGaps): every run of a corpus job that
-// reaches a family parity.json does not certify (the corpus's families for it, corpus.ts
-// familiesFor) must be declined, naming each such family (crates/orca-cli/src/decline.rs), so the
-// program never does a step that is not certified; a gap fails certify and certify --check.
+// A family is certified when every run of every case of it passes, its outputs the golden's. A run
+// sketch-orca-rs declines (exit -8, the low byte 248; result not-ported with the families it is
+// missing) never passes, in any family, the front families (FRONT_FAMILIES) too: the decline is
+// information (RunVerdict.declined), so a certified family is the C++ engine's outputs in every
+// run. A decline is itself wrong, a problem of its run, when the C++ run ended within what the
+// program does itself (endedWithinRust: its progress shows no stage past reading the job and the
+// presets, RUST_STAGES, or it failed in `model` with file-not-found, the model's file check), as
+// the program should then have done what the C++ run did; when it names a missing family that is
+// a front family, certified, or not in parity.json; and when it wrote a file the C++ run did not
+// or wrote to stdout or stderr. A decline that names preset-conditions (a compatibility condition
+// the program cannot work out yet, in the presets stage) needs the C++ run to have reached the
+// presets. parity.json's flags are raised, never lowered; --check writes no parity.json and fails
+// on a regression (a family parity.json certifies that does not pass now). Before any of it, the
+// oracle staged in the work folder must be the one this checkout makes (cli/ included), parity
+// neutral must have passed with it and the goldens must have been recorded with it
+// (oracleChainProblems), so a change to cli/ cannot reach certify without parity oracle, neutral
+// and record run again. Apart from the families, the decline itself is held to the corpus
+// (declineGaps): every run of a corpus job, example or refusal (DECLINE_HELD_KINDS; a smoke case's
+// families are not worked out for each of its runs) that reaches a family parity.json does not
+// certify (the corpus's families for it, corpus.ts) must be declined, naming each such family
+// (crates/orca-cli/src/decline.rs), unless its C++ run ended within what the program does itself,
+// so the program never does a step that is not certified; a gap fails certify and certify --check.
 
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -36,14 +44,24 @@ import { compareOutput, type Mask, type OutputStatus } from './masks.ts'
 import type { NeutralReport } from './neutral.ts'
 import { maskName, outputBytes, outputNames, portableRoots, type FamilyEntry, type GoldensIndex, type ParityDocument } from './record.ts'
 import { runStore, type CaseRecord, type RecordedRun } from './same.ts'
+import { endedWithinRust, RUST_STAGES } from '../smoke.ts'
 
 export const CERTIFY_FORMAT = 'sketch-orca-parity-certify/1'
 
 /** The Rust program's name (crates/orca-cli's binary). */
 export const RUST_PROGRAM = 'sketch-orca-rs'
 
-/** The families decided before a job's work starts: a decline cannot be one of theirs. */
+/**
+ * The front families: what the program does itself before any step it can decline (the version,
+ * the config-def, and intake: the command line, the job, the presets stage and the model's file
+ * check). A decline cannot name one of them; like every family, they are certified only by runs
+ * that pass, never by declines.
+ */
 export const FRONT_FAMILIES = ['version', 'config-def', 'intake'] as const
+
+// What the program does itself and where a C++ run ended within it (RUST_STAGES, endedWithinRust)
+// are smoke.ts's, which the stage's rs-intake case holds the program to as well.
+export { endedWithinRust, RUST_STAGES }
 
 /** The code and exit code of a decline (crates/orca-cli/src/decline.rs; protocol/README.md). */
 export const NOT_PORTED = 'not-ported'
@@ -210,9 +228,21 @@ export function progressStages(b: Buffer | undefined): string[] {
   return out
 }
 
+/** Where a run ended: the stages its progress file names (none without one), and its result's code. */
+export function runEnd(side: Side, caseId: string, run: RecordedRun): { stages: string[]; code: string | undefined } {
+  const progress = run.files.find((f) => /(^|\/)progress\.ndjson$/.test(f))
+  const stages = progress === undefined ? [] : progressStages(outputBytes(side.store, caseId, run, `files/${progress}`))
+  let code: string | undefined
+  for (const f of run.files) {
+    const v = jsonOf(outputBytes(side.store, caseId, run, `files/${f}`))
+    if (isRecord(v) && v.format === 'sketch-orca-result/1' && typeof v.code === 'string') code = v.code
+  }
+  return { stages, code }
+}
+
 /**
- * Why a run the Rust program declined does not count as passing for the front families; empty
- * when it does (see the top of this file). `families` is parity.json's.
+ * Why a decline of the Rust program is wrong; empty when it is right (see the top of this file).
+ * A right decline is information, never a pass. `families` is parity.json's.
  */
 export function declineProblems(o: { caseId: string; golden: { side: Side; run: RecordedRun | undefined }; rust: { side: Side; run: RecordedRun | undefined }; families: FamilyEntry[] }): string[] {
   const g = o.golden.run
@@ -223,12 +253,14 @@ export function declineProblems(o: { caseId: string; golden: { side: Side; run: 
   if (r.timedOut || exitByte !== ((NOT_PORTED_EXIT % 256) + 256) % 256) problems.push(`it exited with ${r.timedOut ? 'a timeout' : r.code}, not ${NOT_PORTED_EXIT}`)
   const results = r.files.filter((f) => isResult(outputBytes(o.rust.side.store, o.caseId, r, `files/${f}`)))
   if (results.length !== 1) problems.push(`it wrote ${results.length} results`)
+  const named: string[] = []
   for (const f of results) {
     const v = jsonOf(outputBytes(o.rust.side.store, o.caseId, r, `files/${f}`)) as Record<string, unknown>
     if (v.code !== NOT_PORTED || v.ok !== false || v.exitCode !== NOT_PORTED_EXIT) problems.push(`its result is ${JSON.stringify(v.code)} with exit code ${JSON.stringify(v.exitCode)}, not ${NOT_PORTED}`)
     const missing = Array.isArray(v.missing) ? v.missing : []
     if (missing.length === 0 || !missing.every((m) => typeof m === 'string')) problems.push('its result names no missing families')
     for (const m of missing) {
+      named.push(String(m))
       const f2 = o.families.find((x) => x.name === m)
       if (!f2) problems.push(`it is missing ${String(m)}, which parity.json does not list`)
       else if (f2.certified) problems.push(`it is missing ${f2.name}, which parity.json certifies`)
@@ -238,16 +270,23 @@ export function declineProblems(o: { caseId: string; golden: { side: Side; run: 
   for (const f of r.files) if (!g.files.includes(f)) problems.push(`it wrote ${f}, which the C++ run did not`)
   for (const f of r.gone) if (!g.gone.includes(f)) problems.push(`it removed ${f}, which the C++ run did not`)
   for (const s of ['stdout', 'stderr']) if ((outputBytes(o.rust.side.store, o.caseId, r, s)?.length ?? 0) > 0) problems.push(`it wrote to ${s}`)
-  const progress = g.files.filter((f) => /(^|\/)progress\.ndjson$/.test(f))
-  const past = progress.some((f) => progressStages(outputBytes(o.golden.side.store, o.caseId, g, `files/${f}`)).some((s) => !['job', 'failed', 'done'].includes(s)))
-  if (!past) problems.push('the C++ run shows no stage past reading the job (or no progress file), so the job should have been refused, not declined')
+  const end = runEnd(o.golden.side, o.caseId, g)
+  const where = `the C++ run's progress shows ${end.stages.length === 0 ? 'no stage' : end.stages.join(', ')}${end.code === undefined ? '' : `, its result ${end.code}`}`
+  if (named.includes('preset-conditions')) {
+    if (!end.stages.includes('presets')) problems.push(`it names preset-conditions, a step of the presets, which the C++ run did not reach (${where})`)
+  } else if (endedWithinRust(end.stages, end.code)) {
+    problems.push(`the C++ run ended within what ${RUST_PROGRAM} does itself (${where}), so it should have done the same, not declined`)
+  }
   return problems
 }
 
 export interface RunVerdict {
   run: number
   passed: boolean
-  /** The Rust program declined it, and the decline is a pass for the front families. */
+  /**
+   * The Rust program declined it (not-ported) and declineProblems found nothing wrong with the
+   * decline. Information only: a declined run does not pass, in any family.
+   */
   declined: boolean
   problems: string[]
 }
@@ -298,12 +337,29 @@ export function compareCase(o: {
 }
 
 /**
- * Where the decline lets a corpus job through: each run of the Rust program, of a job whose corpus
- * families (`reaches`) include one parity.json does not certify (front families aside), that is
- * not a not-ported result naming each such family, as `<case>/<run>: what`. Empty when every run
- * is declined so.
+ * The kinds of corpus case the decline is held to (declineGaps): those whose families are worked
+ * out for their one job (corpus.ts: a job's from its settings and presets, a refusal's from the
+ * steps the C++ engine reaches before it refuses, an example's intake). A smoke case's families
+ * are named by hand or counted as a generic slice for the whole case, not for each of its runs
+ * (a run on another preset set, or a layers run in a slice case, reaches others), so its runs
+ * are held to the goldens alone.
  */
-export function declineGaps(o: { caseId: string; reaches: string[]; families: FamilyEntry[]; rust: { side: Side; record: CaseRecord | undefined } }): string[] {
+export const DECLINE_HELD_KINDS = ['job', 'example', 'refusal'] as const
+
+/**
+ * Where the decline lets a corpus case through: each run of the Rust program, of a case whose
+ * corpus families (`reaches`) include one parity.json does not certify (front families aside),
+ * that is not a not-ported result naming each such family, as `<case>/<run>: what`. A run that is
+ * not declined is no gap when its C++ run (`golden`) ended within what the program does itself
+ * (endedWithinRust): the job never reached those families. Empty when every run is so.
+ */
+export function declineGaps(o: {
+  caseId: string
+  reaches: string[]
+  families: FamilyEntry[]
+  rust: { side: Side; record: CaseRecord | undefined }
+  golden: { side: Side; record: CaseRecord | undefined }
+}): string[] {
   const front = FRONT_FAMILIES as readonly string[]
   const uncertified = o.reaches.filter((f) => !front.includes(f) && o.families.find((x) => x.name === f)?.certified !== true)
   if (uncertified.length === 0) return []
@@ -314,6 +370,11 @@ export function declineGaps(o: { caseId: string; reaches: string[]; families: Fa
     const results = r.files.map((f) => outputBytes(o.rust.side.store, o.caseId, r, `files/${f}`)).filter((b) => isResult(b))
     const v = results.length === 1 ? (jsonOf(results[0]) as Record<string, unknown>) : undefined
     if (r.timedOut || exitByte !== ((NOT_PORTED_EXIT % 256) + 256) % 256 || !v || v.code !== NOT_PORTED) {
+      const g = o.golden.record?.runs[i]
+      if (g) {
+        const end = runEnd(o.golden.side, o.caseId, g)
+        if (endedWithinRust(end.stages, end.code)) return
+      }
       out.push(`${o.caseId}/${i}: it reaches ${uncertified.join(', ')}, which parity.json does not certify, and was not declined (exit ${r.timedOut ? 'timeout' : String(r.code)}, result ${JSON.stringify(v?.code ?? null)})`)
       return
     }
@@ -329,6 +390,7 @@ export interface FamilyVerdict {
   cases: number
   runs: number
   passed: boolean
+  /** Its runs the Rust program declined, rightly (information: none of them passed). */
   declined: number
   certifiedBefore: boolean
   certified: boolean
@@ -336,10 +398,12 @@ export interface FamilyVerdict {
   problems: string[]
 }
 
-/** Each family's verdict from its cases': a front family counts the runs declined as passing. */
+/**
+ * Each family's verdict from its cases': it passes when every run of every case of it passed. A
+ * declined run is no pass, in any family, the front families too; `declined` counts them.
+ */
 export function familyVerdicts(parity: ParityDocument, cases: Map<string, CaseVerdict>, maxProblems = 20): FamilyVerdict[] {
   return parity.families.map((f) => {
-    const front = (FRONT_FAMILIES as readonly string[]).includes(f.name)
     let runs = 0
     let declined = 0
     const problems: string[] = []
@@ -354,7 +418,7 @@ export function familyVerdicts(parity: ParityDocument, cases: Map<string, CaseVe
       for (const r of c.runs) {
         runs++
         if (r.declined) declined++
-        const ok = r.passed || (r.declined && front)
+        const ok = r.passed
         if (!ok) {
           passed = false
           if (problems.length < maxProblems) problems.push(`${id}/${r.run}: ${r.declined ? 'declined (not-ported)' : r.problems.slice(0, 3).join('; ')}`)
@@ -382,7 +446,7 @@ export interface CertifyReport {
   goldens: string
   summary: { families: number; passed: number; certified: number; raised: string[]; regressions: string[] }
   families: FamilyVerdict[]
-  /** Where the decline let a corpus job through (declineGaps); certify fails on any. */
+  /** Where the decline let a corpus case through (declineGaps); certify fails on any. */
   declineGaps: string[]
 }
 

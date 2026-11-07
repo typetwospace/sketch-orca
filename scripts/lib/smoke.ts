@@ -63,7 +63,9 @@
 //   rs-config-def    sketch-orca-rs config-def: the C++ program's file, byte for byte
 //   rs-intake        the refusals (and a file that is not JSON, and a job with a field of the wrong
 //                    type): the C++ result, exit code and progress file, or not-ported for a job the
-//                    C++ got past reading
+//                    C++ took past what sketch-orca-rs does itself (reading the job, the presets and
+//                    the model's file: endedWithinRust); those it refuses itself in the presets and
+//                    at the model's file (RUST_OWN_REFUSALS) are never declined
 //   rs-decline       a slice job: not-ported, exit -8 (low byte 248), the missing steps, no output
 // Every run's exit code must be the one its result gives (exitCode). The engine is run hidden, with
 // a timeout; on Windows its libraries are checked first, so a missing DLL fails the case instead of
@@ -94,7 +96,7 @@ import { currentPlatform } from './toolchain.ts'
 import { extractZipEntry, readZipEntries } from './zip.ts'
 
 /** Bump when the cases or their expectations change: a passed stamp of an older version does not count. */
-export const SMOKE_VERSION = 10
+export const SMOKE_VERSION = 11
 /** Folders of Orca's resources/ that libslic3r reads (resources_dir()): presets, nozzle tables, flush volumes. */
 export const ENGINE_RESOURCES = ['profiles', 'info', 'flush'] as const
 
@@ -936,7 +938,8 @@ function readGcode(result: JobResult, job: Job): { scan?: GcodeScan; problems: s
   return { scan: scanGcode(readFileSync(job.output.gcode, 'utf8')), problems: [] }
 }
 
-const cubeOverrides: Overrides = { ...PLAIN_OVERRIDES, layer_height: String(CUBE.layerHeight), initial_layer_print_height: String(CUBE.firstLayer) }
+/** The cube's overrides: the plain ones and the cube's layers (the refusals and crash-result use them; the corpus reads their families). */
+export const cubeOverrides: Overrides = { ...PLAIN_OVERRIDES, layer_height: String(CUBE.layerHeight), initial_layer_print_height: String(CUBE.firstLayer) }
 
 function cubeExpected(set: PresetSet): number[] {
   return expectedFixedLayers(CUBE.size, CUBE.firstLayer, CUBE.layerHeight, layerLimits(set.machine, CUBE.layerHeight).min)
@@ -2162,10 +2165,37 @@ function stagesOf(text: string): string[] {
 }
 
 /**
+ * The progress stages sketch-orca-rs goes through itself (crates/orca-cli/src/run.rs): reading the
+ * job, then the presets. Of the stage `model` it does the model's file check alone.
+ */
+export const RUST_STAGES = ['job', 'presets'] as const
+
+/**
+ * Whether a C++ run ended within what sketch-orca-rs does itself: its progress (`stages`, none
+ * when it wrote no progress file) shows no stage past RUST_STAGES, or it failed in `model` with
+ * file-not-found (`code`, its result's), the model's file check. sketch-orca-rs must then do what
+ * the C++ run did, never decline (rs-intake here, and parity certify).
+ */
+export function endedWithinRust(stages: string[], code: string | undefined): boolean {
+  const own = (s: string) => (RUST_STAGES as readonly string[]).includes(s)
+  const work = stages.filter((s) => s !== 'failed' && s !== 'done')
+  if (work.every(own)) return true
+  return work.length > 0 && work[work.length - 1] === 'model' && work.slice(0, -1).every(own) && stages.includes('failed') && code === 'file-not-found'
+}
+
+/**
+ * The refusals sketch-orca-rs makes itself past reading the job: in the presets stage (an override
+ * Orca does not have, or the old name of one whose value Orca drops) and at the model's file
+ * (crates/orca-cli/src/run.rs). rs-intake compares each with the C++ result; a decline fails it.
+ */
+export const RUST_OWN_REFUSALS = ['missing-model', 'unknown-setting', 'unknown-capitalised-setting', 'renamed-key-dropped-value'] as const
+
+/**
  * Runs one job with both programs in `dir` (the C++ engine first), each with its own result and
  * progress file, and compares them: the Rust program gives the C++ result (as JSON, the engine block
- * made alike), exit code and progress file, or declines (not-ported) a job the C++ got past reading.
- * Returns the problems and whether the job was compared or declined.
+ * made alike), exit code and progress file, or declines (not-ported) a job the C++ run took past
+ * what the Rust program does itself (endedWithinRust). Returns the problems and whether the job was
+ * compared or declined.
  */
 async function compareIntake(env: RustCaseEnv, dir: string, jobPath: string): Promise<{ problems: string[]; declined: boolean }> {
   const files = (who: string) => ({ out: join(dir, `result-${who}.json`), progress: join(dir, `progress-${who}.ndjson`) })
@@ -2184,7 +2214,10 @@ async function compareIntake(env: RustCaseEnv, dir: string, jobPath: string): Pr
   if (rsResult.code === 'not-ported') {
     const problems: string[] = []
     if (lowByte(rs.code) !== 248 || rsResult.exitCode !== -8) problems.push(`a decline exited with ${rs.code} (result ${JSON.stringify(rsResult.exitCode)}), not -8`)
-    if (!stagesOf(cpp.progress).some((s) => s !== 'job' && s !== 'failed' && s !== 'done')) problems.push(`the Rust program declined a job the C++ refused while reading it: ${JSON.stringify((withoutImplementation(cpp.result) as Record<string, unknown>).message)}`)
+    const cppResult = withoutImplementation(cpp.result) as Record<string, unknown>
+    if (endedWithinRust(stagesOf(cpp.progress), typeof cppResult.code === 'string' ? cppResult.code : undefined)) {
+      problems.push(`the Rust program declined a job the C++ refused within what the Rust program does itself (reading the job, the presets and the model's file): ${JSON.stringify(cppResult.message)}`)
+    }
     return { problems, declined: true }
   }
   const problems: string[] = []
@@ -2234,7 +2267,7 @@ export const RUST_SMOKE_CASES: RustSmokeCase[] = [
   },
   {
     id: 'rs-intake',
-    title: 'sketch-orca-rs refuses the refused jobs with the C++ results, and declines only jobs the C++ read',
+    title: "sketch-orca-rs refuses the refused jobs with the C++ results, those of the presets and the model's file included, and declines only jobs the C++ took past them",
     async run(env) {
       const problems: string[] = []
       let compared = 0
@@ -2249,6 +2282,7 @@ export const RUST_SMOKE_CASES: RustSmokeCase[] = [
         else writeJob(jobPath, job)
         const r = await compareIntake(env, dir, jobPath)
         problems.push(...r.problems.map((p) => `${want.id}: ${p}`))
+        if (r.declined && (RUST_OWN_REFUSALS as readonly string[]).includes(want.id)) problems.push(`${want.id}: declined; sketch-orca-rs makes this refusal itself`)
         if (!r.declined) compared++
       }
       // A file that is not a job at all, and a job with a field of the wrong type: refused while it is read.
@@ -2264,7 +2298,7 @@ export const RUST_SMOKE_CASES: RustSmokeCase[] = [
         if (r.declined) problems.push(`${id}: declined; it is refused while the job is read`)
         else compared++
       }
-      if (compared < 3) problems.push(`only ${compared} refusals were compared; the rest were declined`)
+      if (compared < RUST_OWN_REFUSALS.length + 3) problems.push(`only ${compared} refusals were compared; the rest were declined`)
       return { problems, warnings: [] }
     },
   },

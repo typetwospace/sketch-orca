@@ -122,13 +122,15 @@ gh release view v<version> --repo typetwospace/sketch-orca --json tagName,isDraf
 
 `--target` takes only a full commit hash; a short one fails with HTTP 422 `Release.target_commitish
 is invalid`. The source zip goes in the same release as the engine (*Source offer*), and `parity
-reference` expects these asset names (`scripts/lib/parity/reference.ts`). The default work
-folder's `dist\engine` (`%LOCALAPPDATA%\SketchDev\orca-engine`) is the engine a dev Sketch runs,
-so a release built there replaces it: that is what a release meant for Sketch's dev builds wants
-(0.2.0 was built there). To keep a dev Sketch on its engine while a release is built, give the
+reference` expects these asset names (`scripts/lib/parity/reference.ts`). Sketch's dev builds
+accept both sketch-orca 0.1.0 (stage layout 3) and 0.2.0 (layout 4) from the default work
+folder's `dist\engine` (`%LOCALAPPDATA%\SketchDev\orca-engine`) through sketch-slicer's accepted
+pairs (`findEngine`), so a release built there replaces the engine a dev Sketch runs. Release
+builds of Sketch accept only the release they download (0.1.0). A new engine version or stage
+layout needs a new accepted pair in Sketch (sketch-slicer's README), not just a raised
+`ENGINE_STAGE_VERSION`. To keep a dev Sketch on its engine while a release is built, give the
 release a work folder of its own with `SKETCH_ORCA_HOME`. Sketch finds releases on GitHub
-through `SKETCH_ORCA_REPOSITORY` (sketch-slicer). A new stage layout also needs Sketch's
-stage-version reader raised (`ENGINE_STAGE_VERSION`, sketch-slicer's README).
+through `SKETCH_ORCA_REPOSITORY` (sketch-slicer).
 
 ## The Rust translation
 
@@ -153,31 +155,40 @@ What `sketch-orca-rs` answers so far (`crates/orca-cli/README.md`):
   `bun scripts/orca.ts parity gen-config` generates from the configdef probe
   (`parity gen-config --check` fails while they differ).
 - `run` checks its command line as `cli/main.cpp` does and reads the job as `cli/job.cpp` does,
-  in the same order: a command line or job the C++ program refuses while reading them gets the
-  same result (code, message, exit code), result file and progress file
-  (`parity/goldens/front/intake/`), and the run's files are told apart as the C++ tells them
-  apart. A refusal the C++ program makes after the job is read (an unknown setting, a model it
-  cannot read or that is bigger than the bed) belongs to a step that is not certified, so that job
-  gets `not-ported` below instead, until its family is.
-- The decline: a valid job that reaches a step `parity/parity.json` does not certify, which for now
-  is every `info`, `layers` and `slice` job, gets `not-ported`, exit -8 (the class of
-  `unsupported`; 248 as a low byte) and `missing`, the steps (`protocol/README.md`,
+  in the same order, and the run's files are told apart as the C++ tells them apart. Then it runs
+  the presets stage as `cli/presets.cpp` does (the work folders made, the presets read, checked
+  against each other and merged, the overrides applied and the settings checked as Orca checks
+  them, with the C++ warnings in their order) and checks that the model's file is there. A command
+  line or job the C++ program refuses up to there (an unknown setting, a preset made for another
+  printer, settings Orca refuses, a missing model) gets the same result (code, message, exit code,
+  warnings), result file and progress file (`parity/goldens/front/intake/`). A refusal the C++
+  program makes from the reading of the model on (a model it cannot read or that is bigger than
+  the bed) belongs to a step that is not certified, so that job gets `not-ported` below instead,
+  until its family is; so does a preset with a compatibility condition, which needs Orca's
+  placeholder parser (the family `preset-conditions`).
+- The decline: a job that gets past the model's file and reaches a step `parity/parity.json` does
+  not certify, which for now is every `info`, `layers` and `slice` job, gets `not-ported`, exit -8
+  (the class of `unsupported`; 248 as a low byte) and `missing`, the steps (`protocol/README.md`,
   `protocol/examples/result-not-ported.json`). The steps a slice reaches include those its
-  settings turn on (supports, ironing, fuzzy skin, each infill pattern and the rest), read from
-  its overrides, its objects' and its presets as the corpus reads them; presets it cannot read
-  count as every such step (`crates/orca-cli/README.md`). It comes before any output is written;
-  outputs are written under temporary names and renamed only on success, so nothing is left
-  behind.
+  settings turn on (supports, ironing, fuzzy skin, each infill pattern, the prime tower and the
+  rest), read from its overrides, its objects' and its presets as the corpus reads them; presets
+  it cannot read count as every such step (`crates/orca-cli/README.md`). It comes before any
+  output is written (only the work folder is made, as the C++ makes it); outputs are written under
+  temporary names and renamed only on success, so nothing is left behind.
 - A crash (a panic, an unhandled exception, `abort`) writes the C++ program's `internal-error`
-  result, and the process ends with -1; `SKETCH_ORCA_TEST_CRASH` triggers one as in the C++.
+  result, and the process ends with -1; `SKETCH_ORCA_TEST_CRASH` triggers one as in the C++, at
+  the stages `job`, `presets` and `model`.
 
 `bun scripts/orca.ts parity certify` runs every corpus case with `target/debug/sketch-orca-rs.exe`
 (build it first with `bun run rs:build`) and compares it with the goldens: results as JSON values,
 every other output byte for byte, an output that varies between the engine's own runs within that
 variance. It raises the certified families in `parity/parity.json` and never lowers them;
-`--check` writes nothing there and fails on a regression. Both fail when a run of a corpus job
-that reaches an uncertified family is not declined naming it, and both refuse goldens that were
-not recorded with the oracle of this checkout's `cli/` after a passing `parity neutral`.
+`--check` writes nothing there and fails on a regression. A family passes only when every run of
+it gives what the C++ gave: a declined run never passes one, and a run declined although the C++
+run ended within what `sketch-orca-rs` does itself (no stage past the presets, or a missing model
+file) is wrong in itself. Both fail when a run of a corpus job, example or refusal that reaches an
+uncertified family is not declined naming it, and both refuse goldens that were not recorded with
+the oracle of this checkout's `cli/` after a passing `parity neutral`.
 `version`, `config-def` and `intake` are certified (`parity/README.md`).
 
 One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
@@ -304,8 +315,10 @@ one of the staging inputs. The staged copy must report the C++ engine's version 
 `implementation: "rust"` and pass the Rust smoke cases (`smoke.ts` `RUST_SMOKE_CASES`, in
 `<work>/smoke/staged-rust`), each held to the staged C++ engine: `rs-version`, `rs-config-def`
 (the C++ program's file, byte for byte), `rs-intake` (the refusals' C++ results, or `not-ported`
-for a job the C++ got past reading) and `rs-decline` (a slice job ends `not-ported`, exit -8, with
-no output); otherwise nothing is swapped in.
+for a job the C++ took past the job, its presets and its model's file; a missing model, the
+unknown settings and a renamed key's dropped value are never declined, as `sketch-orca-rs` makes
+those refusals itself) and `rs-decline` (a slice job ends `not-ported`, exit -8, with no output);
+otherwise nothing is swapped in.
 
 Before staging, `stage` checks that the checkout is at the locked commit; that the patches `build`
 last applied (`state/patches.json`, names and SHA-256) are `patches/` as it is now (`build`

@@ -7,13 +7,13 @@ parity corpus` writes it from the engine's checkout. The meshes stay in the work
 
 ## Cases
 
-There are 165 cases, of four kinds. Each case runs in its own folder, as a smoke case does
+There are 166 cases, of four kinds. Each case runs in its own folder, as a smoke case does
 (`same.ts` `runEngineCases`), so every output of every engine run is recorded the same way.
 
 | Kind | Cases | What runs |
 | --- | --- | --- |
-| `smoke` | 19 | Each of the smoke run's cases (`smoke.ts` `SMOKE_CASES`), with its own checks, as `smoke-<id>`. |
-| `job` | 125 | A job written from the protocol's job schema. There are 84 mesh jobs, `mesh-<mesh>-<command>`: each of the 28 meshes below as an `info`, a `layers` and a `slice` job, on the generic preset set with no overrides. There are 7 Sketch-shaped jobs, `sketch-*`, below. There are 34 family jobs, `family-*`, below. |
+| `smoke` | 18 | Each of the smoke run's cases (`smoke.ts` `SMOKE_CASES`) but `refusals`, with its own checks, as `smoke-<id>`. `refusals` runs every refused job in one case, across the families they reach, so the corpus leaves it out (`SMOKE_LEFT_OUT`): each refused job is a refusal case of its own. |
+| `job` | 127 | A job written from the protocol's job schema. There are 84 mesh jobs, `mesh-<mesh>-<command>`: each of the 28 meshes below as an `info`, a `layers` and a `slice` job, on the generic preset set with no overrides. There are 7 Sketch-shaped jobs, `sketch-*`, below. There are 36 family jobs, `family-*`, below. |
 | `example` | 7 | `protocol/examples/invalid/job-*.json`, its example paths moved into the case's folder (below), as `example-<name>`. |
 | `refusal` | 14 | Each refused job of the smoke run (`smoke.ts` `REFUSALS`), one case each, as `refusal-<id>`. |
 
@@ -86,7 +86,9 @@ texture coordinates, groups) are left out.
 `corpus.json` holds each job as a template:
 
 - `command`;
-- `presets`, one of the smoke run's preset sets (`generic`, `generic2`, `bambu` or `h2d`);
+- `presets`, one of the smoke run's preset sets (`generic`, `generic2`, `bambu` or `h2d`), with
+  `filaments`, how many of the set's filaments it takes (all of them when it is not given), and
+  `processChanges`, settings of the process preset the case changes (`templateSet`);
 - `model`, the model's file name in the case's folder;
 - `overrides`, `objects` and `customGcodes`;
 - `arrange` and `orient`;
@@ -97,7 +99,9 @@ The record run writes the paths in each time:
 - `resources` is the running engine's resources folder;
 - `workDir` is `<case>/work`;
 - `model.path` is `<case>/<model>`;
-- the presets are the files of the set in `<cases>/presets/<set>/`;
+- the presets are the files of the set in `<cases>/presets/<set>/`, its first `filaments`, and
+  with `processChanges` the case's own copy of the process, `<case>/process.json`
+  (`templateFiles`);
 - the outputs are `<case>/out.gcode` and `<case>/out.gcode.3mf`. A job without G-code writes `""`.
 
 ### The Sketch-shaped jobs
@@ -118,12 +122,18 @@ print at 0.2 mm layers from a 0.2 mm first layer, with `PLAIN_OVERRIDES`.
 
 ### The family jobs
 
-The presets leave some families off. A family job slices one of them, switched on by its setting:
+The presets leave some families off. A family job exercises one of them, switched on by its setting:
 
 - each of the 26 sparse infill patterns on the 20 mm cube at 25 % (`family-infill-<pattern>`);
 - the classic and the Arachne wall generators on the 20 mm cube;
 - normal supports, tree supports and a 2-layer raft on the overhang;
-- ironing, fuzzy skin on the outer walls, and Z contouring (`zaa_enabled`) on the 20 mm cube.
+- ironing, fuzzy skin on the outer walls, and Z contouring (`zaa_enabled`) on the 20 mm cube;
+- clumping detection (`enable_wrapping_detection` 1) on the H2D set with one filament, whose
+  printer has an exclusion area for it, which puts a prime tower on a single filament
+  (`family-wipe-tower-clumping`);
+- an `info` job whose process has no list of printers but a compatibility condition
+  (`compatible_printers_condition` `nozzle_diameter[0]==0.4`), which Orca works out with its
+  placeholder parser (`family-preset-conditions`).
 
 ### The invalid examples, moved
 
@@ -140,9 +150,13 @@ what that example is about. So each example is refused for its own rule, not for
 
 ## Families
 
-`FAMILIES` in `corpus.ts`, and `parity.json`, list 57 families:
+`FAMILIES` in `corpus.ts`, and `parity.json`, list 58 families:
 
-- **The front end:** `version`, `config-def` and `intake`.
+- **The front end:** `version`, `config-def` and `intake` (the command line, the job, the presets
+  stage and the model's file, and every refusal made there).
+- **Preset conditions:** `preset-conditions`, a preset's compatibility condition
+  (`compatible_printers_condition`, `compatible_prints_condition`) worked out for the job's
+  printer and process.
 - **Loading and placing the model:** `model-load`, `placement` and `info`.
 - **Slicing and walls:** `slice-mesh`, `perimeters-classic` and `perimeters-arachne`.
 - **The 30 infill patterns** of Orca's `InfillPattern` (`infill-<key>`). `infill-tri-hexagon` is
@@ -162,13 +176,33 @@ else from Orca's default in `probes/configdef.json` (`familiesFor`):
 - **Walls:** the wall generator.
 - **Infill:** the top, bottom and internal solid patterns, plus the sparse pattern when the density
   is above 0.
-- **Other features:** supports and their type, a raft, ironing, fuzzy skin, and the prime tower,
-  which needs two filaments or smooth timelapse.
+- **Other features:** supports and their type, a raft, ironing, fuzzy skin, and the prime tower
+  (`enable_prime_tower`), which needs two filaments, smooth timelapse, or clumping detection with
+  an exclusion area (`wrapping_exclude_area`) of more than two points, counted as Orca's reader
+  splits the text at its commas (`settingPoints`), as Orca's `Print::has_wipe_tower` asks.
 - **Contouring:** `zaa_enabled`.
 - **Every slice:** the steps every slice runs.
 
-Smoke cases are named by hand (`SMOKE_FAMILIES`), and the rest count as a generic slice.
-`version`, `config-def`, `refusals`, `file-collisions` and `crash-result` are the front end's.
+A job also gets `preset-conditions` when Orca would work out a condition of its presets
+(`presetFamilies`): a preset whose list (`compatible_printers`, `compatible_prints`) is empty and
+whose condition is not, checked in Orca's order, the process for the printer first, then each
+filament for the printer and, when that holds, for the process.
+
+Smoke cases are named by hand (`SMOKE_FAMILIES`): `version` and `config-def` are those families,
+`file-collisions` is `intake`'s, and `info`, `layers-only` and `sphere-adaptive` name their steps.
+The rest, `crash-result` included (it crashes at `arrange`), count as a generic slice, with
+`wipe-tower` for those that run a prime tower. These are named for the whole case, not worked out
+for each of its runs, so `parity certify` holds a smoke case's runs to the goldens but not its
+declines to these families (`DECLINE_HELD_KINDS`).
+
+A refusal is held to the steps the C++ engine reaches before it refuses (`REFUSAL_FAMILIES`), as
+it ends there: `flat-model` and `lone-triangle` to `model-load`, `too-big-for-the-bed` to
+`model-load` and `placement`, `layers-above-the-nozzle` to those and `slice-mesh`,
+`pause-below-first-layer` to every family of its slice but `gcode-export` and `gcode-processor`,
+and `gcode-folder-unmakeable` to every family of its slice (its generic presets and the cube's
+overrides). Every other refusal, and each example, is made while the job, its presets and its
+model's file are read, and is `intake`'s: `intake` is certified on those runs, and only when
+each gives the C++ engine's outputs (a declined run passes no family).
 
 ## Recording
 

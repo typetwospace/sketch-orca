@@ -23,9 +23,12 @@
 //!   indent through `<out>.tmp`. A crash while the run is armed writes it too (`crash.rs`).
 //! - The progress file: one JSON line per step, `{stage, percent, message}`, the percent never
 //!   going down, then `done` at 100 or `failed` where it stopped.
-//! - Past the checks of the job, this program does only what is certified (`decline.rs`): every
-//!   job is declined for now, `not-ported` with exit -8, before any output is written. It writes
-//!   no G-code or .gcode.3mf yet; the result is its only file besides the progress file.
+//! - Past the checks of the job, its work as far as it is ported (`run.rs`): the folders, the
+//!   presets stage and the model file's check, each failing as the C++ fails, with its warnings.
+//!   Then this program does only what is certified (`decline.rs`): every job that gets there is
+//!   declined for now, `not-ported` with exit -8, before any output is written. It writes no
+//!   G-code or .gcode.3mf yet: besides the result and the progress file, only the work folder and
+//!   its orca-data folder, which the C++ makes too.
 
 use std::io::Write;
 use std::sync::Mutex;
@@ -35,7 +38,7 @@ use orca_json::{Object, Order, Value};
 use crate::common::{Failure, exit_code_for, fail};
 use crate::files::{make_parent_directories, read_file, write_file_atomic};
 use crate::paths::{is_absolute_path, is_file, same_file};
-use crate::{crash, decline, job, version};
+use crate::{crash, job, run, version};
 
 /// `RESULT_FORMAT`.
 pub const RESULT_FORMAT: &str = "sketch-orca-result/1";
@@ -501,12 +504,8 @@ pub fn run_job(job_path: &str, out_path: &str, progress_path: &str, err: &mut dy
         body.insert("command", job.command_name.as_str());
         arm_crash(out_path, &body);
         check_outputs(&files, out_path)?;
-        // The job's work: none is ported yet (decline.rs).
-        if let Err(declined) = decline::check(&job) {
-            crash::test_point("decline");
-            return Err(declined);
-        }
-        Ok(())
+        // The job's work, as far as it is ported (run.rs), then the decline.
+        run::run(&job, &warnings, &mut progress)
     })();
     let failure = outcome.err();
     let ok = failure.is_none();

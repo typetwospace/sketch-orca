@@ -8,25 +8,34 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
 // (LICENSE) for more details.
 
-//! The decline: a valid job that reaches a step sketch-orca-rs does not do yet (every info, layers
-//! and slice job, for now) gets `not-ported`, exit code -8 and `missing`, the steps, before any
-//! output is written: the result is protocol/examples/result-not-ported.json for a slice job with
-//! Orca's default settings, the progress file says the job was read and then the failure, and no
-//! G-code, .gcode.3mf or temporary file is left. A slice's settings, its objects' and their height
-//! ranges' add the families they turn on, and presets that cannot be read add every one.
+//! The decline: a valid job that gets past the presets and the model's file check and reaches a
+//! step sketch-orca-rs does not do yet (every info, layers and slice job, for now) gets
+//! `not-ported`, exit code -8 and `missing`, the steps, before any output is written: the result
+//! is protocol/examples/result-not-ported.json for a slice job with Orca's default settings, the
+//! progress file says the job, the presets and the model were reached and then the failure, and
+//! no G-code, .gcode.3mf or temporary file is left (the work folder and its orca-data folder are
+//! made, as the C++ program makes them). A slice's settings, its objects' and their height
+//! ranges' add the families they turn on, a preset value that is not text adds every one, and
+//! clumping detection with an exclusion area puts the prime tower on for one filament. Presets
+//! that need a compatibility condition worked out are declined in the presets stage, with the
+//! family preset-conditions.
 
 mod common;
 
-use common::{Scratch, program, repo, valid_job, write_job};
-use orca_json::{Object, Order, parse};
+use common::{
+    Scratch, declined_progress, fixture_files, program, progress_text, repo, valid_job,
+    write_fixtures, write_job, write_preset,
+};
+use orca_json::{Object, Order, Value, parse};
 
-/// Runs a valid `command` job with --out and --progress; the scratch folder, the exit code, the
-/// result and the progress file.
+/// Runs a valid `command` job, its fixtures written (common::write_fixtures) before `change`, with
+/// --out and --progress; the scratch folder, the exit code, the result and the progress file.
 fn declined(
     command: &str,
     change: impl FnOnce(&mut Object, &Scratch),
 ) -> (Scratch, i32, String, String) {
     let scratch = Scratch::new("decline", command);
+    write_fixtures(&scratch);
     let mut job = valid_job(&scratch, command);
     change(&mut job, &scratch);
     let path = write_job(&scratch, &job);
@@ -49,27 +58,12 @@ fn declined(
     (scratch, r.status.code().unwrap(), result, progress)
 }
 
-/// Writes the job's three preset files, flattened, each with `settings` besides its type and name.
-fn write_presets(dir: &Scratch, process: &[(&str, &str)], machine: &[(&str, &str)]) {
-    std::fs::create_dir_all(dir.path("presets")).unwrap();
-    for (file, kind, settings) in [
-        ("process", "process", process),
-        ("machine", "machine", machine),
-        ("filament_1", "filament", &[][..]),
-    ] {
-        let mut p = Object::new(Order::Insertion);
-        p.insert("type", kind);
-        p.insert("name", format!("Test {kind}"));
-        p.insert("from", "system");
-        for (k, v) in settings {
-            p.insert(*k, *v);
-        }
-        std::fs::write(
-            dir.path(&format!("presets/{file}.json")),
-            orca_json::Value::Object(p).dump(Some(2)) + "\n",
-        )
-        .unwrap();
-    }
+/// Settings as preset values: text.
+fn text(settings: &[(&'static str, &'static str)]) -> Vec<(&'static str, Value)> {
+    settings
+        .iter()
+        .map(|(k, v)| (*k, Value::from(*v)))
+        .collect()
 }
 
 /// The families a result names as missing.
@@ -82,6 +76,14 @@ fn missing_of(result: &str) -> Vec<String> {
         .collect()
 }
 
+/// The message of a result.
+fn message_of(result: &str) -> String {
+    parse(result.as_bytes(), Order::Insertion).unwrap()["message"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
 #[test]
 fn a_slice_job_is_declined_with_the_steps_it_needs() {
     let (scratch, code, result, progress) = declined("slice", |job, dir| {
@@ -89,8 +91,6 @@ fn a_slice_job_is_declined_with_the_steps_it_needs() {
         output.insert("gcode", dir.path("out/plate_1.gcode"));
         output.insert("bambu3mf", dir.path("out/plate_1.gcode.3mf"));
         job.insert("output", output);
-        // Presets that leave every setting at Orca's default.
-        write_presets(dir, &[], &[]);
     });
     assert_eq!(code, -8);
     let example =
@@ -106,32 +106,25 @@ fn a_slice_job_is_declined_with_the_steps_it_needs() {
         1,
     );
     assert_eq!(result, example);
-    let message = parse(result.as_bytes(), Order::Insertion).unwrap()["message"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert_eq!(progress, common::failed_at_intake_progress(&message));
-    // Nothing else is written: no output folder, no temporary file.
+    assert_eq!(progress, declined_progress(&message_of(&result)));
+    // Nothing else is written: no output folder, no temporary file; the work folder and its
+    // orca-data folder are made.
     assert_eq!(
         scratch.files(),
-        [
-            "job.json",
-            "presets/filament_1.json",
-            "presets/machine.json",
-            "presets/process.json",
-            "progress.ndjson",
-            "result.json"
-        ]
+        fixture_files(&["progress.ndjson", "result.json"])
     );
+    assert!(std::path::Path::new(&scratch.path("work/orca-data")).is_dir());
+    assert!(!std::path::Path::new(&scratch.path("out")).exists());
 }
 
 #[test]
 fn the_families_a_slice_reaches_follow_its_settings_and_each_objects() {
     let (_scratch, code, result, _) = declined("slice", |job, dir| {
-        write_presets(
+        write_preset(
             dir,
-            &[("enable_support", "1"), ("sparse_infill_density", "0%")],
-            &[],
+            "process",
+            "process",
+            &text(&[("enable_support", "1"), ("sparse_infill_density", "0%")]),
         );
         let mut overrides = Object::new(Order::Insertion);
         overrides.insert("wall_generator", "classic");
@@ -148,8 +141,8 @@ fn the_families_a_slice_reaches_follow_its_settings_and_each_objects() {
         let mut object = Object::new(Order::Insertion);
         object.insert("index", 0);
         object.insert("overrides", object_overrides);
-        object.insert("heightRanges", vec![orca_json::Value::Object(range)]);
-        job.insert("objects", vec![orca_json::Value::Object(object)]);
+        object.insert("heightRanges", vec![Value::Object(range)]);
+        job.insert("objects", vec![Value::Object(object)]);
     });
     assert_eq!(code, -8);
     let missing = missing_of(&result);
@@ -175,10 +168,17 @@ fn the_families_a_slice_reaches_follow_its_settings_and_each_objects() {
 }
 
 #[test]
-fn a_slice_whose_presets_cannot_be_read_reaches_every_family_a_setting_turns_on() {
-    // valid_job names preset files it does not write.
-    let (_scratch, code, result, _) = declined("slice", |_, _| {});
-    assert_eq!(code, -8);
+fn a_slice_whose_preset_values_are_not_text_reaches_every_family_a_setting_turns_on() {
+    // Orca reads the number; the corpus's lookup reads only text, so the settings are unknown.
+    let (_scratch, code, result, _) = declined("slice", |_, dir| {
+        write_preset(
+            dir,
+            "process",
+            "process",
+            &[("raft_layers", Value::from(2))],
+        );
+    });
+    assert_eq!(code, -8, "{result}");
     let missing = missing_of(&result);
     for f in [
         "perimeters-classic",
@@ -199,12 +199,48 @@ fn a_slice_whose_presets_cannot_be_read_reaches_every_family_a_setting_turns_on(
 }
 
 #[test]
+fn clumping_detection_with_an_exclusion_area_reaches_the_prime_tower_on_one_filament() {
+    let area = Value::Array(
+        ["145x310", "256x310", "256x326", "145x326"]
+            .iter()
+            .map(|p| Value::from(*p))
+            .collect(),
+    );
+    for (detection, tower) in [("1", true), ("0", false)] {
+        let (_scratch, code, result, _) = declined("slice", |job, dir| {
+            write_preset(
+                dir,
+                "machine",
+                "machine",
+                &[("wrapping_exclude_area", area.clone())],
+            );
+            write_preset(
+                dir,
+                "process",
+                "process",
+                &text(&[("enable_prime_tower", "1")]),
+            );
+            let mut overrides = Object::new(Order::Insertion);
+            overrides.insert("enable_wrapping_detection", detection);
+            job.insert("overrides", overrides);
+        });
+        assert_eq!(code, -8, "{result}");
+        let missing = missing_of(&result);
+        assert_eq!(
+            missing.iter().any(|m| m == "wipe-tower"),
+            tower,
+            "{detection}: {missing:?}"
+        );
+    }
+}
+
+#[test]
 fn info_and_layers_jobs_are_declined_too() {
     for (command, missing) in [
         ("info", vec!["model-load", "placement", "info"]),
         ("layers", vec!["model-load", "placement", "slice-mesh"]),
     ] {
-        let (scratch, code, result, _) = declined(command, |_, _| {});
+        let (scratch, code, result, progress) = declined(command, |_, _| {});
         assert_eq!(code, -8, "{command}");
         let r = parse(result.as_bytes(), Order::Insertion).unwrap();
         assert_eq!(r["code"].as_str(), Some("not-ported"));
@@ -227,11 +263,40 @@ fn info_and_layers_jobs_are_declined_too() {
                 "engine"
             ]
         );
+        assert_eq!(progress, declined_progress(&message_of(&result)));
         assert_eq!(
             scratch.files(),
-            ["job.json", "progress.ndjson", "result.json"]
+            fixture_files(&["progress.ndjson", "result.json"])
         );
     }
+}
+
+#[test]
+fn a_compatibility_condition_is_declined_in_the_presets_stage() {
+    // A process with a condition and no list of printers: Orca works the condition out.
+    let (scratch, code, result, progress) = declined("info", |_, dir| {
+        write_preset(
+            dir,
+            "process",
+            "process",
+            &text(&[("compatible_printers_condition", "nozzle_diameter[0]==0.4")]),
+        );
+    });
+    assert_eq!(code, -8, "{result}");
+    let mut missing = missing_of(&result);
+    orca_stl::sort(&mut missing);
+    assert_eq!(
+        missing,
+        ["info", "model-load", "placement", "preset-conditions"]
+    );
+    assert_eq!(
+        progress,
+        progress_text(&["job", "presets"], Some(&message_of(&result)))
+    );
+    assert_eq!(
+        scratch.files(),
+        fixture_files(&["progress.ndjson", "result.json"])
+    );
 }
 
 #[test]
@@ -245,4 +310,39 @@ fn a_job_is_checked_whole_before_it_is_declined() {
     assert_eq!(r["code"].as_str(), Some("job-invalid"));
     assert_eq!(r["message"].as_str(), Some("orient must be true or false"));
     assert!(r.get("missing").is_none());
+}
+
+#[test]
+fn the_presets_and_the_models_file_are_checked_before_the_decline() {
+    // Each is refused as the C++ refuses it, not declined: a preset file that is not there, an
+    // override Orca does not have, and a model that is not there.
+    let (scratch, code, result, progress) = declined("info", |_, dir| {
+        std::fs::remove_file(dir.path("presets/process.json")).unwrap();
+    });
+    let message = format!(
+        "presets.process: there is no file {}",
+        scratch.path("presets/process.json")
+    );
+    assert_eq!((code, message_of(&result)), (-3, message.clone()));
+    assert_eq!(progress, progress_text(&["job", "presets"], Some(&message)));
+
+    let (_scratch, code, result, _) = declined("info", |job, _| {
+        let mut overrides = Object::new(Order::Insertion);
+        overrides.insert("no_such_setting_here", "1");
+        job.insert("overrides", overrides);
+    });
+    assert_eq!(
+        (code, message_of(&result)),
+        (
+            -2,
+            "overrides: no_such_setting_here is not a setting of Orca 2.4.2".to_string()
+        )
+    );
+
+    let (scratch, code, result, progress) = declined("info", |_, dir| {
+        std::fs::remove_file(dir.path("model.stl")).unwrap();
+    });
+    let message = format!("the model {} does not exist", scratch.path("model.stl"));
+    assert_eq!((code, message_of(&result)), (-3, message.clone()));
+    assert_eq!(progress, declined_progress(&message));
 }

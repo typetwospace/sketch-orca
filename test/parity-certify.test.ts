@@ -1,12 +1,14 @@
 // parity certify (scripts/lib/parity/certify.ts, cmd-certify.ts): sketch-orca-rs's runs against the
 // goldens. The engine block is made alike (version, implementation); a result is compared as a JSON
 // value; an output classed R passes within the envelope of the engine's own variance and nowhere
-// else; a decline (not-ported, -8) passes for the front families alone, and only for a job the C++
-// got past reading; a family is certified when every run of every case passes; parity.json's flags
-// are raised and never lowered, and a certified family that fails is a regression; every corpus
-// job that reaches an uncertified family must be declined naming it; goldens count only when
-// parity neutral passed with the staged oracle and they were recorded with it. Hermetic: the runs
-// are written to a temporary folder.
+// else; a decline (not-ported, -8) passes no family, the front ones included, and is itself wrong
+// when the C++ run ended within what the program does itself (reading the job and the presets, and
+// the model's file check); a family is certified when every run of every case passes; parity.json's
+// flags are raised and never lowered, and a certified family that fails is a regression; every run
+// of a corpus job, example or refusal that reaches an uncertified family must be declined naming it,
+// unless its C++ run ended within what the program does; goldens count only when parity neutral passed with the
+// staged oracle and they were recorded with it. Hermetic: the runs are written to a temporary
+// folder.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
@@ -14,8 +16,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   compareCase,
+  DECLINE_HELD_KINDS,
   declineGaps,
   declineProblems,
+  endedWithinRust,
   familyVerdicts,
   FRONT_FAMILIES,
   isResult,
@@ -81,7 +85,16 @@ function result(fields: string, engine: string): string {
 
 const NOT_PORTED_FIELDS = '  "ok": false,\n  "code": "not-ported",\n  "message": "m",\n  "missing": [\n    "model-load"\n  ],\n  "exitCode": -8'
 const PROGRESS_JOB = '{"stage":"job","percent":1.0,"message":"reading the job"}\n'
-const PROGRESS_PAST = PROGRESS_JOB + '{"stage":"presets","percent":2.0,"message":"loading the presets"}\n{"stage":"failed","percent":2.0,"message":"x"}\n'
+const PROGRESS_PRESETS = PROGRESS_JOB + '{"stage":"presets","percent":3.0,"message":"reading the presets"}\n'
+const PROGRESS_MODEL = PROGRESS_PRESETS + '{"stage":"model","percent":8.0,"message":"reading the model"}\n'
+const FAILED = '{"stage":"failed","percent":8.0,"message":"x"}\n'
+/** A C++ run past what the program does: it failed while arranging. */
+const PROGRESS_PAST = PROGRESS_MODEL + '{"stage":"arrange","percent":10.0,"message":"arranging"}\n' + FAILED
+
+/** A failed result's fields with `code`. */
+function failedFields(code: string): string {
+  return `  "ok": false,\n  "code": "${code}",\n  "message": "x",\n  "exitCode": -2`
+}
 
 const NO_CLASS = () => undefined
 
@@ -167,29 +180,70 @@ describe('R outputs within the envelope', () => {
 describe('a decline', () => {
   const families = [family('version', ['v']), family('intake', ['c']), family('model-load', ['m'])]
 
-  function declined(o: { goldenProgress?: string; rustFiles?: Record<string, string>; code?: number; stderr?: string; families?: FamilyEntry[] }) {
+  function declined(o: { goldenProgress?: string | null; goldenCode?: string; rustFiles?: Record<string, string>; missing?: string[]; code?: number; stderr?: string; families?: FamilyEntry[] }) {
     const g = side('golden')
     const r = side('rust')
-    const cpp = keep(g, 'c', 0, { code: -3, files: { 'progress.ndjson': o.goldenProgress ?? PROGRESS_PAST, 'result.json': result('  "ok": false,\n  "code": "file-not-found",\n  "message": "x",\n  "exitCode": -3', CPP_ENGINE) } })
-    const rust = keep(r, 'c', 0, { code: o.code ?? -8, stderr: o.stderr ?? '', files: o.rustFiles ?? { 'progress.ndjson': PROGRESS_JOB, 'result.json': result(NOT_PORTED_FIELDS, RUST_ENGINE) } })
+    const goldenFiles: Record<string, string> = { 'result.json': result(failedFields(o.goldenCode ?? 'arrange-failed'), CPP_ENGINE) }
+    if (o.goldenProgress !== null) goldenFiles['progress.ndjson'] = o.goldenProgress ?? PROGRESS_PAST
+    const cpp = keep(g, 'c', 0, { code: -21, files: goldenFiles })
+    const fields = o.missing ? NOT_PORTED_FIELDS.replace('[\n    "model-load"\n  ]', JSON.stringify(o.missing)) : NOT_PORTED_FIELDS
+    const rust = keep(r, 'c', 0, { code: o.code ?? -8, stderr: o.stderr ?? '', files: o.rustFiles ?? { 'progress.ndjson': PROGRESS_MODEL + FAILED, 'result.json': result(fields, RUST_ENGINE) } })
     return { g, r, cpp, rust, problems: declineProblems({ caseId: 'c', golden: { side: g, run: cpp }, rust: { side: r, run: rust }, families: o.families ?? families }) }
   }
 
-  test('of a job the C++ got past reading counts as passing for a front family', () => {
+  test('that is right is information: it passes no family, a front family neither', () => {
     const d = declined({})
     expect(d.problems).toEqual([])
     const v = compareCase({ caseId: 'c', golden: { side: d.g, record: caseRecord('c', [d.cpp]) }, rust: { side: d.r, record: caseRecord('c', [d.rust]) }, masks: [], families, classOf: NO_CLASS, envelopeOf: NO_CLASS })
     expect(v.runs).toEqual([{ run: 0, passed: false, declined: true, problems: [] }])
     const verdicts = familyVerdicts(parityOf(families), new Map([['c', v]]))
-    expect(verdicts.find((f) => f.name === 'intake')).toMatchObject({ passed: true, declined: 1, certified: true })
+    expect(verdicts.find((f) => f.name === 'intake')).toMatchObject({ passed: false, declined: 1, certified: false })
+    expect(verdicts.find((f) => f.name === 'intake')!.problems).toEqual(['c/0: declined (not-ported)'])
+    // A family certified before that now has a declined run is a regression.
+    const before = parityOf([family('intake', ['c'], true)])
+    expect(raiseCertified(before, familyVerdicts(before, new Map([['c', v]]))).regressions).toEqual(['intake'])
   })
 
   test('the exit code -8 is seen as its low byte, 248, too', () => {
     expect(declined({ code: 248 }).problems).toEqual([])
   })
 
-  test('of a job the C++ refused while reading it does not', () => {
-    expect(declined({ goldenProgress: PROGRESS_JOB + '{"stage":"failed","percent":1.0,"message":"x"}\n' }).problems.join()).toContain('should have been refused')
+  test('is wrong when the C++ run ended within what the program does itself', () => {
+    const within = 'ended within what sketch-orca-rs does itself'
+    // Refused while reading the job, in the presets, at the model's file, or with no progress at all.
+    expect(declined({ goldenProgress: PROGRESS_JOB + FAILED, goldenCode: 'job-invalid' }).problems.join()).toContain(within)
+    expect(declined({ goldenProgress: PROGRESS_PRESETS + FAILED, goldenCode: 'setting-invalid' }).problems.join()).toContain(within)
+    expect(declined({ goldenProgress: PROGRESS_MODEL + FAILED, goldenCode: 'file-not-found' }).problems.join()).toContain(within)
+    expect(declined({ goldenProgress: null, goldenCode: 'invalid-params' }).problems.join()).toContain(within)
+    // A crash at the stage model comes before its line: the C++ run shows the presets alone.
+    expect(declined({ goldenProgress: PROGRESS_PRESETS, goldenCode: 'internal-error' }).problems.join()).toContain(within)
+  })
+
+  test('is right when the C++ run went past it: the model read, or a stage after it', () => {
+    expect(declined({ goldenProgress: PROGRESS_MODEL + FAILED, goldenCode: 'model-unreadable' }).problems).toEqual([])
+    expect(declined({ goldenProgress: PROGRESS_MODEL + FAILED, goldenCode: 'config-invalid' }).problems).toEqual([])
+    // A crash in a later stage, before its line.
+    expect(declined({ goldenProgress: PROGRESS_MODEL, goldenCode: 'internal-error' }).problems).toEqual([])
+    expect(declined({ goldenProgress: PROGRESS_PAST }).problems).toEqual([])
+  })
+
+  test('naming preset-conditions is right once the C++ run reached the presets', () => {
+    const conditions = ['preset-conditions', 'model-load']
+    const fams = [...families, family('preset-conditions', ['c'])]
+    expect(declined({ missing: conditions, families: fams, goldenProgress: PROGRESS_PRESETS + FAILED, goldenCode: 'process-not-compatible' }).problems).toEqual([])
+    expect(declined({ missing: conditions, families: fams, goldenProgress: PROGRESS_PAST }).problems).toEqual([])
+    expect(declined({ missing: conditions, families: fams, goldenProgress: PROGRESS_JOB + FAILED, goldenCode: 'job-invalid' }).problems.join()).toContain('did not reach')
+  })
+
+  test('where a C++ run ended: within the job and the presets, or at the model with file-not-found', () => {
+    expect(endedWithinRust([], undefined)).toBe(true)
+    expect(endedWithinRust(['job', 'failed'], 'job-invalid')).toBe(true)
+    expect(endedWithinRust(['job', 'presets', 'failed'], 'config-invalid')).toBe(true)
+    expect(endedWithinRust(['job', 'presets', 'model', 'failed'], 'file-not-found')).toBe(true)
+    expect(endedWithinRust(['job', 'presets', 'model', 'failed'], 'model-unreadable')).toBe(false)
+    expect(endedWithinRust(['job', 'presets', 'model'], 'internal-error')).toBe(false)
+    expect(endedWithinRust(['job', 'presets', 'model', 'arrange', 'failed'], 'file-not-found')).toBe(false)
+    expect(endedWithinRust(['job', 'presets', 'model', 'arrange', 'done'], undefined)).toBe(false)
   })
 
   test('that wrote what the C++ did not, wrote to a stream, or misses a certified or front family does not', () => {
@@ -203,17 +257,17 @@ describe('a decline', () => {
     expect(declined({ code: -2 }).problems.join()).toContain('not -8')
   })
 
-  test('never passes a family after the front end', () => {
+  test('never passes a family after the front end either', () => {
     const d = declined({})
     const v: CaseVerdict = { id: 'm', runs: [{ run: 0, passed: false, declined: true, problems: [] }] }
     const verdicts = familyVerdicts(parityOf(families), new Map([['m', v]]))
-    expect(verdicts.find((f) => f.name === 'model-load')).toMatchObject({ passed: false, certified: false })
+    expect(verdicts.find((f) => f.name === 'model-load')).toMatchObject({ passed: false, declined: 1, certified: false })
     expect(d.problems).toEqual([])
     expect(FRONT_FAMILIES).toEqual(['version', 'config-def', 'intake'])
   })
 
   test('progress stages are read line by line', () => {
-    expect(progressStages(Buffer.from(PROGRESS_PAST.replace(/\n/g, '\r\n')))).toEqual(['job', 'presets', 'failed'])
+    expect(progressStages(Buffer.from(PROGRESS_PAST.replace(/\n/g, '\r\n')))).toEqual(['job', 'presets', 'model', 'arrange', 'failed'])
     expect(progressStages(undefined)).toEqual([])
   })
 })
@@ -277,27 +331,46 @@ describe('the program', () => {
   })
 })
 
-describe('the decline against the corpus jobs', () => {
+describe('the decline against the corpus cases', () => {
   const families = [family('intake', []), family('model-load', ['m'], true), family('supports', ['m']), family('raft', ['m'])]
   const declining = (missing: string[], code = -8) => {
     const r = side('rust')
     const fields = NOT_PORTED_FIELDS.replace('[\n    "model-load"\n  ]', JSON.stringify(missing))
-    return { side: r, record: caseRecord('m', [keep(r, 'm', 0, { code, files: { 'progress.ndjson': PROGRESS_JOB, 'result.json': result(fields, RUST_ENGINE) } })]) }
+    return { side: r, record: caseRecord('m', [keep(r, 'm', 0, { code, files: { 'progress.ndjson': PROGRESS_MODEL + FAILED, 'result.json': result(fields, RUST_ENGINE) } })]) }
   }
+  /** The C++ run of case m, its progress `progress`, its result `code`. */
+  const golden = (progress: string, code: string) => {
+    const g = side('golden')
+    return { side: g, record: caseRecord('m', [keep(g, 'm', 0, { code: -2, files: { 'progress.ndjson': progress, 'result.json': result(failedFields(code), CPP_ENGINE) } })]) }
+  }
+  const past = () => golden(PROGRESS_PAST, 'arrange-failed')
 
-  test('every uncertified family a job reaches leads to not-ported, naming it', () => {
-    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports', 'raft'], families, rust: declining(['supports', 'raft']) })).toEqual([])
-    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports', 'raft'], families, rust: declining(['supports']) })).toEqual(['m/0: its decline does not name raft, which the job reaches and parity.json does not certify'])
+  test('every uncertified family a case reaches leads to not-ported, naming it', () => {
+    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports', 'raft'], families, rust: declining(['supports', 'raft']), golden: past() })).toEqual([])
+    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports', 'raft'], families, rust: declining(['supports']), golden: past() })).toEqual(['m/0: its decline does not name raft, which the job reaches and parity.json does not certify'])
     // The low byte of -8 is a decline too.
-    expect(declineGaps({ caseId: 'm', reaches: ['supports'], families, rust: declining(['supports'], 248) })).toEqual([])
+    expect(declineGaps({ caseId: 'm', reaches: ['supports'], families, rust: declining(['supports'], 248), golden: past() })).toEqual([])
   })
 
-  test('a run that is not declined, or not run, is a gap; a job of certified families alone is not held', () => {
+  test('a run that is not declined, or not run, is a gap; a case of certified families alone is not held', () => {
     const r = side('rust')
     const ran = { side: r, record: caseRecord('m', [keep(r, 'm', 0, { code: 0, files: { 'result.json': result('  "ok": true', RUST_ENGINE) } })]) }
-    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports'], families, rust: ran }).join()).toContain('was not declined')
-    expect(declineGaps({ caseId: 'm', reaches: ['supports'], families, rust: { side: r, record: undefined } })).toEqual(['m: the Rust program did not run it'])
-    expect(declineGaps({ caseId: 'm', reaches: ['intake', 'model-load'], families, rust: ran })).toEqual([])
+    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports'], families, rust: ran, golden: past() }).join()).toContain('was not declined')
+    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports'], families, rust: ran, golden: { side: side('golden'), record: undefined } }).join()).toContain('was not declined')
+    expect(declineGaps({ caseId: 'm', reaches: ['supports'], families, rust: { side: r, record: undefined }, golden: past() })).toEqual(['m: the Rust program did not run it'])
+    expect(declineGaps({ caseId: 'm', reaches: ['intake', 'model-load'], families, rust: ran, golden: past() })).toEqual([])
+  })
+
+  test('a run that is not declined is no gap when its C++ run ended within what the program does', () => {
+    const r = side('rust')
+    const refused = { side: r, record: caseRecord('m', [keep(r, 'm', 0, { code: -18, files: { 'progress.ndjson': PROGRESS_PRESETS + FAILED, 'result.json': result(failedFields('config-invalid'), RUST_ENGINE) } })]) }
+    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports'], families, rust: refused, golden: golden(PROGRESS_PRESETS + FAILED, 'config-invalid') })).toEqual([])
+    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports'], families, rust: refused, golden: golden(PROGRESS_MODEL + FAILED, 'file-not-found') })).toEqual([])
+    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports'], families, rust: refused, golden: golden(PROGRESS_MODEL + FAILED, 'model-unreadable') }).join()).toContain('was not declined')
+  })
+
+  test('is held for jobs, examples and refusals, whose families are worked out for their one job, and not for smoke cases', () => {
+    expect([...DECLINE_HELD_KINDS]).toEqual(['job', 'example', 'refusal'])
   })
 })
 

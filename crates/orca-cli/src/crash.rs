@@ -25,9 +25,11 @@
 //!   reaches that stage, `<stage>:abort` with an abort, as in the C++ program, and `<stage>:panic`
 //!   (this program only) with a panic. The access violation is raised with `RaiseException`, so
 //!   its place is in the system's KERNELBASE.dll (the crash-location mask of parity/masks.json
-//!   covers any place). [`test_point`] is the trigger alone, for a point that is not a stage:
-//!   `decline`, just before sketch-orca-rs writes a decline (`result.rs`), while the result is
-//!   armed, since this program reaches no stage past `job` yet.
+//!   covers any place). This program reaches the stages `job`, `presets` and `model` (`run.rs`),
+//!   so a trigger at one of them crashes as the C++ program does there. [`test_point`] is the
+//!   trigger alone, for a point that is not a stage: `decline`, just before sketch-orca-rs
+//!   writes a decline (`run.rs`), while the result is armed, since it reaches no stage past
+//!   `model`.
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};

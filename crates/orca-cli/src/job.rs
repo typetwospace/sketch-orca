@@ -15,8 +15,10 @@
 //! optional field given as null is the same as one left out. The text is read as `nlohmann`'s
 //! `ordered_json` reads it (`orca-json`, [`Order::Insertion`]).
 //!
-//! The job's fields past its command are kept for the steps that read them; until those are
-//! ported, sketch-orca-rs declines every job that reaches them (`decline.rs`).
+//! The job's fields past its command are kept for the steps that read them: the resources and
+//! work folders, the presets, the overrides and the model's path are read by the presets stage
+//! and the model's file check (`run.rs`, `presets.rs`); until the steps after them are ported,
+//! sketch-orca-rs declines every job that reaches them (`decline.rs`).
 
 // The steps that read most of these fields are not ported yet (decline.rs). The comparisons are
 // cli/job.cpp's as it writes them (`!(h > 0.)`, `e < 1 || e > 1e6`), which also say what a NaN

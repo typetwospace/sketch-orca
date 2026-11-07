@@ -2,7 +2,7 @@
   "format": "sketch-orca-parity/1",
   "corpus": {
     "file": "parity/corpus.json",
-    "sha256": "680f6fb14787fe4ad5d0854c3c4266a57703d3d8e95fb1f17f301c7331a9b741"
+    "sha256": "cb53927aa5e41b39aea5542a8ca1b8adc7c533c42e71ba7476111bb383f1ef0a"
   },
   "threads": [
     1,
@@ -39,11 +39,9 @@
     {
       "name": "intake",
       "step": "front end",
-      "what": "reading and checking a job, and the refusals",
+      "what": "reading and checking a job, its presets and its model's file, and the refusals",
       "cases": [
         "smoke-file-collisions",
-        "smoke-crash-result",
-        "smoke-refusals",
         "example-filament-change-without-extruder",
         "example-no-filament",
         "example-preset-key-as-override",
@@ -56,21 +54,26 @@
         "refusal-unknown-capitalised-setting",
         "refusal-preset-file-key",
         "refusal-renamed-key-dropped-value",
-        "refusal-pause-below-first-layer",
-        "refusal-too-big-for-the-bed",
         "refusal-two-at-one-print-z",
-        "refusal-flat-model",
-        "refusal-lone-triangle",
         "refusal-profile-not-at-zero",
-        "refusal-layers-above-the-nozzle",
-        "refusal-gcode-folder-unmakeable",
         "refusal-drive-rooted-path"
       ],
       "classes": [
-        "E",
         "B"
       ],
       "certified": true
+    },
+    {
+      "name": "preset-conditions",
+      "step": "presets",
+      "what": "a preset's compatibility condition (compatible_printers_condition, compatible_prints_condition), worked out for the job's printer and process",
+      "cases": [
+        "family-preset-conditions"
+      ],
+      "classes": [
+        "B"
+      ],
+      "certified": false
     },
     {
       "name": "model-load",
@@ -91,6 +94,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-info",
         "mesh-20mm-cube-layers",
         "mesh-20mm-cube-slice",
@@ -215,7 +219,15 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "family-preset-conditions",
+        "refusal-pause-below-first-layer",
+        "refusal-too-big-for-the-bed",
+        "refusal-flat-model",
+        "refusal-lone-triangle",
+        "refusal-layers-above-the-nozzle",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -243,6 +255,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-info",
         "mesh-20mm-cube-layers",
         "mesh-20mm-cube-slice",
@@ -367,7 +380,13 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "family-preset-conditions",
+        "refusal-pause-below-first-layer",
+        "refusal-too-big-for-the-bed",
+        "refusal-layers-above-the-nozzle",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -409,7 +428,8 @@
         "mesh-20mmbox-lf-info",
         "mesh-20mmbox-nonstandard-info",
         "mesh-20mmbox-unicode-info",
-        "mesh-buchse-3mf-info"
+        "mesh-buchse-3mf-info",
+        "family-preset-conditions"
       ],
       "classes": [
         "B"
@@ -434,6 +454,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-layers",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-layers",
@@ -530,7 +551,11 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-layers-above-the-nozzle",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -545,7 +570,8 @@
       "what": "walls, classic generator",
       "cases": [
         "sketch-slice-timelapse-tower",
-        "family-perimeters-classic"
+        "family-perimeters-classic",
+        "family-wipe-tower-clumping"
       ],
       "classes": [
         "E",
@@ -569,6 +595,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -633,7 +660,9 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -658,6 +687,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -724,7 +754,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -749,6 +782,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -815,7 +849,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -1074,6 +1111,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -1115,7 +1153,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -1245,6 +1286,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -1311,7 +1353,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -1393,7 +1438,8 @@
         "smoke-filaments",
         "smoke-flush-volumes",
         "smoke-prime-tower",
-        "sketch-slice-timelapse-tower"
+        "sketch-slice-timelapse-tower",
+        "family-wipe-tower-clumping"
       ],
       "classes": [
         "E",
@@ -1417,6 +1463,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -1483,7 +1530,9 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -1508,6 +1557,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -1574,7 +1624,9 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -1599,6 +1651,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -1665,7 +1718,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -1690,6 +1746,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -1756,7 +1813,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -1794,6 +1854,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -1860,7 +1921,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -1899,6 +1963,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -1965,7 +2030,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -1990,6 +2058,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -2056,7 +2125,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -2081,6 +2153,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -2147,7 +2220,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -2172,6 +2248,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -2238,7 +2315,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",
@@ -2263,6 +2343,7 @@
         "smoke-flush-volumes",
         "smoke-prime-tower",
         "smoke-imported-settings",
+        "smoke-crash-result",
         "mesh-20mm-cube-slice",
         "mesh-2x20x10-slice",
         "mesh-a-slice",
@@ -2329,7 +2410,10 @@
         "family-raft",
         "family-ironing",
         "family-fuzzy-skin",
-        "family-contouring"
+        "family-contouring",
+        "family-wipe-tower-clumping",
+        "refusal-pause-below-first-layer",
+        "refusal-gcode-folder-unmakeable"
       ],
       "classes": [
         "R",

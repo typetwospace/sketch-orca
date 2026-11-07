@@ -1,6 +1,6 @@
 {
   "format": "sketch-orca-parity-corpus/1",
-  "smokeVersion": 9,
+  "smokeVersion": 11,
   "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
   "stl": "binary STL as Sketch writes model.stl: 80-byte header \"Sketch\" padded with zero bytes, u32 triangle count, per triangle the unit normal of (b-a)x(c-a) computed in double from the corners (zero when degenerate), corners a, b, c, all little-endian float32, then u16 0; an OBJ face of n corners is the fan (1,k,k+1)",
   "meshes": [
@@ -292,7 +292,12 @@
     {
       "name": "intake",
       "step": "front end",
-      "what": "reading and checking a job, and the refusals"
+      "what": "reading and checking a job, its presets and its model's file, and the refusals"
+    },
+    {
+      "name": "preset-conditions",
+      "step": "presets",
+      "what": "a preset's compatibility condition (compatible_printers_condition, compatible_prints_condition), worked out for the job's printer and process"
     },
     {
       "name": "model-load",
@@ -920,18 +925,26 @@
       "kind": "smoke",
       "title": "a crash in Orca's code still writes the result: internal-error, exit code 255, no outputs",
       "families": [
-        "intake"
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
       ],
       "smoke": "crash-result"
-    },
-    {
-      "id": "smoke-refusals",
-      "kind": "smoke",
-      "title": "refused jobs get their named error, exit code and object, and write no G-code",
-      "families": [
-        "intake"
-      ],
-      "smoke": "refusals"
     },
     {
       "id": "mesh-20mm-cube-info",
@@ -5164,6 +5177,78 @@
       }
     },
     {
+      "id": "family-wipe-tower-clumping",
+      "kind": "job",
+      "title": "the 20 mm cube on the H2D with one filament and clumping detection, which puts the prime tower on",
+      "families": [
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-classic",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "wipe-tower",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "slice",
+        "presets": "h2d",
+        "model": "model.stl",
+        "overrides": {
+          "enable_wrapping_detection": "1"
+        },
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": true,
+        "bambu3mf": false,
+        "stats": true,
+        "filaments": 1
+      }
+    },
+    {
+      "id": "family-preset-conditions",
+      "kind": "job",
+      "title": "the 20 mm cube's info with a process whose compatibility with the printer is a condition (compatible_printers_condition, no list)",
+      "families": [
+        "preset-conditions",
+        "model-load",
+        "placement",
+        "info"
+      ],
+      "mesh": "20mm-cube",
+      "job": {
+        "command": "info",
+        "presets": "generic",
+        "model": "model.stl",
+        "overrides": {},
+        "objects": [],
+        "customGcodes": [],
+        "arrange": true,
+        "orient": false,
+        "gcode": false,
+        "bambu3mf": false,
+        "stats": true,
+        "processChanges": {
+          "compatible_printers": [],
+          "compatible_printers_condition": "nozzle_diameter[0]==0.4"
+        }
+      }
+    },
+    {
       "id": "example-filament-change-without-extruder",
       "kind": "example",
       "title": "protocol/examples/invalid/job-filament-change-without-extruder.json",
@@ -5276,7 +5361,22 @@
       "kind": "refusal",
       "title": "the smoke refusal pause-below-first-layer (custom-gcode-invalid)",
       "families": [
-        "intake"
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
       ],
       "refusal": "pause-below-first-layer"
     },
@@ -5285,7 +5385,8 @@
       "kind": "refusal",
       "title": "the smoke refusal too-big-for-the-bed (arrange-failed)",
       "families": [
-        "intake"
+        "model-load",
+        "placement"
       ],
       "refusal": "too-big-for-the-bed"
     },
@@ -5303,7 +5404,7 @@
       "kind": "refusal",
       "title": "the smoke refusal flat-model (model-unreadable)",
       "families": [
-        "intake"
+        "model-load"
       ],
       "refusal": "flat-model"
     },
@@ -5312,7 +5413,7 @@
       "kind": "refusal",
       "title": "the smoke refusal lone-triangle (model-unreadable)",
       "families": [
-        "intake"
+        "model-load"
       ],
       "refusal": "lone-triangle"
     },
@@ -5330,7 +5431,9 @@
       "kind": "refusal",
       "title": "the smoke refusal layers-above-the-nozzle (layer-profile-invalid)",
       "families": [
-        "intake"
+        "model-load",
+        "placement",
+        "slice-mesh"
       ],
       "refusal": "layers-above-the-nozzle"
     },
@@ -5339,7 +5442,24 @@
       "kind": "refusal",
       "title": "the smoke refusal gcode-folder-unmakeable (output-failed)",
       "families": [
-        "intake"
+        "model-load",
+        "placement",
+        "slice-mesh",
+        "perimeters-arachne",
+        "infill-monotonic",
+        "infill-monotonicline",
+        "infill-crosshatch",
+        "infill-concentricinternal",
+        "gcode-export",
+        "gcode-processor",
+        "step-estimate-curled-extrusions",
+        "step-prepare-infill",
+        "step-simplify-path",
+        "step-detect-overhangs-for-lift",
+        "step-simplify-wall",
+        "step-simplify-infill",
+        "step-skirt-brim",
+        "step-conflict-check"
       ],
       "refusal": "gcode-folder-unmakeable"
     },

@@ -4,9 +4,11 @@
 // compares every output with the goldens (certify.ts), and raises the certified flag in
 // parity/parity.json of each family whose every run passes; it never lowers one. It writes
 // <work>/parity/certify.json. --check runs the same into <work>/parity/runs/certify-check, writes
-// <work>/parity/certify-check.json and no parity.json, and fails on a regression. Exit 1 when a
-// family parity.json certifies does not pass, or when a run of a corpus job that reaches a family
-// parity.json does not certify is not declined naming it (certify.ts declineGaps). It needs
+// <work>/parity/certify-check.json and no parity.json, and fails on a regression. A run the program
+// declines passes in no family. Exit 1 when a family parity.json certifies does not pass, or when a
+// run of a corpus job, example or refusal (DECLINE_HELD_KINDS) that reaches a family parity.json
+// does not certify is not declined naming it, its C++ run having gone past what the program does
+// itself (certify.ts declineGaps). It needs
 // parity corpus, and parity oracle, neutral and record run for this checkout's cli/ and patches
 // (certify.ts oracleChainProblems).
 
@@ -23,6 +25,7 @@ import {
   certifyFiles,
   classIndex,
   compareCase,
+  DECLINE_HELD_KINDS,
   declineGaps,
   envelopeIndex,
   familyVerdicts,
@@ -137,10 +140,18 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
   }
   const families = familyVerdicts(parity, verdicts)
   const { parity: raisedParity, raised, regressions } = raiseCertified(parity, families)
-  // The decline against the corpus's jobs: each that reaches an uncertified family is declined, naming it.
-  const declineGapList = doc.cases
-    .filter((c) => c.kind === 'job')
-    .flatMap((c) => declineGaps({ caseId: c.id, reaches: c.families, families: parity.families, rust: { side: rust, record: records.find((x) => x.id === c.id) } }))
+  // The decline against the corpus: each run of a case that reaches an uncertified family is
+  // declined, naming it (smoke cases aside: DECLINE_HELD_KINDS).
+  const held = doc.cases.filter((c) => (DECLINE_HELD_KINDS as readonly string[]).includes(c.kind))
+  const declineGapList = held.flatMap((c) =>
+    declineGaps({
+      caseId: c.id,
+      reaches: c.families,
+      families: parity.families,
+      rust: { side: rust, record: records.find((x) => x.id === c.id) },
+      golden: { side: golden, record: index.cases.find((x) => x.id === c.id) },
+    }),
+  )
   const report: CertifyReport = {
     format: CERTIFY_FORMAT,
     createdAt: new Date().toISOString(),
@@ -154,7 +165,7 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
   }
   writeJsonAtomic(files.report, report)
   for (const f of families) {
-    const how = f.passed ? (f.declined > 0 ? `passes (${f.declined} of ${f.runs} runs declined past intake)` : `passes (${f.runs} runs)`) : `does not pass: ${f.problems.slice(0, 2).join(' | ')}`
+    const how = f.passed ? `passes (${f.runs} runs)` : `does not pass${f.declined > 0 ? ` (${f.declined} of ${f.runs} runs declined)` : ''}: ${f.problems.slice(0, 2).join(' | ')}`
     say(`${f.certified ? 'certified' : '         '} ${f.name}: ${how}`)
   }
   if (!check && raised.length > 0) {
@@ -162,9 +173,8 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
     say(`raised in ${pf}: ${raised.join(', ')}`)
   }
   say(`written: ${files.report}`)
-  const jobs = doc.cases.filter((c) => c.kind === 'job').length
-  if (declineGapList.length === 0) say(`the decline: every run of the ${jobs} corpus jobs that reach an uncertified family is declined, naming each`)
-  else say(`DECLINE GAP: ${declineGapList.length} runs of corpus jobs are let through for a family that is not certified: ${declineGapList.slice(0, 5).join(' | ')}`)
+  if (declineGapList.length === 0) say(`the decline: every run of the ${held.length} corpus jobs, examples and refusals that reaches an uncertified family is declined, naming each`)
+  else say(`DECLINE GAP: ${declineGapList.length} runs of corpus jobs, examples and refusals are let through for a family that is not certified: ${declineGapList.slice(0, 5).join(' | ')}`)
   if (regressions.length > 0) say(`REGRESSION: parity.json certifies ${regressions.join(', ')}, which ${regressions.length === 1 ? 'does' : 'do'} not pass now`)
   return regressions.length > 0 || declineGapList.length > 0 ? 1 : 0
 }

@@ -27,8 +27,10 @@ import {
   REFUSALS,
   REFUSE,
   RUN_INPUTS,
+  RUST_OWN_REFUSALS,
   RUST_SMOKE_CASES,
   SMOKE_CASES,
+  endedWithinRust,
   lowByte,
   withoutImplementation,
   SMOKE_PRESETS,
@@ -605,8 +607,10 @@ describe('jobs and the engine environment', () => {
     // per-variant nozzle volumes and a volume past an int that Orca's own check takes
     // (flush-volumes), a corridor bed and a place set past the bed (prime-tower), and file-collisions'
     // Windows names for a file (a trailing dot or space, \\?\, ::$DATA, a named stream); version 10
-    // the Rust program's cases (RUST_SMOKE_CASES), which stage runs.
-    expect(SMOKE_VERSION).toBe(10)
+    // the Rust program's cases (RUST_SMOKE_CASES), which stage runs; version 11 rs-intake's
+    // refusals of the presets and the model's file, which sketch-orca-rs makes itself
+    // (RUST_OWN_REFUSALS), and its decline rule (endedWithinRust).
+    expect(SMOKE_VERSION).toBe(11)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
     expect(CAPITAL_KEY.key).not.toBe(CAPITAL_KEY.key.toLowerCase())
@@ -1146,6 +1150,16 @@ describe("the Rust program's cases", () => {
     expect(RUST_SMOKE_CASES.map((c) => c.id)).toEqual(['rs-version', 'rs-config-def', 'rs-intake', 'rs-decline'])
     for (const c of RUST_SMOKE_CASES) expect(SMOKE_CASES.some((s) => s.id === c.id)).toBe(false)
     expect(SMOKE_CASES.length).toBe(19)
+  })
+
+  test("its own refusals are refusals of the smoke run, refused past reading the job, in the presets or at the model's file", () => {
+    for (const id of RUST_OWN_REFUSALS) expect(REFUSALS.find((r) => r.id === id)?.code).toBeDefined()
+    expect(RUST_OWN_REFUSALS.map((id) => REFUSALS.find((r) => r.id === id)!.code)).toEqual(['file-not-found', 'setting-invalid', 'setting-invalid', 'setting-invalid'])
+    // A decline of a job the C++ refused within those steps is wrong; past them it is not.
+    expect(endedWithinRust(['job', 'presets', 'failed'], 'setting-invalid')).toBe(true)
+    expect(endedWithinRust(['job', 'presets', 'model', 'failed'], 'file-not-found')).toBe(true)
+    expect(endedWithinRust(['job', 'presets', 'model', 'failed'], 'model-unreadable')).toBe(false)
+    expect(endedWithinRust(['job', 'presets', 'model', 'arrange', 'failed'], 'arrange-failed')).toBe(false)
   })
 
   test('an exit code is compared by its low byte, as Bun and Node report -8', () => {

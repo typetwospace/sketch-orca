@@ -17,18 +17,23 @@
 //! exit codes. `version` and `config-def` answer as the C++ program does (`version` adds
 //! `implementation: "rust"`). `run` checks its command line and reads and checks the job as the
 //! C++ does, writing the same result and progress file for a job it refuses (`result.rs`,
-//! `job.rs`); a valid job it declines, `not-ported` with exit -8, while what the job needs is not
-//! ported and certified (`decline.rs`). A crash or a panic still writes the result
-//! (`crash.rs`).
+//! `job.rs`); then it does the job's work as far as it is ported (`run.rs`): the resources and
+//! work folders, the presets stage (`presets.rs`, on Orca's configuration in `config.rs`) and the
+//! model file's check, with the C++ failures and warnings. A valid job that gets past them it
+//! declines, `not-ported` with exit -8, while what the job needs is not ported and certified
+//! (`decline.rs`). A crash or a panic still writes the result (`crash.rs`).
 
 mod common;
+mod config;
 mod config_def;
 mod crash;
 mod decline;
 mod files;
 mod job;
 mod paths;
+mod presets;
 mod result;
+mod run;
 mod version;
 
 use std::collections::BTreeMap;

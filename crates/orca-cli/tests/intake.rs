@@ -10,18 +10,19 @@
 
 //! `sketch-orca-rs run` on invalid jobs, against the C++ program's results
 //! (parity/goldens/front/intake/): the invalid examples of protocol/examples/invalid, moved into a
-//! folder as the parity corpus moves them, and the smoke refusals the C++ refuses while reading
-//! the job get the same result, byte for byte (the engine block apart: this program's version and
-//! `implementation`), the same exit code and the same progress file. The run's files are kept
-//! apart as the C++ keeps them: a result that would replace a file of the run is not written, a
-//! progress file that would is refused, and a job whose outputs would replace an input is
-//! refused; a command line it does not take still gets its result.
+//! folder as the parity corpus moves them, the smoke refusals the C++ refuses while reading the
+//! job, and those it refuses in the presets stage (an override Orca does not have) or at the
+//! model's file (a model that is not there) get the same result, byte for byte (the engine block
+//! apart: this program's version and `implementation`), the same exit code and the same progress
+//! file. The run's files are kept apart as the C++ keeps them: a result that would replace a file
+//! of the run is not written, a progress file that would is refused, and a job whose outputs would
+//! replace an input is refused; a command line it does not take still gets its result.
 
 mod common;
 
 use common::{
-    Scratch, as_cpp_result, failed_at_intake_progress, program, repo, stream_text, valid_job,
-    write_job,
+    Scratch, as_cpp_result, failed_at_intake_progress, fixture_files, program, progress_text, repo,
+    stream_text, valid_job, write_fixtures, write_job,
 };
 use orca_json::{Object, Order, Value, parse};
 
@@ -188,6 +189,78 @@ fn the_refusals_of_the_job_itself_get_the_cpp_programs_result() {
         change(&mut job, &scratch);
         let path = write_job(&scratch, &job);
         check_against_golden(id, &scratch, &path);
+    }
+}
+
+#[test]
+fn the_refusals_of_the_presets_stage_and_the_models_file_get_the_cpp_programs_result() {
+    // smoke.ts REFUSALS: the cube's overrides (cubeOverrides), then the one refused, on presets
+    // that load (common::write_fixtures; the goldens' came from the generic set, and neither
+    // gives a warning).
+    const CUBE: [(&str, &str); 7] = [
+        ("brim_type", "no_brim"),
+        ("skirt_loops", "0"),
+        ("enable_support", "0"),
+        ("enable_arc_fitting", "0"),
+        ("precise_z_height", "0"),
+        ("layer_height", "0.2"),
+        ("initial_layer_print_height", "0.25"),
+    ];
+    let presets_stage: &[&str] = &["job", "presets"];
+    let model_stage: &[&str] = &["job", "presets", "model"];
+    for (id, refused, stages) in [
+        (
+            "refusal-unknown-setting",
+            Some(("sketch_smoke_no_such_setting", "1")),
+            presets_stage,
+        ),
+        (
+            "refusal-unknown-capitalised-setting",
+            Some(("Layer_Height", "0.2")),
+            presets_stage,
+        ),
+        (
+            "refusal-renamed-key-dropped-value",
+            Some(("top_one_wall_type", "none")),
+            presets_stage,
+        ),
+        ("refusal-missing-model", None, model_stage),
+    ] {
+        let scratch = Scratch::new("intake", id);
+        write_fixtures(&scratch);
+        let mut job = valid_job(&scratch, "slice");
+        let mut overrides = Object::new(Order::Insertion);
+        for (k, v) in CUBE.iter().chain(refused.iter()) {
+            overrides.insert(*k, *v);
+        }
+        job.insert("overrides", overrides);
+        if refused.is_none() {
+            let mut model = Object::new(Order::Insertion);
+            model.insert("path", scratch.path("missing.stl"));
+            job.insert("model", model);
+        }
+        let path = write_job(&scratch, &job);
+        // The golden names the case's folder <case>, as JSON text.
+        let folder = Value::from(scratch.0.to_string_lossy().into_owned()).dump(None);
+        let want = golden(id).replace("<case>", &folder[1..folder.len() - 1]);
+        let w = parse(want.as_bytes(), Order::Insertion).unwrap();
+        let (code, result, progress) = run(&scratch, &path);
+        assert_eq!(as_cpp_result(&result), want, "{id}");
+        assert_eq!(
+            i64::from(code),
+            w["exitCode"].as_f64().unwrap() as i64,
+            "{id}"
+        );
+        assert_eq!(
+            progress,
+            progress_text(stages, Some(w["message"].as_str().unwrap())),
+            "{id}"
+        );
+        assert_eq!(
+            scratch.files(),
+            fixture_files(&["progress.ndjson", "result.json"]),
+            "{id}"
+        );
     }
 }
 
