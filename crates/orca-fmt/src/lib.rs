@@ -23,10 +23,11 @@
 //! - [`istream`]: microsoft/STL's `std::istringstream >> double` and `>> int` (`num_get`), which
 //!   Orca's configuration options read their values with; not yet replayed against the runtime
 //!   (`parity/HAZARDS.md`).
-//! - [`scanf`]: the UCRT's `fscanf` and `sscanf` for the formats admesh's ASCII STL reader passes;
-//!   empty until the o2-mesh task fills it (2026-11-07).
+//! - [`scanf`]: the UCRT's `fscanf` and `sscanf` for the formats admesh's ASCII STL reader passes,
+//!   written from the C standard and black-box tests of the UCRT (`tests/scanf.rs`; o2-mesh,
+//!   2026-11-07).
 //! - [`stdio`]: the UCRT's `FILE` streams (`fopen`, `fread`, `fgets`, `getc`, `fseek` and the
-//!   rest) as the model readers use them; empty until the o2-mesh task fills it.
+//!   rest) as the model readers use them, with the text mode's line ends, and C's `stdout`.
 //!
 //! The modules that carry the STL's code say what they carry, and from where, in their `Carries`
 //! blocks.
