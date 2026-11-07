@@ -105,8 +105,9 @@ system must make hard links). A record that cannot be read is never taken over, 
 
 Publishing is outward-facing, so the maintainer approves each engine release. Before it: a leak
 scan of every commit since the last release (no local paths, account names, keys or session links,
-and every author `kevin-t2 <349066423+kevin-t2@users.noreply.github.com>`), and a bug hunt over the
-changes. Then, with `gh` signed in as `kevin-t2`:
+and every author the maintainer account `kevin-t2` with its GitHub no-reply address, the one
+`git config user.email` gives here), and a bug hunt over the changes. Then, with `gh` signed in as
+`kevin-t2`:
 
 ```
 bun run engine release                # check .. stage and source, in the work folder
