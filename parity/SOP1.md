@@ -226,7 +226,7 @@ records below, END.
 | `stl.sop1` | O1 | SORT, VALS, HASH, UMAP, USET, RNGS, SSEQ, SHUF |
 | `tbb.sop1` | O1 | TBBA, TBBF, TBBR, TBBO |
 | `configdef.json` | O1 | not SOP1: `print_config_def` with every field of each option, the preset sections' keys, and `handle_legacy` on the legacy and defined keys (`configdef.cpp` says what it holds) |
-| `geom.sop1` | o2-geom | EVEC, EMAT, ETRF, EROT, ESVD (`orca-eigen`) |
+| `geom.sop1` | o2-geom | EVEC, EMAT, ETRF, EROT, ESVD (`orca-eigen`); CCLP, COFF, CARE, CCLN, CSIM, CMNK, CINT (`orca-geom`) |
 | `qhull.sop1` | o2-mesh | none yet: a stub (`orca-qhull`) |
 | `mesh.sop1` | o2-mesh | none yet: a stub (`orca-mesh`) |
 | `cstdio.sop1` | o2-mesh | none yet: a stub (`orca-fmt`'s `stdio` and `scanf`) |
@@ -469,6 +469,68 @@ and rnd's `eulerAngles(1, 0, 1)` (3 each). 512 cases (the committed set 8).
 `JacobiSVD<Matrix3d>(m, ComputeFullU | ComputeFullV)`: m's 9 (a diagonal matrix, a rotation times
 a scaling as `assemble_transform` makes them, or wide coefficients), then U's 9, V's 9, the 3
 singular values and `u64` `nonzeroSingularValues()`. 1024 cases (the committed set 12).
+
+### CCLP
+
+A `Clipper` run, as libslic3r compiles Clipper 6.4.2 (`parity/oracle/probe/geom/clipper.cpp`,
+added 2026-11-07). A path is a `u32` count and each point's `i64` x and y; a list is a `u32`
+count and its paths; a tree is the root's contour, `i32` `Total()`, then the root's children: a
+`u32` count, each child `u8` `IsOpen()`, `u8` `IsHole()`, its contour and its own children. The
+case: `u8` initOptions (ioReverseSolution 1, ioStrictlySimple 2, ioPreserveCollinear 4), `u8`
+ClipType (intersection, union, difference, xor), `u8` the subject's and `u8` the clip's
+PolyFillType (even-odd, non-zero, positive, negative), `u8` tree (a PolyTree result), `u8` each
+(`AddPath` per path, else `AddPaths` per group), `u8` twice (`Execute` twice on one Clipper), `u8`
+convert (`PolyTreeToPaths`, `ClosedPathsFromPolyTree` and `OpenPathsFromPolyTree` of each tree);
+`u32` groups, each `u8` PolyType (subject, clip), `u8` closed and its list. Then each add call's
+result: `u8` 0 or 1, or 2 and `str` `what()` when it threw, which ends the record; `GetBounds()`
+(`i64` left, top, right, bottom) when no group is open; each `Execute`: with a tree `u8` its result,
+the tree and, with convert, the three lists; without, `u8` its result (or 2 and `what()`, which
+ends the record) and the solution. Hand-made cases first (collinear, duplicate and spike points,
+bow-ties, holes, touching squares, open and flat paths, coordinates at loRange and hiRange and past
+them, `INT64_MIN`), then 3000 from a fixed-seed `std::mt19937` (the committed set the hand-made
+cases and the first 30 others of at most 4 KB).
+
+### COFF
+
+A `ClipperOffset` run: `f64` MiterLimit, ArcTolerance and ShortestEdgeLength; `u32` paths, each
+`u8` JoinType (square, round, miter), `u8` EndType (closed polygon, closed line, open butt, open
+square, open round) and the path; `u32` runs, each `f64` delta and `u8` tree; then each run's `u8`
+1 and its solution (a tree or a list), or 2 and `str` `what()`, which ends the record. Hand-made
+cases (every join with every end type, one-point and two-point paths, spikes, holes, deltas of 0,
+1e-21 and below 0.125 with ArcTolerance 0, where the step count is NaN, large ArcTolerances,
+coordinates near hiRange), then 1500 random (the committed set those and the first 12 of at most
+4 KB).
+
+### CARE
+
+The path, `f64` `Area()`, `u8` `Orientation()`, then a `u32` count of points, each point and `i32`
+`PointInPolygon()` (1 inside, 0 outside, -1 on the boundary). 8 hand-made cases, then 1000 random
+(the committed set those and 16).
+
+### CCLN
+
+`CleanPolygon`: the path, `f64` distance, the cleaned path. 7 hand-made cases, then 800 random
+(the committed set those and 12).
+
+### CSIM
+
+`u8` 0 for `SimplifyPolygon` of the list's one path or 1 for `SimplifyPolygons`, the list, `u8`
+PolyFillType, `u8` strictly simple, the result. 3 hand-made cases, then 600 random (the committed
+set those and 8).
+
+### CMNK
+
+`u8` 0 for `MinkowskiSum` of a path, 1 for `MinkowskiSum` of a list or 2 for `MinkowskiDiff`, `u8`
+closed, the pattern, the list (kinds 0 and 2 take its first path), the result. 4 hand-made cases,
+then 400 random (the committed set those and 6).
+
+### CINT
+
+`Int128`'s filtered predicates, which Clipper's `SlopesEqual` and `Point.cpp` call (in the MSVC
+build the exact ones they fall back on are private): `i64` a, b, c and d, then `i32`
+`sign_determinant_2x2_filtered(a, b, c, d)` and `i32` `compare_rationals_filtered(a, b, c, d)`. 64
+hand-made cases (values about 2^31 and 2^32, loRange, hiRange, `INT64_MIN`, `INT64_MAX`), then 4000
+random (wide values and nearly collinear quadruples; the committed set those and 32).
 
 ## Versions
 

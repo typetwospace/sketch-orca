@@ -418,7 +418,7 @@ table; the task that translates the function finds it there.
 
 | Site | What | Covered by |
 | --- | --- | --- |
-| `deps_src/clipper/clipper.cpp:319` and `src/libslic3r/Int128.hpp:62-244` | Clipper's `sign_determinant_2x2_filtered` and `Int128::multiply`: MSVC takes `_mul128` | `i128` (orca-geom) |
+| `deps_src/clipper/clipper.cpp:319` and `src/libslic3r/Int128.hpp:62-244` | Clipper's `sign_determinant_2x2_filtered` and `Int128::multiply`: MSVC takes `_mul128` | probed: `i128` (orca-geom, `geom.sop1` CINT and CCLP) |
 | `src/libslic3r/Point.cpp:252-257` | 128-bit products | `i128` (orca-geom) |
 | `Geometry/ConvexHull.cpp`'s `rotcalip::cmp_angles` | `boost::multiprecision::int128_t` and `int256_t` products | exact integers (orca-geom, with orca-exact's `int128_t` where Boost's signed magnitude decides a result) |
 | `Arrange.cpp:29`, `MinAreaBoundingBox.cpp` | `boost::multiprecision::int128_t` and `boost::rational<int128_t>` | orca-exact (o2-arrange) |
@@ -455,8 +455,21 @@ it owns:
 ### orca-geom
 
 Clipper 6.4.2, `ClipperUtils` and libslic3r's geometry (points, lines, polygons, polylines,
-ExPolygons, bounding boxes, convex hulls, `Geometry::Transformation`). Probe file `geom.sop1`.
-Filled by o2-geom.
+ExPolygons, bounding boxes, convex hulls, `Geometry::Transformation`). Probe file `geom.sop1`:
+CCLP, COFF, CARE, CCLN, CSIM, CMNK and CINT (`parity/SOP1.md`), which
+`crates/orca-geom/tests/probes.rs` replays; every comparison of both sets matched on 2026-11-07,
+debug and release. Filled by o2-geom on 2026-11-07. The hazards it owns:
+
+| What | Where | What the translation does |
+| --- | --- | --- |
+| `Int128`'s filtered predicates: the estimate `(a + (1 << 31)) >> 32`, where `1 << 31` is the `int` -2^31, so it subtracts half a word; MSVC's `_mul128` branch for the exact products | `src/libslic3r/Int128.hpp:189-300`, `deps_src/clipper/clipper.cpp:319` | probed (CINT; `SlopesEqual` in every CCLP): `int128.rs`, wrapping `i64` and `i128` |
+| `RangeTest`'s `-Pt.x()` on `INT64_MIN`: MSVC wraps it rather than folding the test to `x < -range`, so the point passes, and in the 32-bit range | `clipper.cpp` `RangeTest` | probed (a CCLP case): `wrapping_neg` |
+| The local minima sort (`std::sort`, `lm1.y < lm2.y`, ties in introsort's order), the intersections sort (`node2.pt.y < node1.pt.y`) and the maxima sort | `clipper.cpp:975`, `:2517`, `ProcessEdgesAtTopOfScanbeam` | probed: `orca_stl::sort_by` and `orca_stl::sort` |
+| The scanbeam: `std::priority_queue<cInt>` | `clipper.cpp:1062` | probed: `orca_stl::PriorityQueue` |
+| `ClipperOffset`'s `acos`, `sin`, `cos` and `atan2` | `clipper.cpp:3552-3760` | probed (COFF): the static UCRT's, through `orca-crt` |
+| `Round<cInt>`: `FRound` (0.49999999999999994 rounds to 0), then MSVC's truncating cast; `DoRound`'s `std::max<int>(Round(...), 1)` truncates the `int64` to `int`, and a NaN step count (a delta below 0.125 with ArcTolerance 0) gives `INT64_MIN`, so 0, so one step | `clipper.cpp:88-110`, `DoRound`, `DoOffset` | probed (COFF): `fround`, `orca_crt::f64_to_i64`, `as i32` |
+| Exceptions: `RangeTest`, an open clip path and `Execute(Paths&)` after an open path throw to the caller; `UpdateEdgeIntoAEL` and `DoMaxima` throw inside `ExecuteInternal`, which catches them and returns false | `clipper.cpp` | probed (CCLP and COFF cases): a panic whose payload is a `ClipperException` (`catch_unwind` and `downcast` catch it, as `catch (clipperException&)` does); the inner two a `Result` |
+| Undefined behaviour: `AddPaths` throwing midway leaves the earlier paths' local minima pointing into freed edges; `ProcessHorizontal` reads a maxima iterator uninitialised if the direction flips along a chain of horizontals; `Minkowski` of an empty open path divides by zero | `clipper.cpp` | open: no probe can record it; the translation does what each site's comment says (the last panics), and the engine's callers never get there |
 
 ### orca-exact
 

@@ -211,8 +211,8 @@ orca-eigen (filled by the o2-geom task)
 orca-geom (filled by the o2-geom task)
   - Clipper 6.4.2, by Angus Johnson (http://www.angusj.com), Copyright Angus Johnson 2010-2017, as
     OrcaSlicer v2.4.2 carries it in deps_src/clipper, under the Boost Software License, version 1.0
-    (BSL-1.0; licenses/BSL-1.0.txt): the clipper, the offsetter and the helpers of clipper.cpp and
-    clipper.hpp; and the excerpt of Clipper 6.2.9 in src/libslic3r/Int128.hpp (Copyright Angus
+    (BSL-1.0; licenses/BSL-1.0.txt), with the PrusaSlicer authors' changes to it: the clipper, the
+    offsetter and the helpers of clipper.cpp and clipper.hpp; and the excerpt of Clipper 6.2.9 in src/libslic3r/Int128.hpp (Copyright Angus
     Johnson 2010-2015, extended by Vojtech Bubnik), under the same licence.
   - OrcaSlicer's src/libslic3r/ClipperUtils.cpp, Point.cpp, Polygon.cpp, Polyline.cpp,
     MultiPoint.cpp, Line.cpp, ExPolygon.cpp, BoundingBox.cpp, Geometry.cpp and

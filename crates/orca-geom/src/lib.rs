@@ -18,11 +18,21 @@
 //! `Geometry::Transformation`, and `scale_` and `unscale` with the command line's `SCALING_FACTOR`
 //! of 1e-6. `coord_t` is `i64`.
 //!
-//! The o2-geom task of phase O2 fills this crate; its records are in the probe file `geom.sop1`,
-//! which `tests/probes.rs` replays.
+//! Each module gives the results OrcaSlicer v2.4.2's code gives, bit for bit, which the records of
+//! the probe file `geom.sop1` prove (`tests/probes.rs` replays them):
 //!
-//! Until that task runs, the crate holds only its name, and `tests/probes.rs` passes trivially
-//! while its probe file is a stub (HEAD and PRUN only).
+//! - [`clipper`]: Clipper 6.4.2 whole: `Clipper` with every clip and fill type and `PolyTree`
+//!   results, `ClipperOffset` with every join and end type, Minkowski sums, `SimplifyPolygon(s)`,
+//!   `CleanPolygon(s)`, `Area`, `Orientation` and `PointInPolygon`. Its sorts and scanbeam queue go
+//!   through `orca-stl`, its trigonometry and float-to-integer casts through `orca-crt`. What
+//!   Clipper throws to its caller is a panic whose payload is a `ClipperException`.
+//! - [`int128`]: `Int128`'s filtered predicates (Clipper's `SlopesEqual`, `Point.cpp`), as MSVC
+//!   compiles them, with `i128` for the exact products.
+//! - [`point`]: `coord_t` (`i64`) and `Point`.
+
+pub mod clipper;
+pub mod int128;
+pub mod point;
 
 /// The crate's name, as Cargo has it.
 pub const NAME: &str = "orca-geom";
