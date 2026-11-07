@@ -4,7 +4,8 @@
 // and the outputs are the same bytes. Each run of a pass is kept as same.ts keeps it
 // (<work>/parity/runs/record/<pass>/<case>/<n>/), with pass.json saying what made it, so a pass whose
 // engine, knobs and corpus have not changed is not run again. Then every output gets its class
-// (classes.ts); the oracle's pass at one thread is kept as the goldens (<work>/parity/goldens); the
+// (classes.ts); the oracle's pass at one thread is kept as the goldens (<work>/parity/goldens, whose
+// goldens.json names the oracle: its program's SHA-256 and the cli/ it was built from); the
 // front end's goldens are written into the repository (parity/goldens/front/); and parity.json lists
 // every family (corpus.ts FAMILIES) with the classes of the outputs of its cases, certified false.
 
@@ -320,16 +321,28 @@ export interface GoldensIndex {
   root: string
   resources: string
   work: string
+  /**
+   * The oracle the goldens were recorded with: its program's SHA-256 and the cli/ it was built
+   * from (oracle.json). Goldens recorded before the index named it have none, and certify refuses
+   * them (certify.ts oracleChainProblems).
+   */
+  oracle?: GoldensOracle
   cases: CaseRecord[]
 }
 
+export interface GoldensOracle {
+  exeSha256: string
+  /** files.ts hashTree of the cli/ the oracle was built from. */
+  cli: string
+}
+
 /** Keeps a pass's store as the goldens: <goldens>/cases/<case>/<n>/ and <goldens>/goldens.json. */
-export function keepGoldens(o: { pass: Pass; store: string; goldens: string; corpusSha256: string; root: string; resources: string; work: string }): GoldensIndex {
+export function keepGoldens(o: { pass: Pass; store: string; goldens: string; corpusSha256: string; root: string; resources: string; work: string; oracle: GoldensOracle }): GoldensIndex {
   rmSync(o.goldens, { recursive: true, force: true })
   const cases = join(o.goldens, 'cases')
   mkdirSync(cases, { recursive: true })
   for (const c of o.pass.cases) if (existsSync(join(o.store, c.id))) copyTree(join(o.store, c.id), join(cases, c.id), undefined, { link: true })
-  const index: GoldensIndex = { format: GOLDENS_FORMAT, pass: o.pass.label, knobs: o.pass.knobs, corpusSha256: o.corpusSha256, root: o.root, resources: o.resources, work: o.work, cases: o.pass.cases }
+  const index: GoldensIndex = { format: GOLDENS_FORMAT, pass: o.pass.label, knobs: o.pass.knobs, corpusSha256: o.corpusSha256, root: o.root, resources: o.resources, work: o.work, oracle: o.oracle, cases: o.pass.cases }
   writeJsonAtomic(join(o.goldens, 'goldens.json'), index)
   return index
 }

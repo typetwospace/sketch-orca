@@ -18,7 +18,15 @@ The probe gate is the foundation crates' `tests/probes.rs`, which replay every r
 ```
 bun run rs:test -p orca-crt -p orca-fmt -p orca-stl -p orca-tbb
 SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes bun run rs:test -p orca-crt -p orca-fmt -p orca-stl -p orca-tbb
+bun run rs:test:release -p orca-crt -p orca-fmt -p orca-stl -p orca-tbb --test probes
+SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes bun run rs:test:release -p orca-crt -p orca-fmt -p orca-stl -p orca-tbb --test probes
 ```
+
+The gate runs in both profiles. `rs:test` builds the tests as the `dev` profile does;
+`rs:test:release` (`cargo test --locked --release`) builds them with the release profile the
+shipped program is built with (`Cargo.toml`: `opt-level = 3`, fat LTO, one codegen unit), so
+inlining or constant folding there cannot change a maths call, a float operation or a CRT result
+unseen.
 
 Every record of both sets passed on 2026-11-06. One record depends on the machine that made it: TBBA `outside` is oneTBB's `max_concurrency()` outside any arena, which is the recording machine's processor count, so the test compares it only on a machine with as many processors and otherwise checks that `max_concurrency()` there is `default_concurrency()` (`parity/HAZARDS.md`, "Threads").
 

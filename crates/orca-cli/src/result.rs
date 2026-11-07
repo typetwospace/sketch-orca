@@ -502,7 +502,7 @@ pub fn run_job(job_path: &str, out_path: &str, progress_path: &str, err: &mut dy
         arm_crash(out_path, &body);
         check_outputs(&files, out_path)?;
         // The job's work: none is ported yet (decline.rs).
-        if let Err(declined) = decline::check(job.command, &job.command_name) {
+        if let Err(declined) = decline::check(&job) {
             crash::test_point("decline");
             return Err(declined);
         }

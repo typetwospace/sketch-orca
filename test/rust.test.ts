@@ -207,6 +207,7 @@ describe('scripts/rust.ts', () => {
     expect(pkg.scripts).toMatchObject({
       'rs:build': 'bun scripts/rust.ts build',
       'rs:test': 'bun scripts/rust.ts test',
+      'rs:test:release': 'bun scripts/rust.ts test --release',
       'rs:clippy': 'bun scripts/rust.ts clippy',
       'rs:fmt:check': 'bun scripts/rust.ts fmt --check',
     })

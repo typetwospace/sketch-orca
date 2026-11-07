@@ -18,8 +18,9 @@
 //
 // On Windows, stage first builds sketch-orca-rs itself (rust.ts buildRustRelease: cargo build
 // --locked --release), stages it beside the C++ engine and names it in the manifest's `rust` block
-// (its file, engine version, `implementation` and SHA-256; engine.exe stays the C++ engine). The
-// staged copy must report the engine's version and pass the Rust smoke cases (smoke.ts
+// (its file, engine version, `implementation` and SHA-256; engine.exe stays the C++ engine). It
+// must import only libraries Windows has and none of MSVC's dynamic C runtime (rustRuntimeRefusal),
+// the staged copy must report the engine's version and pass the Rust smoke cases (smoke.ts
 // RUST_SMOKE_CASES), held to the staged C++ engine, or nothing is swapped in.
 
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
@@ -790,6 +791,22 @@ export function runtimeRefusal(runtime: RuntimePlan): string | undefined {
   return undefined
 }
 
+/**
+ * Windows: why stage refuses sketch-orca-rs. It links the static C runtime (`+crt-static`,
+ * `.cargo/config.toml`) and ships with no library of its own, so it may import only what Windows
+ * has: never MSVC's dynamic C runtime (pe.ts isDynamicCrt: ucrtbase, api-ms-win-crt-*, vcruntime,
+ * msvcp and the rest), and no library that is not Windows' own. Today it imports KERNEL32, ntdll
+ * and api-ms-win-core-synch-l1-2-0.
+ */
+export function rustRuntimeRefusal(exe: string, io: RuntimeIo): string | undefined {
+  const c = resolveRuntime(exe, [], io)
+  if (c.crt.length > 0) {
+    return `sketch-orca-rs loads MSVC's dynamic C runtime, which does not ship with it: ${c.crt.map((m) => m.name).join(', ')}. Build it with the static runtime (+crt-static, .cargo/config.toml), then stage again`
+  }
+  if (c.missing.length > 0) return `sketch-orca-rs loads libraries Windows does not have: ${c.missing.map((m) => m.name).join(', ')}`
+  return undefined
+}
+
 /** Windows: the PE import closure of the engine (see pe.ts). */
 export function windowsRuntime(exe: string, searchDirs: string[], io: RuntimeIo): RuntimePlan {
   const c = resolveRuntime(exe, searchDirs, io)
@@ -1090,6 +1107,8 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     log.line('stage: building sketch-orca-rs (cargo build --locked --release)')
     rustExe = await buildRustRelease(ctx.engine.engine, join(w.logs, 'stage-cargo.log'))
     rustName = `${RUST_PROGRAM}.exe`
+    const rustRuntimeProblem = rustRuntimeRefusal(rustExe, windowsRuntimeIo())
+    if (rustRuntimeProblem) throw new StepError(rustRuntimeProblem)
   }
   const rustSha256 = rustExe ? sha256File(rustExe) : null
   // What the engine was built from (the build checked that cli/ did not change meanwhile).

@@ -15,7 +15,9 @@ The maintainers follow these rules for their own changes:
 - Parity work never changes `patches/`. The oracle's changes go in `parity/oracle/patches`, each
   headed `sketch-orca oracle patch NNNN: ...` and "Modified for Sketch, <date>.", each acting only
   when its knob is set (`parity/oracle/README.md`). A change there, or to `cli/`, needs
-  `bun run engine parity oracle` and a `bun run engine parity neutral` that exits 0.
+  `bun run engine parity oracle`, a `bun run engine parity neutral` that exits 0 and
+  `bun run engine parity record`; `parity certify` refuses the goldens until all three have run
+  for the `cli/` and patches there are now.
 - Keep each file's line endings (`.gitattributes` holds `* -text`; the scripts, `cli/` and the
   patches use LF).
 - Date every change to OrcaSlicer's files, as section 5(a) of the licence asks: a patch's header
@@ -29,6 +31,9 @@ The maintainers follow these rules for their own changes:
 - Rust code (`crates/`, the translation described in `README.md`) follows these rules as well:
   - Run `bun run rs:build`, `bun run rs:test`, `bun run rs:clippy -- -D warnings` and
     `bun run rs:fmt:check` besides the two above, and format with `bun scripts/rust.ts fmt`.
+    A change to a foundation crate (`orca-crt`, `orca-fmt`, `orca-stl`, `orca-tbb`) also runs
+    the probe gate in the release profile, `bun run rs:test:release -p <crate> --test probes`
+    (`crates/orca-probe/README.md`).
     Builds are `--locked`: the scripts add it, and `Cargo.lock` is committed. A new crate
     dependency also needs its entry in `NOTICE` (its licence and holders): `stage` ships the
     program, and `source` vendors every crate `Cargo.lock` names, refusing one with no licence
@@ -72,8 +77,14 @@ The maintainers follow these rules for their own changes:
     the UCRT's source under Microsoft's own licence; do not read it for this work). The tests are
     the crates' own (`orca-fmt`'s `tests/fmt.rs` calls the UCRT and compares) and the probe
     records of the C++ engine's build (`parity/oracle/probe/`, `parity/probes/`). `orca-crt`
-    calls the UCRT's maths functions instead of translating them. Whether this is enough is an
-    open question for counsel (`README.md`, open items).
+    calls the UCRT's maths functions instead of translating them. Microsoft's open STL
+    (`<charconv>` and the other headers of MSVC 14.42, Apache-2.0 WITH LLVM-exception) may be
+    read and translated, with a `Carries Microsoft STL code` block, even where it says it is
+    derived from the UCRT. A behaviour found by black-box testing gets a test that finds it in
+    the UCRT itself (`orca-fmt`'s `ucrt_` tests), so that anyone can check where it came from.
+    Code that was written after reading the UCRT's source is taken out, without being studied,
+    and written again by someone who has not read it, as `parse.rs` was on 2026-11-06. Whether
+    this is enough is an open question for counsel (`README.md`, open items).
   - A dependency pin (`rayon`, `windows-sys`, `sha2`, the toolchain, MSVC, the SDK) is changed by
     a task of its own, with the probes run again; `Cargo.lock` is committed with it.
   - Update the docs that describe a change with it: this file, `README.md`, `BUILDING.md`, the

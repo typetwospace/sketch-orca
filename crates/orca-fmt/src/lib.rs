@@ -54,18 +54,6 @@ pub(crate) fn cpp_max<T: PartialOrd>(a: T, b: T) -> T {
     if a < b { b } else { a }
 }
 
-/// `std::clamp(v, lo, hi)` as MSVC defines it, `hi < v ? hi : v < lo ? lo : v`; unlike
-/// `Ord::clamp`, it does not panic when `hi < lo`.
-pub(crate) fn cpp_clamp<T: PartialOrd>(v: T, lo: T, hi: T) -> T {
-    if hi < v {
-        hi
-    } else if v < lo {
-        lo
-    } else {
-        v
-    }
-}
-
 /// The crate's name, as Cargo has it.
 pub const NAME: &str = "orca-fmt";
 

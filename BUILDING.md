@@ -125,6 +125,7 @@ from the engine, with Rust and the same Visual Studio environment:
 ```
 bun run rs:build            # cargo build --locked, in the pinned environment
 bun run rs:test             # cargo test --locked
+bun run rs:test:release     # cargo test --locked --release (the probe gate's release half)
 bun run rs:clippy -- -D warnings
 bun run rs:fmt:check
 ```

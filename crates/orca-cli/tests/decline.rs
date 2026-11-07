@@ -10,9 +10,10 @@
 
 //! The decline: a valid job that reaches a step sketch-orca-rs does not do yet (every info, layers
 //! and slice job, for now) gets `not-ported`, exit code -8 and `missing`, the steps, before any
-//! output is written: the result is protocol/examples/result-not-ported.json for a slice job, the
-//! progress file says the job was read and then the failure, and no G-code, .gcode.3mf or
-//! temporary file is left.
+//! output is written: the result is protocol/examples/result-not-ported.json for a slice job with
+//! Orca's default settings, the progress file says the job was read and then the failure, and no
+//! G-code, .gcode.3mf or temporary file is left. A slice's settings, its objects' and their height
+//! ranges' add the families they turn on, and presets that cannot be read add every one.
 
 mod common;
 
@@ -48,6 +49,39 @@ fn declined(
     (scratch, r.status.code().unwrap(), result, progress)
 }
 
+/// Writes the job's three preset files, flattened, each with `settings` besides its type and name.
+fn write_presets(dir: &Scratch, process: &[(&str, &str)], machine: &[(&str, &str)]) {
+    std::fs::create_dir_all(dir.path("presets")).unwrap();
+    for (file, kind, settings) in [
+        ("process", "process", process),
+        ("machine", "machine", machine),
+        ("filament_1", "filament", &[][..]),
+    ] {
+        let mut p = Object::new(Order::Insertion);
+        p.insert("type", kind);
+        p.insert("name", format!("Test {kind}"));
+        p.insert("from", "system");
+        for (k, v) in settings {
+            p.insert(*k, *v);
+        }
+        std::fs::write(
+            dir.path(&format!("presets/{file}.json")),
+            orca_json::Value::Object(p).dump(Some(2)) + "\n",
+        )
+        .unwrap();
+    }
+}
+
+/// The families a result names as missing.
+fn missing_of(result: &str) -> Vec<String> {
+    parse(result.as_bytes(), Order::Insertion).unwrap()["missing"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m.as_str().unwrap().to_string())
+        .collect()
+}
+
 #[test]
 fn a_slice_job_is_declined_with_the_steps_it_needs() {
     let (scratch, code, result, progress) = declined("slice", |job, dir| {
@@ -55,6 +89,8 @@ fn a_slice_job_is_declined_with_the_steps_it_needs() {
         output.insert("gcode", dir.path("out/plate_1.gcode"));
         output.insert("bambu3mf", dir.path("out/plate_1.gcode.3mf"));
         job.insert("output", output);
+        // Presets that leave every setting at Orca's default.
+        write_presets(dir, &[], &[]);
     });
     assert_eq!(code, -8);
     let example =
@@ -78,8 +114,88 @@ fn a_slice_job_is_declined_with_the_steps_it_needs() {
     // Nothing else is written: no output folder, no temporary file.
     assert_eq!(
         scratch.files(),
-        ["job.json", "progress.ndjson", "result.json"]
+        [
+            "job.json",
+            "presets/filament_1.json",
+            "presets/machine.json",
+            "presets/process.json",
+            "progress.ndjson",
+            "result.json"
+        ]
     );
+}
+
+#[test]
+fn the_families_a_slice_reaches_follow_its_settings_and_each_objects() {
+    let (_scratch, code, result, _) = declined("slice", |job, dir| {
+        write_presets(
+            dir,
+            &[("enable_support", "1"), ("sparse_infill_density", "0%")],
+            &[],
+        );
+        let mut overrides = Object::new(Order::Insertion);
+        overrides.insert("wall_generator", "classic");
+        job.insert("overrides", overrides);
+        // One object irons; a height range of it has fuzzy skin.
+        let mut range_overrides = Object::new(Order::Insertion);
+        range_overrides.insert("fuzzy_skin", "external");
+        let mut range = Object::new(Order::Insertion);
+        range.insert("from", 0.0);
+        range.insert("to", 2.0);
+        range.insert("overrides", range_overrides);
+        let mut object_overrides = Object::new(Order::Insertion);
+        object_overrides.insert("ironing_type", "top");
+        let mut object = Object::new(Order::Insertion);
+        object.insert("index", 0);
+        object.insert("overrides", object_overrides);
+        object.insert("heightRanges", vec![orca_json::Value::Object(range)]);
+        job.insert("objects", vec![orca_json::Value::Object(object)]);
+    });
+    assert_eq!(code, -8);
+    let missing = missing_of(&result);
+    for f in [
+        "perimeters-classic",
+        "supports",
+        "step-simplify-support-path",
+        "infill-supportbase",
+        "ironing",
+        "fuzzy-skin",
+    ] {
+        assert!(missing.iter().any(|m| m == f), "{f}: {missing:?}");
+    }
+    // Arachne nowhere, and no sparse infill at 0%.
+    for f in [
+        "perimeters-arachne",
+        "infill-crosshatch",
+        "raft",
+        "wipe-tower",
+    ] {
+        assert!(!missing.iter().any(|m| m == f), "{f}: {missing:?}");
+    }
+}
+
+#[test]
+fn a_slice_whose_presets_cannot_be_read_reaches_every_family_a_setting_turns_on() {
+    // valid_job names preset files it does not write.
+    let (_scratch, code, result, _) = declined("slice", |_, _| {});
+    assert_eq!(code, -8);
+    let missing = missing_of(&result);
+    for f in [
+        "perimeters-classic",
+        "perimeters-arachne",
+        "infill-gyroid",
+        "infill-lightning",
+        "supports",
+        "tree-supports",
+        "raft",
+        "ironing",
+        "fuzzy-skin",
+        "wipe-tower",
+        "step-contouring",
+        "step-simplify-support-path",
+    ] {
+        assert!(missing.iter().any(|m| m == f), "{f}: {missing:?}");
+    }
 }
 
 #[test]

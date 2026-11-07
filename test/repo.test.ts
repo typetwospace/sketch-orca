@@ -65,7 +65,7 @@ describe('the repository', () => {
     expect(bytes.toString('utf8')).toStartWith('                    GNU AFFERO GENERAL PUBLIC LICENSE\n                       Version 3, 19 November 2007\n')
   })
 
-  test('package.json: sketch-orca under AGPL-3.0-only, its seven scripts, pinned tools', () => {
+  test('package.json: sketch-orca under AGPL-3.0-only, its eight scripts, pinned tools', () => {
     const pkg = JSON.parse(read('package.json'))
     expect(pkg).toMatchObject({ name: 'sketch-orca', license: 'AGPL-3.0-only', private: true, type: 'module', packageManager: `bun@${BUILT_WITH.bun}` })
     expect(pkg.scripts).toEqual({
@@ -74,6 +74,7 @@ describe('the repository', () => {
       typecheck: 'tsc -p tsconfig.json',
       'rs:build': 'bun scripts/rust.ts build',
       'rs:test': 'bun scripts/rust.ts test',
+      'rs:test:release': 'bun scripts/rust.ts test --release',
       'rs:clippy': 'bun scripts/rust.ts clippy',
       'rs:fmt:check': 'bun scripts/rust.ts fmt --check',
     })

@@ -61,7 +61,7 @@ From the repository root, after `bun install`:
 bun run engine <command> [options]     # bun scripts/orca.ts <command>
 bun run test                           # bun test ./test: unit tests, no network, no builds
 bun run typecheck                      # tsc: type-check the scripts and tests
-bun run rs:build | rs:test | rs:clippy | rs:fmt:check   # the Rust translation (below)
+bun run rs:build | rs:test | rs:test:release | rs:clippy | rs:fmt:check   # the Rust translation (below)
 ```
 
 `BUILDING.md` lists the tools and versions the engine is built with.
@@ -101,6 +101,34 @@ system must make hard links). A record that cannot be read is never taken over, 
 `<work>/run.lock.d` by hand when no run is going. A run of an earlier pipeline that holds
 `<work>/run.lock` holds the folder too.
 
+### Publishing a release
+
+Publishing is outward-facing, so the maintainer approves each engine release. Before it: a leak
+scan of every commit since the last release (no local paths, account names, keys or session links,
+and every author `kevin-t2 <349066423+kevin-t2@users.noreply.github.com>`), and a bug hunt over the
+changes. Then, with `gh` signed in as `kevin-t2`:
+
+```
+bun run engine release                # check .. stage and source, in the work folder
+# pack <work>/dist/engine and <work>/dist/source/<name> as
+#   sketch-orca-<version>-orca-<orca version>-win32-x64.zip and ...-win32-x64-source.zip,
+#   with SHA256SUMS (both zips) and notes.md
+gh release create v<version> --repo typetwospace/sketch-orca --target <the full 40-character commit> \
+  --title 'sketch-orca <version> (OrcaSlicer <orca version>)' --notes-file notes.md \
+  <engine zip> <source zip> SHA256SUMS
+gh release view v<version> --repo typetwospace/sketch-orca --json tagName,isDraft,assets
+```
+
+`--target` takes only a full commit hash; a short one fails with HTTP 422 `Release.target_commitish
+is invalid`. The source zip goes in the same release as the engine (*Source offer*), and `parity
+reference` expects these asset names (`scripts/lib/parity/reference.ts`). The default work
+folder's `dist\engine` (`%LOCALAPPDATA%\SketchDev\orca-engine`) is the engine a dev Sketch runs,
+so a release built there replaces it: that is what a release meant for Sketch's dev builds wants
+(0.2.0 was built there). To keep a dev Sketch on its engine while a release is built, give the
+release a work folder of its own with `SKETCH_ORCA_HOME`. Sketch finds releases on GitHub
+through `SKETCH_ORCA_REPOSITORY` (sketch-slicer). A new stage layout also needs Sketch's
+stage-version reader raised (`ENGINE_STAGE_VERSION`, sketch-slicer's README).
+
 ## The Rust translation
 
 `crates/` is a translation of the front end and the parts of Orca's slicing library it reaches
@@ -124,14 +152,21 @@ What `sketch-orca-rs` answers so far (`crates/orca-cli/README.md`):
   `bun scripts/orca.ts parity gen-config` generates from the configdef probe
   (`parity gen-config --check` fails while they differ).
 - `run` checks its command line as `cli/main.cpp` does and reads the job as `cli/job.cpp` does,
-  in the same order: every command line and job the C++ program refuses gets the same result
-  (code, message, exit code), result file and progress file (`parity/goldens/front/intake/`), and
-  the run's files are told apart as the C++ tells them apart.
+  in the same order: a command line or job the C++ program refuses while reading them gets the
+  same result (code, message, exit code), result file and progress file
+  (`parity/goldens/front/intake/`), and the run's files are told apart as the C++ tells them
+  apart. A refusal the C++ program makes after the job is read (an unknown setting, a model it
+  cannot read or that is bigger than the bed) belongs to a step that is not certified, so that job
+  gets `not-ported` below instead, until its family is.
 - The decline: a valid job that reaches a step `parity/parity.json` does not certify, which for now
   is every `info`, `layers` and `slice` job, gets `not-ported`, exit -8 (the class of
   `unsupported`; 248 as a low byte) and `missing`, the steps (`protocol/README.md`,
-  `protocol/examples/result-not-ported.json`). It comes before any output is written; outputs are
-  written under temporary names and renamed only on success, so nothing is left behind.
+  `protocol/examples/result-not-ported.json`). The steps a slice reaches include those its
+  settings turn on (supports, ironing, fuzzy skin, each infill pattern and the rest), read from
+  its overrides, its objects' and its presets as the corpus reads them; presets it cannot read
+  count as every such step (`crates/orca-cli/README.md`). It comes before any output is written;
+  outputs are written under temporary names and renamed only on success, so nothing is left
+  behind.
 - A crash (a panic, an unhandled exception, `abort`) writes the C++ program's `internal-error`
   result, and the process ends with -1; `SKETCH_ORCA_TEST_CRASH` triggers one as in the C++.
 
@@ -139,8 +174,10 @@ What `sketch-orca-rs` answers so far (`crates/orca-cli/README.md`):
 (build it first with `bun run rs:build`) and compares it with the goldens: results as JSON values,
 every other output byte for byte, an output that varies between the engine's own runs within that
 variance. It raises the certified families in `parity/parity.json` and never lowers them;
-`--check` writes nothing there and fails on a regression. `version`, `config-def` and `intake` are
-certified (`parity/README.md`).
+`--check` writes nothing there and fails on a regression. Both fail when a run of a corpus job
+that reaches an uncertified family is not declined naming it, and both refuse goldens that were
+not recorded with the oracle of this checkout's `cli/` after a passing `parity neutral`.
+`version`, `config-def` and `intake` are certified (`parity/README.md`).
 
 One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
 `.cargo/config.toml`, `rustfmt.toml`, `clippy.toml`). Its crates, each with a README of its own:
@@ -162,7 +199,9 @@ C++ engine is built in, so `link.exe` takes the same static `libucrt` (`BUILDING
 ```
 bun run rs:build                       # bun scripts/rust.ts build: cargo build --locked
 bun run rs:test                        # cargo test --locked
+bun run rs:test:release                # cargo test --locked --release: the shipped program's profile
 SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes bun run rs:test   # the probe tests on the full set
+SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes bun run rs:test:release -p orca-crt -p orca-fmt -p orca-stl -p orca-tbb --test probes
 bun run rs:clippy -- -D warnings       # cargo clippy --locked --all-targets -- -D warnings
 bun run rs:fmt:check                   # cargo fmt --all --check
 bun scripts/rust.ts <build|test|clippy|fmt> [args]   # the same with other arguments
@@ -286,7 +325,9 @@ the same libraries and resources (the stamp and `smoke/report.json`); that every
 import closure); that on Windows neither the engine nor any library it loads imports MSVC's
 dynamic C runtime (the Visual C++ runtime DLLs, `ucrtbase.dll` or its `api-ms-win-crt-*` API sets),
 since everything is built with the static runtime and no runtime DLL ships (GMP and MPFR, built
-with MinGW-w64, load Windows' own `msvcrt.dll`, which is not one); that every built dependency, and every
+with MinGW-w64, load Windows' own `msvcrt.dll`, which is not one), and that `sketch-orca-rs.exe`,
+built for the stage, imports none of it either and nothing but Windows' own libraries
+(`rustRuntimeRefusal`); that every built dependency, and every
 `deps_src` library on the engine's link line (read from `build/build.ninja`), has a licence text; that the link line holds no Intel IPP; that the GMP,
 MinGW-w64 runtime and SoftFloat texts a Windows engine needs are there; that `NOTICE` and `AUTHORS` are there; and that
 `sketch-orca version` names the locked commit. It builds the folder next to the old one and
@@ -588,7 +629,14 @@ These are for the maintainers to decide, and some for a lawyer. The first three 
     `strtof` rounding and NaN spellings, its `printf` choices, its `rand`), written from the C
     standard and from black-box tests of the UCRT, never from the UCRT's source, which the Windows
     SDK ships under Microsoft's own licence, is free of Microsoft's copyright in that source
-    (`CONTRIBUTING.md`, "Behaviour without source"; `crates/orca-fmt/src/parse.rs`);
+    (`CONTRIBUTING.md`, "Behaviour without source"; `crates/orca-fmt/src/parse.rs`). One part
+    was not: the first version of `parse.rs` (commit 64e3071 of 2026-11-06, kept until the fix)
+    took `strtod`'s and `strtof`'s three rounding differences from the STL and their NaN spellings
+    from a reading of the UCRT's source. That code was replaced the same day by code written,
+    without studying it, by someone who had not read the UCRT's source, from black-box tests alone
+    (the `ucrt_` tests of `crates/orca-fmt/tests/fmt.rs`). The earlier version stays in this
+    repository's history: whether that history may be published as it is, or should be rewritten
+    before the commits after `0da2256` are pushed, is for the maintainers and counsel;
   - "version 3" only, as OrcaSlicer's README grants it, against the "or later" of some of the code
     Orca carries (ArcWelderLib; libvgcode, which the engine does not build);
   - the OrcaSlicer name and any trademark in it, in the name "sketch-orca" and in a client's

@@ -111,7 +111,7 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
   say(`written: ${files.report}`)
   if (only) return 0
   const kept = passes.find((p) => p.label === oracleLabel(1))!
-  const index = keepGoldens({ pass: kept, store: files.store(kept.label), goldens: files.goldens, corpusSha256, root: files.root, resources: oracle.resources, work: ctx.work.home })
+  const index = keepGoldens({ pass: kept, store: files.store(kept.label), goldens: files.goldens, corpusSha256, root: files.root, resources: oracle.resources, work: ctx.work.home, oracle: { exeSha256: oracle.manifest.exe.sha256, cli: oracle.manifest.cli } })
   say(`goldens: ${kept.label} kept in ${files.goldens}`)
   const front = writeFrontGoldens({ doc, index, goldens: files.goldens, engineDir: ctx.engine.engine })
   say(`front-end goldens: ${front.length} files in parity/goldens/front`)

@@ -1610,3 +1610,459 @@ fn ostream_matches_recorded_msvc_output() {
         assert_eq!(stream.width, 0);
     }
 }
+
+// The black-box tests of the UCRT's strtod and strtof that the parser's UCRT rules come from
+// (parse.rs, `Rules`, `ucrt_nan_sequence`): each finds the behaviour in the UCRT itself, says
+// where it differs from the STL's from_chars, and holds orca-fmt to the UCRT on every case.
+
+/// The UCRT's `strtod` of `text`: the value's bits, the bytes read and `errno`.
+fn ucrt_strtod(text: &[u8]) -> (u64, usize, c_int) {
+    let mut c_text = text.to_vec();
+    c_text.push(0);
+    let start = c_text.as_ptr().cast::<c_char>();
+    let mut end: *mut c_char = std::ptr::null_mut();
+    set_errno(0);
+    // SAFETY: c_text is NUL-terminated; end receives a pointer into it.
+    let d = unsafe { ucrt::strtod(start, &raw mut end) };
+    (d.to_bits(), end as usize - start as usize, errno())
+}
+
+/// The UCRT's `strtof` of `text`, as [`ucrt_strtod`].
+fn ucrt_strtof(text: &[u8]) -> (u64, usize, c_int) {
+    let mut c_text = text.to_vec();
+    c_text.push(0);
+    let start = c_text.as_ptr().cast::<c_char>();
+    let mut end: *mut c_char = std::ptr::null_mut();
+    set_errno(0);
+    // SAFETY: as in ucrt_strtod.
+    let f = unsafe { ucrt::strtof(start, &raw mut end) };
+    (
+        u64::from(f.to_bits()),
+        end as usize - start as usize,
+        errno(),
+    )
+}
+
+fn ours_strtod(text: &[u8]) -> (u64, usize, c_int) {
+    let r = parse::strtod(text);
+    (r.value.to_bits(), r.end, errno_of(r.errno))
+}
+
+fn ours_strtof(text: &[u8]) -> (u64, usize, c_int) {
+    let r = parse::strtof(text);
+    (u64::from(r.value.to_bits()), r.end, errno_of(r.errno))
+}
+
+/// `std::from_chars` of a double: the value's bits.
+fn stl_from_chars(text: &[u8]) -> u64 {
+    let mut v = 0f64;
+    let r = parse::from_chars_float(text, &mut v, CharsFormat::General);
+    assert_eq!(r.ptr, text.len(), "{}", String::from_utf8_lossy(text));
+    v.to_bits()
+}
+
+/// The decimal digits of a little-endian big integer.
+fn big_decimal(limbs: &[u32]) -> Vec<u8> {
+    let mut v = limbs.to_vec();
+    let mut chunks = Vec::new();
+    while v.last() == Some(&0) {
+        v.pop();
+    }
+    while !v.is_empty() {
+        let mut rem = 0u64;
+        for limb in v.iter_mut().rev() {
+            let cur = (rem << 32) | u64::from(*limb);
+            *limb = (cur / 1_000_000_000) as u32;
+            rem = cur % 1_000_000_000;
+        }
+        chunks.push(rem as u32);
+        while v.last() == Some(&0) {
+            v.pop();
+        }
+    }
+    let mut out = chunks.last().map_or_else(|| "0".to_owned(), u32::to_string);
+    for chunk in chunks.iter().rev().skip(1) {
+        out.push_str(&format!("{chunk:09}"));
+    }
+    out.into_bytes()
+}
+
+/// `n * 2^e` written exactly: its digits, without trailing zeros, and the power of ten they are
+/// multiplied by.
+fn exact_decimal(n: u64, e: i32) -> (Vec<u8>, i32) {
+    let mut limbs = vec![n as u32, (n >> 32) as u32];
+    let mut exp10 = 0;
+    if e >= 0 {
+        for _ in 0..e {
+            let mut carry = 0u32;
+            for limb in &mut limbs {
+                let next = *limb >> 31;
+                *limb = (*limb << 1) | carry;
+                carry = next;
+            }
+            if carry > 0 {
+                limbs.push(carry);
+            }
+        }
+    } else {
+        // n * 2^e = n * 5^-e * 10^e.
+        for _ in 0..-e {
+            let mut carry = 0u64;
+            for limb in &mut limbs {
+                let v = u64::from(*limb) * 5 + carry;
+                *limb = v as u32;
+                carry = v >> 32;
+            }
+            if carry > 0 {
+                limbs.push(carry as u32);
+            }
+        }
+        exp10 = e;
+    }
+    let mut digits = big_decimal(&limbs);
+    while digits.len() > 1 && digits.last() == Some(&b'0') {
+        digits.pop();
+        exp10 += 1;
+    }
+    (digits, exp10)
+}
+
+/// `digits * 10^exp10` as text: `<digits>e<exp10>`.
+fn decimal_text(digits: &[u8], exp10: i32) -> Vec<u8> {
+    let mut t = digits.to_vec();
+    t.extend_from_slice(format!("e{exp10}").as_bytes());
+    t
+}
+
+/// The tie above the positive finite double or float of `bits`: `(digits, exp10)`, with the
+/// number of decimal places it has.
+fn tie_above(bits: u64, mantissa_bits: u32, exponent_bits: u32) -> (Vec<u8>, i32, i32) {
+    let fraction_mask = (1u64 << (mantissa_bits - 1)) - 1;
+    let biased = (bits >> (mantissa_bits - 1)) as i32;
+    let bias = (1 << (exponent_bits - 1)) - 1;
+    let (m, e) = if biased == 0 {
+        (bits & fraction_mask, 1 - bias - (mantissa_bits as i32 - 1))
+    } else {
+        (
+            (bits & fraction_mask) | (fraction_mask + 1),
+            biased - bias - (mantissa_bits as i32 - 1),
+        )
+    };
+    let (digits, exp10) = exact_decimal(2 * m + 1, e - 1);
+    (digits, exp10, -exp10)
+}
+
+/// Exact ties between two doubles or two floats, read by `strtod` and `strtof`. The UCRT rounds a
+/// tie to even, except when its fractional part has eight or nine decimal places, and is not too
+/// small: then it rounds up. That is a fraction divided by a one-element denominator (10^8 or
+/// 10^9) with a numerator of two or more elements, whose zero remainder the UCRT takes for one
+/// that is not; `from_chars` rounds every tie to even.
+#[test]
+fn ucrt_rounds_some_ties_up() {
+    install_handler();
+    let mut rng = Rng(0x5EED_0009);
+    let mut mismatches = Mismatches::default();
+    let mut cases = 0u64;
+    let mut up_not_even = [0u64; 2];
+    for i in 0..240_000u64 {
+        let double = i % 3 != 0;
+        let bits = if double {
+            // Binary exponents from 2^-10 to 2^60 above 1, where ties have fractional digits,
+            // and every other one now and then.
+            let biased = if i % 7 == 0 {
+                1 + rng.below(2045)
+            } else {
+                1013 + rng.below(70)
+            };
+            (biased << 52) | (rng.next() & ((1 << 52) - 1))
+        } else {
+            let biased = if i % 7 == 0 {
+                1 + rng.below(253)
+            } else {
+                117 + rng.below(40)
+            };
+            (biased << 23) | (rng.next() & ((1 << 23) - 1))
+        };
+        let (mantissa_bits, exponent_bits, last) = if double {
+            (53, 11, 0x7FEF_FFFF_FFFF_FFFF)
+        } else {
+            (24, 8, 0x7F7F_FFFF)
+        };
+        if bits >= last {
+            continue;
+        }
+        let (digits, exp10, places) = tie_above(bits, mantissa_bits, exponent_bits);
+        let text = decimal_text(&digits, exp10);
+        let (theirs, ours) = if double {
+            (ucrt_strtod(&text), ours_strtod(&text))
+        } else {
+            (ucrt_strtof(&text), ours_strtof(&text))
+        };
+        cases += 1;
+        if ours != theirs {
+            mismatches.add(format!(
+                "{} {:?}: orca-fmt {ours:x?} UCRT {theirs:x?}",
+                if double { "strtod" } else { "strtof" },
+                String::from_utf8_lossy(&text)
+            ));
+        }
+        let even = if bits % 2 == 0 { bits } else { bits + 1 };
+        if theirs.0 != even {
+            assert_eq!(theirs.0, bits + 1, "a tie read as neither neighbour");
+            assert!(
+                places == 8 || places == 9,
+                "the UCRT rounds up a tie with {places} decimal places: {}",
+                String::from_utf8_lossy(&text)
+            );
+            up_not_even[usize::from(double)] += 1;
+        }
+        if double {
+            assert_eq!(
+                stl_from_chars(&text),
+                even,
+                "from_chars rounds ties to even"
+            );
+        }
+    }
+    mismatches.assert_none(cases, "ties");
+    assert!(cases > 239_000, "{cases} ties");
+    assert!(
+        up_not_even[0] > 1000 && up_not_even[1] > 1000,
+        "ties the UCRT rounds up: {up_not_even:?}"
+    );
+
+    // Two of the ties found this way, with eight and nine decimal places: up for strtod, even for
+    // from_chars.
+    for (text, even) in [
+        (&b"39902590343405.22265625"[..], 0x42C2_2545_DC8C_769Cu64),
+        (b"21362022564617.869140625", 0x42B3_6DBB_C443_09DE),
+    ] {
+        assert_eq!(ucrt_strtod(text).0, even + 1);
+        assert_eq!(ours_strtod(text).0, even + 1);
+        assert_eq!(stl_from_chars(text), even);
+    }
+}
+
+/// A significant digit after the 768th, decimal or hexadecimal, is ignored by the UCRT: a tie with
+/// a 1 as its 768th digit rounds up, with the 1 as its 769th it rounds as the tie (to even), and
+/// leading zeros, before or after the point, are not counted. `from_chars` counts the 769th digit
+/// as a tail that is not zero and rounds up.
+#[test]
+fn ucrt_ignores_digits_after_the_768th() {
+    install_handler();
+    let mut rng = Rng(0x5EED_000A);
+    let mut mismatches = Mismatches::default();
+    let mut cases = 0u64;
+    let mut ties = 0u64;
+    while ties < 300 {
+        // An even double, so that its tie rounds down; whole numbers and fractions.
+        let biased = if ties.is_multiple_of(2) {
+            1076 + rng.below(200)
+        } else {
+            960 + rng.below(60)
+        };
+        let bits = ((biased << 52) | (rng.next() & ((1 << 52) - 1))) & !1;
+        let (digits, exp10, _) = tie_above(bits, 53, 11);
+        if digits.len() >= 700 {
+            continue;
+        }
+        ties += 1;
+        for (place, rounds_up) in [(768usize, true), (769, false), (900, false)] {
+            for lead in [0usize, 1, 120] {
+                // <lead zeros><tie digits><zeros>1 e<power>, the 1 the place-th significant digit.
+                let mut text = vec![b'0'; lead];
+                text.extend_from_slice(&digits);
+                text.resize(lead + place - 1, b'0');
+                text.push(b'1');
+                let power = exp10 - (place - digits.len()) as i32;
+                text.extend_from_slice(format!("e{power}").as_bytes());
+                // The same with the point after the first digit, and as 0.<lead zeros><digits>.
+                let significant = &text[lead..lead + place];
+                let mut pointed = significant[..1].to_vec();
+                pointed.push(b'.');
+                pointed.extend_from_slice(&significant[1..]);
+                pointed.extend_from_slice(format!("e{}", power + place as i32 - 1).as_bytes());
+                let mut fraction = b"0.".to_vec();
+                fraction.resize(2 + lead, b'0');
+                fraction.extend_from_slice(significant);
+                fraction
+                    .extend_from_slice(format!("e{}", power + (place + lead) as i32).as_bytes());
+                for t in [&text, &pointed, &fraction] {
+                    let theirs = ucrt_strtod(t);
+                    cases += 1;
+                    if ours_strtod(t) != theirs {
+                        mismatches.add(format!("strtod {:?}", String::from_utf8_lossy(t)));
+                    }
+                    assert_eq!(theirs.0, if rounds_up { bits + 1 } else { bits });
+                    assert_eq!(stl_from_chars(t), bits + 1);
+                }
+            }
+        }
+    }
+
+    // Hexadecimal: 1 + 2^-53 is a tie; a 1 as its 768th hexadecimal digit rounds it up.
+    for (place, up) in [(700usize, true), (768, true), (769, false), (2000, false)] {
+        let mut text = b"0x1.00000000000008".to_vec();
+        text.resize(text.len() + place - 16, b'0');
+        text.push(b'1');
+        let theirs = ucrt_strtod(&text);
+        cases += 1;
+        if ours_strtod(&text) != theirs {
+            mismatches.add(format!("strtod hex, 1 at {place}"));
+        }
+        assert_eq!(
+            theirs.0,
+            0x3FF0_0000_0000_0000 + u64::from(up),
+            "hex 1 at {place}"
+        );
+    }
+    mismatches.assert_none(cases, "digits");
+    assert_eq!(cases, 300 * 3 * 3 * 3 + 4);
+}
+
+/// The UCRT takes an exponent above 5200 for an overflow and one below -5200 for an underflow
+/// (`ERANGE`), before the digits' place is added: `0.<5195 zeros>1e5201` is infinite though it is
+/// 1e5. At 5200 and -5200 the place is added. Hexadecimal binary exponents alike. `from_chars`
+/// adds the place first.
+#[test]
+fn ucrt_exponent_limit() {
+    install_handler();
+    let mut mismatches = Mismatches::default();
+    let mut cases = 0u64;
+    for zeros in [0usize, 400, 5000, 5195, 5199, 5200, 5201, 9000] {
+        for exponent in [5195i64, 5199, 5200, 5201, 5202, 9999] {
+            let z = "0".repeat(zeros);
+            let texts = [
+                format!("0.{z}1e{exponent}"),
+                format!("1{z}e-{exponent}"),
+                format!("-1{z}e-{exponent}"),
+                format!("0x0.{z}1p{exponent}"),
+                format!("0x1{z}p-{exponent}"),
+            ];
+            for t in texts {
+                let t = t.as_bytes();
+                for (theirs, ours, name) in [
+                    (ucrt_strtod(t), ours_strtod(t), "strtod"),
+                    (ucrt_strtof(t), ours_strtof(t), "strtof"),
+                ] {
+                    cases += 1;
+                    if ours != theirs {
+                        mismatches.add(format!(
+                            "{name} {:?}…: orca-fmt {ours:x?} UCRT {theirs:x?}",
+                            String::from_utf8_lossy(&t[..t.len().min(20)])
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    mismatches.assert_none(cases, "exponents");
+    assert_eq!(cases, 8 * 6 * 5 * 2);
+
+    let z = "0".repeat(5195);
+    let infinity = f64::INFINITY.to_bits();
+    for (text, value, range_error, stl) in [
+        (format!("0.{z}1e5201"), infinity, true, 1e5f64.to_bits()),
+        (
+            format!("0.{z}1e5200"),
+            1e4f64.to_bits(),
+            false,
+            1e4f64.to_bits(),
+        ),
+        (format!("1{z}e-5201"), 0, true, 1e-6f64.to_bits()),
+        (
+            format!("1{z}e-5200"),
+            1e-5f64.to_bits(),
+            false,
+            1e-5f64.to_bits(),
+        ),
+    ] {
+        let theirs = ucrt_strtod(text.as_bytes());
+        assert_eq!(
+            (theirs.0, theirs.2 == ERANGE),
+            (value, range_error),
+            "{}…",
+            &text[..12]
+        );
+        assert_eq!(stl_from_chars(text.as_bytes()), stl);
+    }
+    let z = "0".repeat(1300);
+    assert_eq!(ucrt_strtod(format!("0x0.{z}1p5201").as_bytes()).0, infinity);
+    assert_eq!(
+        ucrt_strtod(format!("0x0.{z}1p5200").as_bytes()).0,
+        0.0625f64.to_bits()
+    );
+}
+
+/// The NaN spellings of the UCRT's `strtod` and `strtof`: `nan(` with a sequence of letters,
+/// digits and `_` and a `)` is read whole, and anything else after `nan` is not. `nan` is the quiet
+/// NaN with every payload bit set; `snan` in any case is the signalling NaN with payload 1, its
+/// sign kept; `ind` alone or after `s`, `sn`, `sna` or `snan`, in any case, is the negative quiet
+/// NaN without payload, even after a `+`. Every sequence of up to five of the characters below,
+/// with and without a sign, is compared.
+#[test]
+fn ucrt_nan_spellings() {
+    install_handler();
+    const CHARACTERS: &[u8] = b"snaidSNID_x()";
+    let mut mismatches = Mismatches::default();
+    let mut cases = 0u64;
+    let mut sequences: Vec<Vec<u8>> = vec![Vec::new()];
+    let mut all = Vec::new();
+    for _ in 0..5 {
+        let mut longer = Vec::new();
+        for s in &sequences {
+            for &c in CHARACTERS {
+                let mut t = s.clone();
+                t.push(c);
+                longer.push(t);
+            }
+        }
+        all.extend(longer.iter().cloned());
+        sequences = longer;
+    }
+    for sequence in &all {
+        for sign in [&b""[..], b"-", b"+"] {
+            let mut text = sign.to_vec();
+            text.extend_from_slice(b"nan(");
+            text.extend_from_slice(sequence);
+            for (theirs, ours) in [
+                (ucrt_strtod(&text), ours_strtod(&text)),
+                (ucrt_strtof(&text), ours_strtof(&text)),
+            ] {
+                cases += 1;
+                if ours != theirs {
+                    mismatches.add(format!(
+                        "{:?}: orca-fmt {ours:x?} UCRT {theirs:x?}",
+                        String::from_utf8_lossy(&text)
+                    ));
+                }
+            }
+        }
+    }
+    mismatches.assert_none(cases, "nan");
+    let n = CHARACTERS.len() as u64;
+    assert_eq!(cases, (n + n * n + n.pow(3) + n.pow(4) + n.pow(5)) * 3 * 2);
+
+    for (text, bits, end) in [
+        (&b"nan"[..], 0x7FFF_FFFF_FFFF_FFFFu64, 3),
+        (b"-nan", 0xFFFF_FFFF_FFFF_FFFF, 4),
+        (b"nan(", 0x7FFF_FFFF_FFFF_FFFF, 3),
+        (b"nan(ab c)", 0x7FFF_FFFF_FFFF_FFFF, 3),
+        (b"nan(_x9)", 0x7FFF_FFFF_FFFF_FFFF, 8),
+        (b"+nan(ind)", 0xFFF8_0000_0000_0000, 9),
+        (b"nan(InD)", 0xFFF8_0000_0000_0000, 8),
+        (b"nan(snaind)", 0xFFF8_0000_0000_0000, 11),
+        (b"nan(snanind)", 0xFFF8_0000_0000_0000, 12),
+        (b"nan(xind)", 0x7FFF_FFFF_FFFF_FFFF, 9),
+        (b"nan(snan)", 0x7FF0_0000_0000_0001, 9),
+        (b"-nan(SNAN)", 0xFFF0_0000_0000_0001, 10),
+        (b"nan(snan)ind)", 0x7FF0_0000_0000_0001, 9),
+    ] {
+        assert_eq!(
+            ucrt_strtod(text),
+            (bits, end, 0),
+            "{}",
+            String::from_utf8_lossy(text)
+        );
+    }
+}

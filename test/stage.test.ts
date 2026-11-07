@@ -41,6 +41,7 @@ import {
   RUST_LICENSE_TEXTS,
   rustLicenseCopies,
   runtimeRefusal,
+  rustRuntimeRefusal,
   serializeManifest,
   STAGED_CASES,
   stagedEnv,
@@ -663,6 +664,22 @@ describe('runtime libraries', () => {
     // The static runtime's engine, with GMP's msvcrt.dll, passes.
     expect(runtimeRefusal({ copy: [], system: ['KERNEL32.dll', 'msvcrt.dll'], missing: [], crt: [] })).toBeUndefined()
     expect(runtimeRefusal({ copy: [], system: [], missing: ['zlib1.dll (needed by TKernel.dll)'], crt: [] })).toContain('not all found: zlib1.dll')
+  })
+
+  test('Windows: stage refuses a sketch-orca-rs that loads the dynamic C runtime or a library Windows lacks', () => {
+    const io = (imports: string[]): RuntimeIo => ({
+      importsOf: (p) => (p === '/t/sketch-orca-rs.exe' ? imports : []),
+      find: () => undefined,
+      isSystem: (n) => ['kernel32.dll', 'ntdll.dll', 'dbghelp.dll', 'ucrtbase.dll', 'vcruntime140.dll'].includes(n.toLowerCase()),
+    })
+    // What the static runtime's build imports.
+    expect(rustRuntimeRefusal('/t/sketch-orca-rs.exe', io(['KERNEL32.dll', 'api-ms-win-core-synch-l1-2-0.dll', 'dbghelp.dll', 'ntdll.dll']))).toBeUndefined()
+    for (const crt of ['ucrtbase.dll', 'api-ms-win-crt-runtime-l1-1-0.dll', 'VCRUNTIME140.dll', 'msvcp140.dll']) {
+      const refusal = rustRuntimeRefusal('/t/sketch-orca-rs.exe', io(['KERNEL32.dll', crt]))
+      expect(refusal).toContain("MSVC's dynamic C runtime")
+      expect(refusal).toContain(crt)
+    }
+    expect(rustRuntimeRefusal('/t/sketch-orca-rs.exe', io(['KERNEL32.dll', 'zlib1.dll']))).toContain('Windows does not have: zlib1.dll')
   })
 
   test('ldd output: resolved, not found, and the lines without =>', () => {

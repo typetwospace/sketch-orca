@@ -3,8 +3,10 @@
 // value; an output classed R passes within the envelope of the engine's own variance and nowhere
 // else; a decline (not-ported, -8) passes for the front families alone, and only for a job the C++
 // got past reading; a family is certified when every run of every case passes; parity.json's flags
-// are raised and never lowered, and a certified family that fails is a regression. Hermetic: the
-// runs are written to a temporary folder.
+// are raised and never lowered, and a certified family that fails is a regression; every corpus
+// job that reaches an uncertified family must be declined naming it; goldens count only when
+// parity neutral passed with the staged oracle and they were recorded with it. Hermetic: the runs
+// are written to a temporary folder.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
@@ -12,11 +14,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   compareCase,
+  declineGaps,
   declineProblems,
   familyVerdicts,
   FRONT_FAMILIES,
   isResult,
   normaliseEngine,
+  oracleChainProblems,
   progressStages,
   raiseCertified,
   rustProgramPath,
@@ -270,6 +274,50 @@ describe('the program', () => {
     const later = new Date(Date.UTC(2026, 0, 3))
     for (const f of ['crates/a/src/lib.rs', 'crates/a/tests/t.rs', 'parity/parity.json']) utimesSync(join(repo, ...f.split('/')), later, later)
     expect(staleSources(exe, sources)).toEqual([join(repo, 'crates', 'a', 'src', 'lib.rs')])
+  })
+})
+
+describe('the decline against the corpus jobs', () => {
+  const families = [family('intake', []), family('model-load', ['m'], true), family('supports', ['m']), family('raft', ['m'])]
+  const declining = (missing: string[], code = -8) => {
+    const r = side('rust')
+    const fields = NOT_PORTED_FIELDS.replace('[\n    "model-load"\n  ]', JSON.stringify(missing))
+    return { side: r, record: caseRecord('m', [keep(r, 'm', 0, { code, files: { 'progress.ndjson': PROGRESS_JOB, 'result.json': result(fields, RUST_ENGINE) } })]) }
+  }
+
+  test('every uncertified family a job reaches leads to not-ported, naming it', () => {
+    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports', 'raft'], families, rust: declining(['supports', 'raft']) })).toEqual([])
+    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports', 'raft'], families, rust: declining(['supports']) })).toEqual(['m/0: its decline does not name raft, which the job reaches and parity.json does not certify'])
+    // The low byte of -8 is a decline too.
+    expect(declineGaps({ caseId: 'm', reaches: ['supports'], families, rust: declining(['supports'], 248) })).toEqual([])
+  })
+
+  test('a run that is not declined, or not run, is a gap; a job of certified families alone is not held', () => {
+    const r = side('rust')
+    const ran = { side: r, record: caseRecord('m', [keep(r, 'm', 0, { code: 0, files: { 'result.json': result('  "ok": true', RUST_ENGINE) } })]) }
+    expect(declineGaps({ caseId: 'm', reaches: ['model-load', 'supports'], families, rust: ran }).join()).toContain('was not declined')
+    expect(declineGaps({ caseId: 'm', reaches: ['supports'], families, rust: { side: r, record: undefined } })).toEqual(['m: the Rust program did not run it'])
+    expect(declineGaps({ caseId: 'm', reaches: ['intake', 'model-load'], families, rust: ran })).toEqual([])
+  })
+})
+
+describe('the oracle behind the goldens', () => {
+  const oracle = { exeSha256: 'a'.repeat(64), cli: 'c'.repeat(64) }
+  const neutral = (exeSha256: string, passed = true) => ({ passed, engines: { head: {} as never, oracle: { dir: '', exeSha256, oraclePatches: [], sourceDigest: '' } } })
+  test('passes when parity neutral passed with the staged oracle and the goldens were recorded with it', () => {
+    expect(oracleChainProblems({ oracle, neutral: neutral(oracle.exeSha256), goldens: { oracle } })).toEqual([])
+  })
+
+  test('refuses goldens of an oracle built from another cli/, or that do not name their oracle', () => {
+    expect(oracleChainProblems({ oracle, neutral: neutral(oracle.exeSha256), goldens: { oracle: { ...oracle, cli: 'd'.repeat(64) } } }).join()).toContain('recorded with another oracle')
+    expect(oracleChainProblems({ oracle, neutral: neutral(oracle.exeSha256), goldens: { oracle: { ...oracle, exeSha256: 'b'.repeat(64) } } }).join()).toContain('run parity record')
+    expect(oracleChainProblems({ oracle, neutral: neutral(oracle.exeSha256), goldens: {} }).join()).toContain('do not name the oracle')
+  })
+
+  test('refuses when parity neutral did not run, ran with another oracle or failed', () => {
+    expect(oracleChainProblems({ oracle, neutral: undefined, goldens: { oracle } }).join()).toContain('parity neutral has not run')
+    expect(oracleChainProblems({ oracle, neutral: neutral('b'.repeat(64)), goldens: { oracle } }).join()).toContain('another oracle than the one staged; run parity neutral')
+    expect(oracleChainProblems({ oracle, neutral: neutral(oracle.exeSha256, false), goldens: { oracle } }).join()).toContain('did not pass')
   })
 })
 

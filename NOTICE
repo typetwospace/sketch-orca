@@ -172,9 +172,16 @@ translated into Rust. Each file that carries it says what it carries, from which
 
 The Rust translation matches Microsoft's Universal C Runtime (the static UCRT the engine links:
 its maths functions, printf, strtod and strtof, and rand) from black-box tests of the C++ engine's
-own build (parity/oracle/probe/, the records in parity/probes/), not from its source: the UCRT's
-source is not open source, and nothing of it is carried (CONTRIBUTING.md, "Behaviour without
-source").
+own build (parity/oracle/probe/, the records in parity/probes/) and of the UCRT linked into the
+tests (crates/orca-fmt/tests/fmt.rs), not from its source: the UCRT's source is not open source,
+and nothing of it is carried (CONTRIBUTING.md, "Behaviour without source"). One exception was
+found and removed: the first version of crates/orca-fmt/src/parse.rs (2026-11-06) took three
+places where strtod and strtof round otherwise than the STL's from_chars, and their NaN
+spellings, from a reading of the UCRT's source in the Windows SDK. On 2026-11-06 that code was
+replaced, without being studied, by code written by someone who had not read that source: the
+behaviours were found again with black-box tests of the UCRT alone (the ucrt_ tests of
+crates/orca-fmt/tests/fmt.rs), and the STL functions they sit in were translated again from the
+STL. The earlier version remains in this repository's history (README.md, open items).
 
 
 What was changed, and when

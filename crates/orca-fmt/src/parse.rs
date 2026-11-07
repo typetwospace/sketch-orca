@@ -10,9 +10,10 @@
 
 // Carries Microsoft STL code: from_chars_int is translated from stl/inc/charconv
 // (_Integer_from_chars), from_chars_float and its helpers from stl/inc/charconv (_Big_integer_flt
-// and its operations, _Assemble_floating_point_zero, _Assemble_floating_point_infinity,
-// _Right_shift_with_rounding, _Assemble_floating_point_value_no_shift,
-// _Assemble_floating_point_value, _Assemble_floating_point_value_from_big_integer_flt,
+// and its operations, _Divide among them, _Assemble_floating_point_zero,
+// _Assemble_floating_point_infinity, _Right_shift_with_rounding,
+// _Assemble_floating_point_value_no_shift, _Assemble_floating_point_value,
+// _Assemble_floating_point_value_from_big_integer_flt,
 // _Accumulate_decimal_digits_into_big_integer_flt, _Convert_decimal_string_to_floating_type,
 // _Convert_hexadecimal_string_to_floating_type, _Ordinary_floating_from_chars,
 // _Infinity_from_chars, _Nan_from_chars and _Floating_from_chars) and stl/inc/xbit_ops.h
@@ -22,15 +23,24 @@
 // Corporation, and it is under Apache-2.0 WITH LLVM-exception (licenses/Apache-2.0.txt and
 // licenses/LLVM-exception.txt). The STL marks its floating-point parser as derived from the UCRT's
 // corecrt_internal_big_integer.h and corecrt_internal_strtox.h; Microsoft publishes it, in the STL,
-// under that licence. strtod, strtof, the strtol family and atof, atoi, atol and atoll are not the
-// UCRT's code, whose source is not under an open licence: they are written from the C standard
-// (C17 7.22.1) around the STL's parser, with the UCRT's choices where the standard leaves them open
-// and the three places where the UCRT's rounding differs from the STL's (Parser). Those behaviours
-// come from black-box tests of the UCRT's own functions, never from the UCRT's source (which the
-// Windows SDK ships under Microsoft's own licence): tests/fmt.rs calls them and compares, and
-// parity/probes/fmt.sop1 records what the C++ engine's build of them does.
-// CONTRIBUTING.md, "Behaviour without source", gives the rule; README.md's open items hold the
-// question for counsel.
+// under that licence.
+//
+// strtod, strtof, the strtol family and atof, atoi, atol and atoll are not the UCRT's code, whose
+// source is not under an open licence. They are written from the C standard (C17 7.22.1) around
+// the STL's parser. Where the UCRT reads a number otherwise than the STL (Rules) or the standard
+// leaves the choice to it (its NaNs: ucrt_nan_sequence and ucrt_nan), they follow black-box tests
+// of the UCRT's own functions: tests/fmt.rs calls them and compares (the ucrt_ tests pin each of
+// these), and parity/probes/fmt.sop1 records what the C++ engine's build of them does.
+//
+// Provenance. The first version of this file (2026-11-06) took the UCRT's three rounding
+// differences and its NaN spellings from a reading of the UCRT's source in the Windows SDK, which
+// CONTRIBUTING.md does not allow. On 2026-11-06 that code was taken out, without being studied, and
+// written again by someone who had not read the UCRT's source: the differences and the NaN
+// spellings were found with black-box tests of the UCRT alone, and _Divide,
+// _Convert_decimal_string_to_floating_type and _Ordinary_floating_from_chars, where they sit, were
+// translated again from the STL's charconv of MSVC 14.42. The earlier version is still in this
+// repository's history (README.md, open items).
+// CONTRIBUTING.md, "Behaviour without source", gives the rule.
 
 //! Number parsing as the C++ engine's runtime does it: `std::from_chars` of MSVC 14.42's standard
 //! library, the UCRT's `strtod`, `strtof`, `strtol`, `strtoul`, `strtoll`, `strtoull`, `atof`,
@@ -46,19 +56,20 @@
 //!   correctly, ties to even.
 //! - [`strtod`] and [`strtof`]: leading white space (`isspace` in the "C" locale), a `+` or `-`,
 //!   then a decimal number, `0x` and a hexadecimal one, `inf`, `infinity`, `nan` or `nan(...)`, in
-//!   any case. The number is the STL's parser above with the UCRT's three differences: digits after
-//!   the 768th dropped, an exact tie rounded up after some divisions, and the exponent capped at
-//!   5201 (the private `Parser` enum says where). The UCRT's choices: `nan` and `nan(...)` give the
-//!   quiet NaN with every payload bit set, `nan(ind)` the negative quiet NaN without payload
-//!   (whatever its sign), `nan(snan)` the signalling NaN with payload 1, and a `(` that begins
-//!   `snan)` and goes on `ind)` is `(ind)` too; `0x` without a hex digit reads as the `0`;
-//!   `ERANGE` for an overflow (to an infinity) and for a result that rounds to zero, not for one
-//!   that is merely subnormal.
+//!   any case. The number is the STL's parser above, read as the UCRT reads it (the private
+//!   `Rules` enum): digits after the 768th ignored; an exponent above 5200 or below -5200
+//!   infinite or zero before the digits' place is added; and a tie rounded up, not to even, when
+//!   its fractional part is divided by a one-element denominator with a numerator of two or more
+//!   (eight or nine decimal places). The NaNs: `nan` and `nan(...)` give the quiet NaN with every
+//!   payload bit set, `nan(snan)` the signalling NaN with payload 1, and `nan(ind)`, also with
+//!   `s`, `sn`, `sna` or `snan` before the `ind`, the negative quiet NaN without payload, whatever
+//!   the sign. `0x` without a hex digit reads as the `0`; `ERANGE` for an overflow (to an infinity)
+//!   and for a result that rounds to zero, not for one that is merely subnormal.
 //! - [`strtol`], [`strtoul`], [`strtoll`], [`strtoull`]: `long` is 32 bits. Base 0 reads `0x` as
 //!   hexadecimal and a leading `0` as octal; with base 0 or 16, a `0x` without a hex digit after it
-//!   is no number at all (the UCRT's choice); an overflow gives the limit and `ERANGE`; `strtoul`
-//!   and `strtoull` negate a `-` number modulo 2^N. A base other than 0 and 2 to 36 is `EINVAL`
-//!   (the UCRT's invalid parameter).
+//!   is no number at all (the UCRT's choice, which `tests/fmt.rs` compares); an overflow gives the
+//!   limit and `ERANGE`; `strtoul` and `strtoull` negate a `-` number modulo 2^N. A base other than
+//!   0 and 2 to 36 is `EINVAL` (the UCRT's invalid parameter).
 //! - [`stod`] and the other `sto*`: the STL's code, `std::invalid_argument` when nothing was read
 //!   and `std::out_of_range` on `ERANGE`, as [`StoError`].
 //!
@@ -640,36 +651,53 @@ const fn count_sequential_high_zeroes(u: u32) -> u32 {
     u.leading_zeros()
 }
 
-/// Whose floating-point parser a parse follows. The UCRT's `strtod` and `strtof` work as the
-/// STL's `from_chars` does, in the default rounding mode the engine keeps, except in three ways,
-/// each compared with the UCRT itself in `tests/fmt.rs`:
+/// Whose reading of a decimal or hexadecimal number a parse follows. `std::from_chars` is the
+/// STL's (`Stl`). The UCRT's `strtod` and `strtof` (`Ucrt`) read three things otherwise; each was
+/// found by black-box tests of the UCRT's own functions, which `tests/fmt.rs` keeps (the `ucrt_`
+/// tests), never from the UCRT's source:
 ///
-/// - the digits after the 768th are dropped without a note of whether any of them was nonzero, so
-///   a longer input rounds as its first 768 digits do;
-/// - a zero remainder of the fractional part's division still counts as nonzero when the
-///   denominator fits one 32-bit element and the numerator does not, so an exact tie there rounds
-///   up, not to even: `strtof("52159.384765625")` is 52159.3867, `from_chars` gives 52159.3828;
-/// - the exponent is read up to 5201 and no further, and checked against ±5200 before the place of
-///   the point is added to it, so `0.` followed by 6000 zeros and `1e6000` is an overflow.
+/// - A significant digit after the 768th (decimal or hexadecimal) is ignored: it neither adds to
+///   the value nor puts the value above a tie, so a tie with a 1 as its 769th digit rounds as the
+///   tie does. The STL notes such a digit as a tail that is not zero.
+/// - An exponent above 5200 gives an infinity and one below -5200 a zero (`ERANGE` both), before
+///   the digits' place is counted: `0.<5300 zeros>1e5301` is infinite, `1<5300 zeros>e-5301` zero.
+///   The STL adds the digits' place first.
+/// - A tie rounds up (away from zero), not to even, when its fractional part is divided by a
+///   denominator of one 32-bit element (at most nine fraction digits) with a numerator of two or
+///   more: the UCRT then takes the remainder for one that is not zero. These are the double ties
+///   with eight or nine decimal places and the float ties with eight or nine, whose fraction is
+///   not too small (`strtod("39902590343405.22265625")` and `strtof("52159.38671875")` round up).
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Parser {
+enum Rules {
     /// `std::from_chars`.
     Stl,
-    /// The UCRT's `strtod` and `strtof`.
+    /// `strtod` and `strtof`.
     Ucrt,
 }
 
-/// `_Divide` (the STL's translation of .NET's `BigIntegerBuilder.ModDivCore`): leaves the
-/// remainder in `numerator` and returns the low 64 bits of the quotient.
-fn divide(numerator: &mut BigInteger, denominator: &BigInteger, parser: Parser) -> u64 {
+/// `_Divide`, which the STL translated from .NET's `BigIntegerBuilder.ModDivCore`: the low 64 bits
+/// of `numerator / denominator`, the remainder left in `numerator`, trimmed. The limbs above the
+/// remainder are set to zero again.
+fn divide(numerator: &mut BigInteger, denominator: &BigInteger) -> u64 {
+    let quotient = divide_core(numerator, denominator);
+    let used = numerator.used as usize;
+    numerator.data[used..].fill(0);
+    quotient
+}
+
+/// The body of `_Divide`.
+fn divide_core(numerator: &mut BigInteger, denominator: &BigInteger) -> u64 {
+    // A zero numerator: the quotient and the remainder are zero.
     if numerator.used == 0 {
         return 0;
     }
 
+    debug_assert!(denominator.used != 0, "division by zero");
+
     let mut max_numerator_element_index = numerator.used - 1;
     let max_denominator_element_index = denominator.used - 1;
 
-    // A one-element denominator takes the fast route.
+    // A denominator of one element: the fast route.
     if max_denominator_element_index == 0 {
         let small_denominator = denominator.data[0];
 
@@ -694,28 +722,27 @@ fn divide(numerator: &mut BigInteger, denominator: &BigInteger, parser: Parser) 
             return quotient;
         }
 
-        // Counting down, the last assignment to quotient is the right one.
+        // Counting down, the last assignment to the quotient is the right one.
         let mut quotient: u64 = 0;
         let mut uu: u64 = 0;
-        let small_denominator = u64::from(small_denominator);
-        let mut iv = max_numerator_element_index;
-        while iv != u32::MAX {
-            uu = (uu << 32) | u64::from(numerator.data[iv as usize]);
-            quotient = (quotient << 32).wrapping_add(u64::from((uu / small_denominator) as u32));
-            uu %= small_denominator;
-            iv = iv.wrapping_sub(1);
+        for iv in (0..=max_numerator_element_index as usize).rev() {
+            uu = (uu << 32) | u64::from(numerator.data[iv]);
+            quotient = (quotient << 32)
+                .wrapping_add(u64::from((uu / u64::from(small_denominator)) as u32));
+            uu %= u64::from(small_denominator);
         }
 
         numerator.data[1] = (uu >> 32) as u32;
         numerator.data[0] = uu as u32;
+
         numerator.used = if numerator.data[1] > 0 {
             2
-        } else if numerator.data[0] > 0 || parser == Parser::Ucrt {
-            // The UCRT keeps one element even for a zero remainder (see Parser).
+        } else if numerator.data[0] > 0 {
             1
         } else {
             0
         };
+
         return quotient;
     }
 
@@ -726,7 +753,7 @@ fn divide(numerator: &mut BigInteger, denominator: &BigInteger, parser: Parser) 
     let cu_den = max_denominator_element_index + 1;
     let cu_diff = (max_numerator_element_index - max_denominator_element_index) as i32;
 
-    // Whether the result has cu_diff or cu_diff + 1 digits.
+    // Whether the quotient has cu_diff or cu_diff + 1 elements.
     let mut cu_quo = cu_diff;
     let mut iu = max_numerator_element_index as i32;
     loop {
@@ -734,10 +761,11 @@ fn divide(numerator: &mut BigInteger, denominator: &BigInteger, parser: Parser) 
             cu_quo += 1;
             break;
         }
-        let d = denominator.data[(iu - cu_diff) as usize];
-        let n = numerator.data[iu as usize];
-        if d != n {
-            if d < n {
+
+        let den = denominator.data[(iu - cu_diff) as usize];
+        let num = numerator.data[iu as usize];
+        if den != num {
+            if den < num {
                 cu_quo += 1;
             }
             break;
@@ -749,9 +777,9 @@ fn divide(numerator: &mut BigInteger, denominator: &BigInteger, parser: Parser) 
         return 0;
     }
 
-    // The trial divisor, normalised so its high bit is set.
-    let mut u_den = denominator.data[cu_den as usize - 1];
-    let mut u_den_next = denominator.data[cu_den as usize - 2];
+    // The limbs for the trial divisions, normalised so the high bit is set.
+    let mut u_den = denominator.data[(cu_den - 1) as usize];
+    let mut u_den_next = denominator.data[(cu_den - 2) as usize];
 
     let cbit_shift_left = count_sequential_high_zeroes(u_den);
     let cbit_shift_right = 32 - cbit_shift_left;
@@ -760,36 +788,29 @@ fn divide(numerator: &mut BigInteger, denominator: &BigInteger, parser: Parser) 
         u_den_next <<= cbit_shift_left;
 
         if cu_den > 2 {
-            u_den_next |= denominator.data[cu_den as usize - 3] >> cbit_shift_right;
+            u_den_next |= denominator.data[(cu_den - 3) as usize] >> cbit_shift_right;
         }
     }
 
     let mut quotient: u64 = 0;
-    let mut iu = cu_quo;
-    loop {
-        iu -= 1;
-        if iu < 0 {
-            break;
-        }
-        let iu_u = iu as u32;
-
+    for iu in (0..cu_quo as u32).rev() {
         // The high (normalised) bits of the numerator.
-        let u_num_hi = if iu_u + cu_den <= max_numerator_element_index {
-            numerator.data[(iu_u + cu_den) as usize]
+        let u_num_hi = if iu + cu_den <= max_numerator_element_index {
+            numerator.data[(iu + cu_den) as usize]
         } else {
             0
         };
 
         let mut uu_num =
-            (u64::from(u_num_hi) << 32) | u64::from(numerator.data[(iu_u + cu_den - 1) as usize]);
+            (u64::from(u_num_hi) << 32) | u64::from(numerator.data[(iu + cu_den - 1) as usize]);
 
-        let mut u_num_next = numerator.data[(iu_u + cu_den - 2) as usize];
+        let mut u_num_next = numerator.data[(iu + cu_den - 2) as usize];
         if cbit_shift_left > 0 {
             uu_num = (uu_num << cbit_shift_left) | u64::from(u_num_next >> cbit_shift_right);
             u_num_next <<= cbit_shift_left;
 
-            if iu_u + cu_den >= 3 {
-                u_num_next |= numerator.data[(iu_u + cu_den - 3) as usize] >> cbit_shift_right;
+            if iu + cu_den >= 3 {
+                u_num_next |= numerator.data[(iu + cu_den - 3) as usize] >> cbit_shift_right;
             }
         }
 
@@ -810,8 +831,8 @@ fn divide(numerator: &mut BigInteger, denominator: &BigInteger, parser: Parser) 
             uu_rem = uu_rem.wrapping_add(u64::from(u_den));
         }
 
-        // Multiply and subtract; uu_quo may be one too large, in which case the denominator is
-        // added back.
+        // Multiply and subtract; the digit may be one too large, and a borrow at the end adds the
+        // denominator back and takes one from the digit.
         if uu_quo > 0 {
             let mut uu_borrow: u64 = 0;
 
@@ -821,35 +842,39 @@ fn divide(numerator: &mut BigInteger, denominator: &BigInteger, parser: Parser) 
 
                 let u_sub = uu_borrow as u32;
                 uu_borrow >>= 32;
-                let limb = &mut numerator.data[(iu_u + iu2) as usize];
-                if *limb < u_sub {
+                let ix = (iu + iu2) as usize;
+                if numerator.data[ix] < u_sub {
                     uu_borrow += 1;
                 }
-                *limb = limb.wrapping_sub(u_sub);
+
+                numerator.data[ix] = numerator.data[ix].wrapping_sub(u_sub);
             }
 
             if u64::from(u_num_hi) < uu_borrow {
+                // Add, with the carry.
                 let mut u_carry: u32 = 0;
                 for iu2 in 0..cu_den {
-                    let limb = &mut numerator.data[(iu_u + iu2) as usize];
-                    let sum = u64::from(*limb)
+                    let ix = (iu + iu2) as usize;
+                    let sum = u64::from(numerator.data[ix])
                         + u64::from(denominator.data[iu2 as usize])
                         + u64::from(u_carry);
-                    *limb = sum as u32;
+
+                    numerator.data[ix] = sum as u32;
                     u_carry = (sum >> 32) as u32;
                 }
+
                 uu_quo -= 1;
             }
 
-            max_numerator_element_index = iu_u + cu_den - 1;
+            max_numerator_element_index = iu + cu_den - 1;
         }
 
         quotient = (quotient << 32).wrapping_add(u64::from(uu_quo as u32));
     }
 
-    // Trim the remainder.
+    // The remainder, trimmed.
     let mut used = max_numerator_element_index + 1;
-    while used != 0 && numerator.data[used as usize - 1] == 0 {
+    while used != 0 && numerator.data[(used - 1) as usize] == 0 {
         used -= 1;
     }
     numerator.used = used;
@@ -1092,26 +1117,28 @@ fn accumulate_decimal_digits(digits: &[u8], result: &mut BigInteger) {
     }
 }
 
-/// `_Convert_decimal_string_to_floating_type`.
+/// `_Convert_decimal_string_to_floating_type`: `[sign] 0.mantissa * 10^exponent` as `T`, with the
+/// UCRT's reading of a remainder after the division under [`Rules::Ucrt`].
 fn convert_decimal_string<T: FromCharsFloat>(
     data: &FloatingPointString,
     mut has_zero_tail: bool,
-    parser: Parser,
+    rules: Rules,
 ) -> (T, Option<Errc>) {
-    // An N-bit mantissa takes N + 1 bits of precision: the extra one rounds.
+    // An N-bit mantissa takes N + 1 bits of precision, the last for rounding (fewer are fine: then
+    // there is nothing to round).
     let required_bits_of_precision = (T::MANTISSA_BITS + 1) as u32;
 
-    // 0.mantissa * 10^exponent: the first `exponent` digits (if positive) are the integer part,
-    // the rest the fractional part.
-    let positive_exponent = crate::cpp_max(data.exponent, 0) as u32;
+    // The input is 0.mantissa * 10^exponent. Its integer part is the first `exponent` digits, or
+    // all of them if there are fewer; with a zero or negative exponent it is empty. The other
+    // digits are the fractional part.
+    let positive_exponent = crate::cpp_max(0, data.exponent) as u32;
     let integer_digits_present = positive_exponent.min(data.mantissa_count);
     let integer_digits_missing = positive_exponent - integer_digits_present;
-    let integer_digits = &data.mantissa[..integer_digits_present as usize];
-    let fractional_digits =
-        &data.mantissa[integer_digits_present as usize..data.mantissa_count as usize];
+    let digits = &data.mantissa[..data.mantissa_count as usize];
+    let (integer_digits, fractional_digits) = digits.split_at(integer_digits_present as usize);
     let fractional_digits_present = fractional_digits.len() as u32;
 
-    // The integer part.
+    // The integer part as a big integer.
     let mut integer_value = BigInteger::new();
     accumulate_decimal_digits(integer_digits, &mut integer_value);
 
@@ -1125,7 +1152,8 @@ fn convert_decimal_string<T: FromCharsFloat>(
         );
     }
 
-    // With enough bits from the integer part, or no fractional part, the result is ready.
+    // With more bits than the precision needs, or no fractional part, the integer part is the
+    // value.
     let integer_bits_of_precision = bit_scan_reverse_big(&integer_value);
     {
         let has_zero_fractional_part = fractional_digits_present == 0 && has_zero_tail;
@@ -1140,19 +1168,20 @@ fn convert_decimal_string<T: FromCharsFloat>(
         }
     }
 
-    // Otherwise the fractional part gives more bits: as a fraction N/M, M a power of 10.
+    // Otherwise the fractional part gives the remaining bits: as a fraction N/M, N its digits and M
+    // the power of ten that makes N/M its value.
     let mut fractional_numerator = BigInteger::new();
     accumulate_decimal_digits(fractional_digits, &mut fractional_numerator);
 
     let fractional_denominator_exponent = if data.exponent < 0 {
-        fractional_digits_present + (-data.exponent) as u32
+        fractional_digits_present + data.exponent.unsigned_abs()
     } else {
         fractional_digits_present
     };
 
     let mut fractional_denominator = BigInteger::one();
     if !multiply_by_power_of_ten(&mut fractional_denominator, fractional_denominator_exponent) {
-        // With integer digits this cannot underflow, so it is a true underflow to zero.
+        // With integer digits the exponent cannot be this small: a true underflow.
         // Underflow example: "1e-2000".
         return (
             assemble_zero(data.is_negative),
@@ -1160,11 +1189,12 @@ fn convert_decimal_string<T: FromCharsFloat>(
         );
     }
 
-    // N < M. Normalise so that N's highest bit is where M's is, so that a shift of N by k bits
-    // gives k bits of precision.
+    // The numerator is below the denominator. Its high bit is moved to the denominator's, so that
+    // shifting it N bits further left gives N bits of precision.
     let fractional_numerator_bits = bit_scan_reverse_big(&fractional_numerator);
     let fractional_denominator_bits = bit_scan_reverse_big(&fractional_denominator);
 
+    // `denominator_bits > numerator_bits ? denominator_bits - numerator_bits : 0`.
     let fractional_shift = fractional_denominator_bits.saturating_sub(fractional_numerator_bits);
 
     if fractional_shift > 0 {
@@ -1177,9 +1207,10 @@ fn convert_decimal_string<T: FromCharsFloat>(
 
     let mut remaining_bits_of_precision_required = required_fractional_bits_of_precision;
     if integer_bits_of_precision > 0 {
-        // If the fractional part gives no bits and cannot affect rounding (5.0000000000000000000001),
-        // the integer part's bits are the result. When the shift equals the bits required, the
-        // fraction still decides the rounding, so the division is done.
+        // A fractional part whose digits start too far right to give a bit or to change the
+        // rounding leaves the integer part's bits as they are (5.0000000000000000000001). At a
+        // shift equal to the bits needed, it still decides the rounding (a large odd integer and
+        // .5 or more), so the division is done.
         if fractional_shift > remaining_bits_of_precision_required {
             return assemble_value_from_big_integer(
                 &integer_value,
@@ -1192,27 +1223,32 @@ fn convert_decimal_string<T: FromCharsFloat>(
         remaining_bits_of_precision_required -= fractional_shift;
     }
 
-    // Without an integer part the exponent comes from the fraction: the shift, or one more.
+    // Without an integer part, the exponent comes from the fractional part: the power of two that
+    // brings it into [1.0, 2.0), the shift above or one more.
     let fractional_exponent = if fractional_numerator.less_than(&fractional_denominator) {
         fractional_shift + 1
     } else {
         fractional_shift
     };
 
-    // The STL only checks this shift in its own debug builds. It fails, and leaves N zero, only
-    // for a denominator within 54 bits of the big integer's 3680, a value far below the least
-    // subnormal: the zero mantissa then underflows to zero, as the value does.
+    // The STL only checks this shift in its own test builds (`_STL_INTERNAL_CHECK`). It overflows
+    // for a value far below the smallest subnormal one, whose denominator already fills the big
+    // integer: the numerator is then zero, and the value rounds to zero with a range error.
     let _ = shift_left(
         &mut fractional_numerator,
         remaining_bits_of_precision_required,
     );
 
-    let mut fractional_mantissa =
-        divide(&mut fractional_numerator, &fractional_denominator, parser);
+    // Rules::Ucrt: a one-element denominator and a numerator of two or more elements leave a
+    // remainder the UCRT takes for one that is not zero.
+    let ucrt_remainder_not_zero =
+        rules == Rules::Ucrt && fractional_denominator.used == 1 && fractional_numerator.used >= 2;
 
-    has_zero_tail = has_zero_tail && fractional_numerator.used == 0;
+    let mut fractional_mantissa = divide(&mut fractional_numerator, &fractional_denominator);
 
-    // Drop any bits beyond those required.
+    has_zero_tail = has_zero_tail && fractional_numerator.used == 0 && !ucrt_remainder_not_zero;
+
+    // Drop any bits beyond the precision needed.
     let fractional_mantissa_bits = bit_scan_reverse_64(fractional_mantissa);
     if fractional_mantissa_bits > required_fractional_bits_of_precision {
         let shift = fractional_mantissa_bits - required_fractional_bits_of_precision;
@@ -1220,7 +1256,7 @@ fn convert_decimal_string<T: FromCharsFloat>(
         fractional_mantissa >>= shift;
     }
 
-    // The mantissa from the integer and fractional parts.
+    // The mantissa: the integer part's bits, then the fractional part's.
     let integer_mantissa_low = if integer_value.used > 0 {
         integer_value.data[0]
     } else {
@@ -1237,11 +1273,10 @@ fn convert_decimal_string<T: FromCharsFloat>(
     let complete_mantissa =
         (integer_mantissa << required_fractional_bits_of_precision) + fractional_mantissa;
 
-    // With an integer part, the exponent is its bits less one (for the form 1.xxx); without, the
-    // fractional exponent; and one less for the extra rounding bit.
+    // The exponent: one less than the integer part's bits, or the fractional exponent negated;
+    // then one less for the extra bit kept for rounding.
     let final_exponent = if integer_bits_of_precision > 0 {
-        // static_cast<int32_t> of the uint32_t difference: -1 for a single integer bit.
-        integer_bits_of_precision.wrapping_sub(2) as i32
+        integer_bits_of_precision as i32 - 2
     } else {
         -(fractional_exponent as i32) - 1
     };
@@ -1281,17 +1316,23 @@ fn convert_hexadecimal_string<T: FromCharsFloat>(
 }
 
 /// `_Ordinary_floating_from_chars`: digits, an optional point, more digits and an exponent, from
-/// `s[next..]`, with the sign already read.
+/// `s[next..]`, with the sign already read; `format` `Hex` reads hexadecimal digits (without `0x`)
+/// and a binary exponent after `p`. Under [`Rules::Ucrt`] the digits after the 768th are ignored
+/// and the exponent is held to ±5200 before the digits' place is added.
 fn ordinary_floating_from_chars<T: FromCharsFloat>(
     s: &[u8],
     value: &mut T,
     format: CharsFormat,
     minus_sign: bool,
     mut next: usize,
-    parser: Parser,
+    rules: Rules,
 ) -> FromCharsResult {
+    const MAXIMUM_TEMPORARY_DECIMAL_EXPONENT: i64 = 5200;
+    const MINIMUM_TEMPORARY_DECIMAL_EXPONENT: i64 = -5200;
+
     let is_hexadecimal = format == CharsFormat::Hex;
     let base: u8 = if is_hexadecimal { 16 } else { 10 };
+    let last = s.len();
 
     let mut fp_string = FloatingPointString {
         is_negative: minus_sign,
@@ -1302,11 +1343,11 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
     let mantissa_last = fp_string.mantissa.len();
     let mut mantissa_it = 0;
 
-    // [whole_begin, whole_end): 0 or more digits.
+    // [whole_begin, whole_end): the digits before the point, if any.
     let whole_begin = next;
 
-    // Leading zeroes.
-    while s.get(next) == Some(&b'0') {
+    // The leading zeros of the mantissa.
+    while next != last && s[next] == b'0' {
         next += 1;
     }
     let leading_zero_end = next;
@@ -1314,48 +1355,49 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
     let mut has_zero_tail = true;
 
     // The integer part.
-    while let Some(&c) = s.get(next) {
-        let digit_value = digit_from_char(c);
+    while next != last {
+        let digit_value = digit_from_char(s[next]);
         if digit_value >= base {
             break;
         }
         if mantissa_it != mantissa_last {
             fp_string.mantissa[mantissa_it] = digit_value;
             mantissa_it += 1;
-        } else {
+        } else if rules == Rules::Stl {
             has_zero_tail = has_zero_tail && digit_value == 0;
         }
         next += 1;
     }
     let whole_end = next;
 
-    // The digits in the buffer before the point: "03333.111" 4, "00000.111" 0, "00000.001" -2.
+    // The digits of the buffer that come before the point; leading zeros are not counted, so it
+    // can be negative: 4 for "03333.111", 0 for "00000.111", -2 for "00000.001".
     let mut exponent_adjustment = (whole_end - leading_zero_end) as i64;
 
-    // [whole_end, dot_end): 0 or 1 '.'.
-    if s.get(next) == Some(&b'.') {
+    // [whole_end, dot_end): a point, if there is one.
+    if next != last && s[next] == b'.' {
         next += 1;
     }
     let dot_end = next;
 
-    // Without a nonzero digit yet, the zeroes after the point go too, into the adjustment.
+    // With no nonzero digit yet, the zeros after the point are skipped too, and counted.
     if exponent_adjustment == 0 {
-        while s.get(next) == Some(&b'0') {
+        while next != last && s[next] == b'0' {
             next += 1;
         }
         exponent_adjustment = dot_end as i64 - next as i64;
     }
 
     // The fractional part.
-    while let Some(&c) = s.get(next) {
-        let digit_value = digit_from_char(c);
+    while next != last {
+        let digit_value = digit_from_char(s[next]);
         if digit_value >= base {
             break;
         }
         if mantissa_it != mantissa_last {
             fp_string.mantissa[mantissa_it] = digit_value;
             mantissa_it += 1;
-        } else {
+        } else if rules == Rules::Stl {
             has_zero_tail = has_zero_tail && digit_value == 0;
         }
         next += 1;
@@ -1373,23 +1415,21 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
     let mut exp_abs_too_large = false;
     let mut exponent: i64 = 0;
 
-    const MAXIMUM_TEMPORARY_DECIMAL_EXPONENT: i64 = 5200;
-    const MINIMUM_TEMPORARY_DECIMAL_EXPONENT: i64 = -5200;
-
-    // N4950 [charconv.from.chars]/6.3: no exponent for chars_format::fixed.
-    if format != CharsFormat::Fixed && s.get(next).is_some_and(|&c| (c | 0x20) == exponent_prefix) {
+    // chars_format::fixed takes no exponent part.
+    if format != CharsFormat::Fixed && next != last && (s[next] | 0x20) == exponent_prefix {
         let mut unread = next + 1;
 
-        if let Some(&sign @ (b'+' | b'-')) = s.get(unread) {
-            exponent_is_negative = sign == b'-';
+        if unread != last && (s[unread] == b'+' || s[unread] == b'-') {
+            exponent_is_negative = s[unread] == b'-';
             unread += 1;
         }
 
-        while let Some(&c) = s.get(unread) {
-            let digit_value = digit_from_char(c);
+        while unread != last {
+            let digit_value = digit_from_char(s[unread]);
             if digit_value >= 10 {
                 break;
             }
+
             let digit_value = i64::from(digit_value);
             if exponent < i64::MAX / 10
                 || (exponent == i64::MAX / 10 && digit_value <= i64::MAX % 10)
@@ -1398,8 +1438,9 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
             } else {
                 exp_abs_too_large = true;
             }
+
             unread += 1;
-            // The exponent part is read.
+            // The exponent part is read only once a digit of it is.
             next = unread;
         }
 
@@ -1408,20 +1449,21 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
         }
     }
 
-    // [frac_end, exponent_end): empty or "[EPep] sign[opt] digit-sequence".
+    // [frac_end, exponent_end): empty, or "[EPep] sign[opt] digit-sequence".
     let exponent_end = next;
 
-    // N4950 [charconv.from.chars]/6.2: chars_format::scientific needs the exponent.
+    // chars_format::scientific must have the exponent part.
     if format == CharsFormat::Scientific && frac_end == exponent_end {
         return invalid_argument(0);
     }
 
-    // Trailing zeroes.
+    // The mantissa's trailing zeros.
     while mantissa_it != 0 && fp_string.mantissa[mantissa_it - 1] == 0 {
         mantissa_it -= 1;
     }
 
-    // All zeroes: zero, whatever the exponent (checked after the exponent, so next is past it).
+    // No digit left: the mantissa is zero, and so is the value, whatever the exponent. This comes
+    // after the exponent is read, so that the end is past it.
     if mantissa_it == 0 {
         debug_assert!(has_zero_tail);
         *value = assemble_zero(fp_string.is_negative);
@@ -1431,45 +1473,7 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
         };
     }
 
-    // A hexadecimal exponent is binary and the adjustment counts hexits: 4 bits each.
-    let exponent_adjustment_multiplier: i64 = if is_hexadecimal { 4 } else { 1 };
-
-    if parser == Parser::Ucrt {
-        // The UCRT's exponent (see Parser): at most 5201, checked before the adjustment and after.
-        let out_of_range = FromCharsResult {
-            ptr: next,
-            ec: Some(Errc::ResultOutOfRange),
-        };
-        let read = if exp_abs_too_large {
-            if exponent_is_negative { -5201 } else { 5201 }
-        } else {
-            crate::cpp_clamp(exponent, -5201, 5201)
-        };
-        let total = read + exponent_adjustment * exponent_adjustment_multiplier;
-        if read > MAXIMUM_TEMPORARY_DECIMAL_EXPONENT
-            || (read >= MINIMUM_TEMPORARY_DECIMAL_EXPONENT
-                && total > MAXIMUM_TEMPORARY_DECIMAL_EXPONENT)
-        {
-            *value = assemble_infinity(fp_string.is_negative);
-            return out_of_range;
-        }
-        if read < MINIMUM_TEMPORARY_DECIMAL_EXPONENT || total < MINIMUM_TEMPORARY_DECIMAL_EXPONENT {
-            *value = assemble_zero(fp_string.is_negative);
-            return out_of_range;
-        }
-        fp_string.exponent = total as i32;
-        fp_string.mantissa_count = mantissa_it as u32;
-        // The UCRT does not note whether the digits it dropped were zero (see Parser).
-        let (result, ec) = if is_hexadecimal {
-            convert_hexadecimal_string(&fp_string, true)
-        } else {
-            convert_decimal_string(&fp_string, true, parser)
-        };
-        *value = result;
-        return FromCharsResult { ptr: next, ec };
-    }
-
-    // An exponent of an overly large absolute value.
+    // An exponent too large for the type.
     if exp_abs_too_large {
         *value = if exponent > 0 {
             assemble_infinity(fp_string.is_negative)
@@ -1482,7 +1486,26 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
         };
     }
 
-    // Bring the exponent and the adjustment to the same sign, so neither overflows.
+    // Rules::Ucrt: the exponent as written is held to ±5200 before the digits' place is added.
+    if rules == Rules::Ucrt {
+        if exponent > MAXIMUM_TEMPORARY_DECIMAL_EXPONENT {
+            *value = assemble_infinity(fp_string.is_negative);
+            return FromCharsResult {
+                ptr: next,
+                ec: Some(Errc::ResultOutOfRange),
+            };
+        }
+        if exponent < MINIMUM_TEMPORARY_DECIMAL_EXPONENT {
+            *value = assemble_zero(fp_string.is_negative);
+            return FromCharsResult {
+                ptr: next,
+                ec: Some(Errc::ResultOutOfRange),
+            };
+        }
+    }
+
+    // An exponent and an adjustment of opposite signs are brought together first, so that neither
+    // overflows.
     if exponent > 0 && exponent_adjustment < 0 {
         if is_hexadecimal {
             let further_adjustment = crate::cpp_max(-((exponent - 1) / 4 + 1), exponent_adjustment);
@@ -1505,6 +1528,11 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
         }
     }
 
+    // A hexadecimal exponent is binary, and its adjustment counts hexadecimal digits: times
+    // log2(16).
+    let exponent_adjustment_multiplier: i64 = if is_hexadecimal { 4 } else { 1 };
+
+    // Both are now of one sign (or zero), so an out-of-range value shows in either.
     if exponent > MAXIMUM_TEMPORARY_DECIMAL_EXPONENT
         || exponent_adjustment > MAXIMUM_TEMPORARY_DECIMAL_EXPONENT / exponent_adjustment_multiplier
     {
@@ -1529,6 +1557,7 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
 
     exponent += exponent_adjustment * exponent_adjustment_multiplier;
 
+    // Out of every type's range after the adjustment.
     if exponent > MAXIMUM_TEMPORARY_DECIMAL_EXPONENT {
         // Overflow example: "10e+5199".
         *value = assemble_infinity(fp_string.is_negative);
@@ -1553,7 +1582,7 @@ fn ordinary_floating_from_chars<T: FromCharsFloat>(
     let (result, ec) = if is_hexadecimal {
         convert_hexadecimal_string(&fp_string, has_zero_tail)
     } else {
-        convert_decimal_string(&fp_string, has_zero_tail, parser)
+        convert_decimal_string(&fp_string, has_zero_tail, rules)
     };
     *value = result;
     FromCharsResult { ptr: next, ec }
@@ -1684,7 +1713,7 @@ pub fn from_chars_float<T: FromCharsFloat>(
     // One test tells numbers ('.', digits and a to f, folded) from inf and nan.
     let folded_start = s[next] | 0x20;
     if folded_start <= b'f' {
-        ordinary_floating_from_chars(s, value, format, minus_sign, next, Parser::Stl)
+        ordinary_floating_from_chars(s, value, format, minus_sign, next, Rules::Stl)
     } else if folded_start == b'i' {
         infinity_from_chars(s, value, minus_sign, next)
     } else if folded_start == b'n' {
@@ -1719,153 +1748,152 @@ pub struct Strto<T> {
 /// The bytes of a C string: up to the first NUL.
 fn c_string(s: &[u8]) -> &[u8] {
     match s.iter().position(|&c| c == 0) {
-        Some(n) => &s[..n],
+        Some(nul) => &s[..nul],
         None => s,
     }
 }
 
-/// `isspace` of the "C" locale: space, `\t`, `\n`, `\v`, `\f`, `\r`.
+/// `isspace` of the "C" locale (C17 7.4.1.10): space, `\t`, `\n`, `\v`, `\f` and `\r`.
 const fn is_space(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
 }
 
-/// The white space and the sign at the start: where the subject sequence starts and whether it
-/// is negative.
+/// What a `strto*` subject sequence starts with (C17 7.22.1.3 and 7.22.1.4): white space, then an
+/// optional `+` or `-`. The index after them, and whether the sign is `-`.
 fn space_and_sign(s: &[u8]) -> (usize, bool) {
-    let mut i = s.iter().take_while(|&&c| is_space(c)).count();
-    let negative = match s.get(i) {
-        Some(b'-') => {
-            i += 1;
-            true
-        }
-        Some(b'+') => {
-            i += 1;
-            false
-        }
-        _ => false,
-    };
+    let mut i = 0;
+    while i < s.len() && is_space(s[i]) {
+        i += 1;
+    }
+    let negative = s.get(i) == Some(&b'-');
+    if negative || s.get(i) == Some(&b'+') {
+        i += 1;
+    }
     (i, negative)
 }
 
-/// The UCRT's reading of what follows `nan` at `s[next..]`. After the `(` it matches `snan)`, then
-/// `ind)`, character by character and in either case, the second match going on from where the
-/// first one stopped; otherwise it reads letters, digits and `_` up to a `)`. So `nan(sind)`,
-/// whose `s` begins `snan)`, is `nan(ind)`, where `from_chars` sees another n-char-sequence.
+/// What the UCRT's `strtod` and `strtof` make of what follows `nan` at `s[next..]`, as black-box
+/// tests of them show (`tests/fmt.rs`, `ucrt_nan_spellings`): an n-char-sequence (letters,
+/// digits and `_`) closed by `)` is read with the parentheses, and nothing else is. In any case,
+/// `snan` is the signalling NaN, and `ind` after nothing, `s`, `sn`, `sna` or `snan` the
+/// indeterminate one; any other sequence is the plain NaN.
 fn ucrt_nan_sequence(s: &[u8], next: usize) -> (NanSequence, usize) {
     if s.get(next) != Some(&b'(') {
         return (NanSequence::None, next);
     }
-    let match_word = |i: &mut usize, word: &[u8]| {
-        for &w in word {
-            match s.get(*i) {
-                Some(&c) if c.to_ascii_lowercase() == w => *i += 1,
-                _ => return false,
-            }
-        }
-        true
+    let sequence_begin = next + 1;
+    let mut close = sequence_begin;
+    while close < s.len() && (s[close] == b'_' || s[close].is_ascii_alphanumeric()) {
+        close += 1;
+    }
+    if s.get(close) != Some(&b')') {
+        return (NanSequence::None, next);
+    }
+
+    let sequence = &s[sequence_begin..close];
+    let kind = if sequence.len() == 4 && starts_with_case_insensitive(sequence, b"snan") {
+        NanSequence::Snan
+    } else if let Some(before) = sequence.len().checked_sub(3)
+        && before <= 4
+        && starts_with_case_insensitive(&sequence[before..], b"ind")
+        && starts_with_case_insensitive(&sequence[..before], &b"snan"[..before])
+    {
+        NanSequence::Ind
+    } else {
+        NanSequence::Other
     };
-    let mut i = next + 1;
-    if match_word(&mut i, b"snan)") {
-        return (NanSequence::Snan, i);
-    }
-    if match_word(&mut i, b"ind)") {
-        return (NanSequence::Ind, i);
-    }
-    while let Some(&c) = s.get(i) {
-        if c == b')' {
-            return (NanSequence::Other, i + 1);
-        }
-        if c != b'_' && !c.is_ascii_alphanumeric() {
-            break;
-        }
-        i += 1;
-    }
-    (NanSequence::None, next)
+    (kind, close + 1)
 }
 
+/// The NaN the UCRT's `strtod` and `strtof` give for `nan` followed by `sequence`, `negative` for
+/// a `-` before it: plain `nan` is the quiet NaN with every payload bit set (the STL's
+/// `_Nan_from_chars` says so too); `nan(snan)` the signalling NaN with payload 1; `nan(ind)` the
+/// negative quiet NaN without payload, whatever the sign.
+fn ucrt_nan<T: FromCharsFloat>(sequence: NanSequence, negative: bool) -> T {
+    let sign = if negative { T::SHIFTED_SIGN_MASK } else { 0 };
+    T::from_uint(match sequence {
+        NanSequence::None | NanSequence::Other => {
+            sign | T::SHIFTED_EXPONENT_MASK | T::DENORMAL_MANTISSA_MASK
+        }
+        NanSequence::Snan => sign | T::SHIFTED_EXPONENT_MASK | 1,
+        NanSequence::Ind => {
+            T::SHIFTED_SIGN_MASK | T::SHIFTED_EXPONENT_MASK | T::SPECIAL_NAN_MANTISSA_MASK
+        }
+    })
+}
+
+/// Whether `s[i..]` begins a hexadecimal number after `0x`: a hexadecimal digit, or a point and
+/// one (C17 6.4.4.2's hexadecimal-fractional-constant needs a digit on one side of the point).
+fn hexadecimal_digits_follow(s: &[u8], i: usize) -> bool {
+    match s.get(i) {
+        Some(c) if c.is_ascii_hexdigit() => true,
+        Some(b'.') => s.get(i + 1).is_some_and(u8::is_ascii_hexdigit),
+        _ => false,
+    }
+}
+
+/// `strtod` and `strtof` (C17 7.22.1.3) in the "C" locale: white space, an optional sign, then the
+/// longest subject sequence of a decimal number, `0x` and a hexadecimal one, `inf` or `infinity`,
+/// or `nan` or `nan(n-char-sequence)`, in any case. Numbers go through the STL's parser with
+/// [`Rules::Ucrt`]; `nan` is read by [`ucrt_nan_sequence`]. `0x` without a hexadecimal digit after
+/// it is the subject sequence `0`. A value out of range is the infinity or zero it rounds to, with
+/// `ERANGE`; a subnormal result is no range error. With no subject sequence, the value is zero
+/// and nothing is read.
 fn strto_float<T: FromCharsFloat>(s: &[u8]) -> Strto<T> {
-    let s = c_string(s);
-    let (start, negative) = space_and_sign(s);
     let no_conversion = Strto {
         value: T::zero(),
         end: 0,
         errno: None,
     };
-    let sign = if negative { T::SHIFTED_SIGN_MASK } else { 0 };
-    let rest = &s[start..];
-
-    if starts_with_case_insensitive(rest, b"inf") {
-        let end = if starts_with_case_insensitive(&rest[3..], b"inity") {
-            8
-        } else {
-            3
-        };
-        return Strto {
-            value: T::from_uint(sign | T::SHIFTED_EXPONENT_MASK),
-            end: start + end,
-            errno: None,
-        };
-    }
-
-    if starts_with_case_insensitive(rest, b"nan") {
-        let (sequence, end) = ucrt_nan_sequence(rest, 3);
-        let bits = match sequence {
-            // Negative whatever the sign, as in from_chars.
-            NanSequence::Ind => {
-                T::SHIFTED_SIGN_MASK | T::SHIFTED_EXPONENT_MASK | T::SPECIAL_NAN_MANTISSA_MASK
-            }
-            NanSequence::Snan => sign | T::SHIFTED_EXPONENT_MASK | 1,
-            // The UCRT's plain NaN: quiet, every payload bit set.
-            NanSequence::None | NanSequence::Other => {
-                sign | T::SHIFTED_EXPONENT_MASK | T::DENORMAL_MANTISSA_MASK
-            }
-        };
-        return Strto {
-            value: T::from_uint(bits),
-            end: start + end,
-            errno: None,
-        };
-    }
+    let s = c_string(s);
+    let (start, negative) = space_and_sign(s);
+    let Some(&first) = s.get(start) else {
+        return no_conversion;
+    };
 
     let mut value = T::zero();
-    let hex = rest.len() >= 2 && rest[0] == b'0' && (rest[1] | 0x20) == b'x';
-    let (result, offset) = if hex {
-        let result = ordinary_floating_from_chars(
-            &rest[2..],
-            &mut value,
-            CharsFormat::Hex,
-            negative,
-            0,
-            Parser::Ucrt,
-        );
-        if result.ec == Some(Errc::InvalidArgument) {
-            // "0x" without a hex digit: the subject sequence is the "0".
-            return Strto {
-                value: assemble_zero(negative),
-                end: start + 1,
-                errno: None,
-            };
+    let result = match first | 0x20 {
+        b'i' => infinity_from_chars(s, &mut value, negative, start),
+        b'n' if starts_with_case_insensitive(&s[start + 1..], b"an") => {
+            let (sequence, end) = ucrt_nan_sequence(s, start + 3);
+            value = ucrt_nan(sequence, negative);
+            FromCharsResult { ptr: end, ec: None }
         }
-        (result, start + 2)
-    } else {
-        let result = ordinary_floating_from_chars(
-            rest,
+        b'0' if s.get(start + 1).is_some_and(|&c| (c | 0x20) == b'x')
+            && hexadecimal_digits_follow(s, start + 2) =>
+        {
+            ordinary_floating_from_chars(
+                s,
+                &mut value,
+                CharsFormat::Hex,
+                negative,
+                start + 2,
+                Rules::Ucrt,
+            )
+        }
+        _ if first.is_ascii_digit() || first == b'.' => ordinary_floating_from_chars(
+            s,
             &mut value,
             CharsFormat::General,
             negative,
-            0,
-            Parser::Ucrt,
-        );
-        if result.ec == Some(Errc::InvalidArgument) {
-            return no_conversion;
-        }
-        (result, start)
+            start,
+            Rules::Ucrt,
+        ),
+        _ => invalid_argument(0),
     };
-    let errno = (result.ec == Some(Errc::ResultOutOfRange)).then_some(Errno::Range);
-    Strto {
-        value,
-        end: offset + result.ptr,
-        errno,
+
+    match result.ec {
+        Some(Errc::InvalidArgument) => no_conversion,
+        Some(Errc::ResultOutOfRange) => Strto {
+            value,
+            end: result.ptr,
+            errno: Some(Errno::Range),
+        },
+        Some(Errc::ValueTooLarge) | None => Strto {
+            value,
+            end: result.ptr,
+            errno: None,
+        },
     }
 }
 
@@ -1875,7 +1903,8 @@ pub fn strtod(s: &[u8]) -> Strto<f64> {
     strto_float(s)
 }
 
-/// `strtof`: parsed to `float` directly, not through `double`.
+/// `strtof`: read to `float` directly, not through `double` (no double rounding; `tests/fmt.rs`
+/// compares it with the UCRT's).
 #[must_use]
 pub fn strtof(s: &[u8]) -> Strto<f32> {
     strto_float(s)

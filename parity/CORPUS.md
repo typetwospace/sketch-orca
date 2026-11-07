@@ -37,6 +37,30 @@ There are 28 meshes in Orca's `tests/data`, at the locked commit:
 A mesh's id is its name in lower case with `-` for `_`. The STL files get `prusa-stl` and
 `20mmbox-cr`, `-crlf`, `-lf`, `-nonstandard` and `-unicode`. The 3MF gets `buchse-3mf`.
 
+### An engine fault: 20mmbox-CR.stl
+
+In every pass of `parity record` (the oracle at 1, 2, 8 and 32 threads, the shipped engine five
+times), `mesh-20mmbox-cr-info`, `-layers` and `-slice` end the same way: exit code 9 as the
+harness records it, no result, nothing on stdout or stderr, and a progress file that stops at
+`model` ("reading the model"). The C++ engine dies while it loads the model. The CRLF, LF and
+nonstandard boxes load.
+
+The likely cause, from reading the code (not proven by a debugger): admesh's ASCII reader
+(`deps_src/admesh/stlinit.cpp`, `stl_read`) reads the solid's name with
+`fscanf(fp, " solid %[^\n]", solid_name)` into `char solid_name[256]`. A file whose lines end with
+a CR alone has no `\n`, so all 3200 bytes go into the 256-byte stack buffer. A stack overrun ends
+an MSVC program with a fast fail (`STATUS_STACK_BUFFER_OVERRUN`, 0xC0000409, whose low byte is 9),
+which no exception handler sees, so the engine's crash handler writes no `internal-error` result.
+
+Decided (2026-11-06): these three cases are engine faults. What the C++ engine does there is
+undefined behaviour, so the Rust translation does not reproduce it, and `parity certify` is never
+to hold the Rust program to them. They stay in the corpus, so `record.json` shows any change in
+the C++ engine's behaviour. They cannot certify as they stand; until `model-load` is ported every
+job that loads a model is declined, so nothing waits on them. Before `model-load` is certified
+they are named as engine faults in `scripts/lib/parity/corpus.ts`, taken out of their families'
+cases with this reason, and the Rust program's defined answer for such a file (read it as the
+other boxes are read, or refuse it as `model-unreadable`) is chosen with the `model-load` work.
+
 ### model.stl as Sketch writes it
 
 Sketch hands the engine its model as a binary STL, `model.stl`. An OBJ mesh of the corpus becomes

@@ -5,10 +5,14 @@
 // parity/parity.json of each family whose every run passes; it never lowers one. It writes
 // <work>/parity/certify.json. --check runs the same into <work>/parity/runs/certify-check, writes
 // <work>/parity/certify-check.json and no parity.json, and fails on a regression. Exit 1 when a
-// family parity.json certifies does not pass. It needs parity corpus and parity record.
+// family parity.json certifies does not pass, or when a run of a corpus job that reaches a family
+// parity.json does not certify is not declined naming it (certify.ts declineGaps). It needs
+// parity corpus, and parity oracle, neutral and record run for this checkout's cli/ and patches
+// (certify.ts oracleChainProblems).
 
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
+import { listPatches } from '../checkout.ts'
 import { sha256Bytes } from '../files.ts'
 import { parityPathProblem, parityPaths } from '../paths.ts'
 import { StepError, UsageError } from '../run.ts'
@@ -19,8 +23,10 @@ import {
   certifyFiles,
   classIndex,
   compareCase,
+  declineGaps,
   envelopeIndex,
   familyVerdicts,
+  oracleChainProblems,
   raiseCertified,
   readJsonIf,
   RUST_PROGRAM,
@@ -35,6 +41,8 @@ import { corpusFile, corpusMeshProblems, corpusSmokeCases, readCorpus } from './
 import type { ParityRun } from './dispatch.ts'
 import type { EnvelopeReport } from './envelope.ts'
 import { readMasks } from './masks.ts'
+import { neutralFiles, type NeutralReport } from './neutral.ts'
+import { oraclePatches, oracleSourceInputs, oracleUnderTest } from './oracle.ts'
 import { GOLDENS_FORMAT, parityFile, readGoldens, readParity, recordFiles, writeJsonAtomic, type RecordReport } from './record.ts'
 import { runEngineCases } from './same.ts'
 
@@ -69,6 +77,14 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
   const index = readGoldens(paths.goldens)
   if (index.format !== GOLDENS_FORMAT) throw new StepError(`${paths.goldens} holds ${JSON.stringify(index.format)}, not ${GOLDENS_FORMAT}; run parity record`)
   if (index.corpusSha256 !== corpusSha256) throw new StepError(`the goldens in ${paths.goldens} were recorded from another parity/corpus.json; run parity record`)
+  // The goldens stand for the C++ engine of this checkout only when the chain after a cli/ change ran.
+  const oracle = oracleUnderTest(paths.oracleDist, oracleSourceInputs(ctx.lock, listPatches(ctx.engine.patches), oraclePatches(ctx.engine.engine), ctx.engine.cli))
+  const chain = oracleChainProblems({
+    oracle: { exeSha256: oracle.manifest.exe.sha256, cli: oracle.manifest.cli },
+    neutral: readJsonIf<NeutralReport>(neutralFiles(paths).report),
+    goldens: index,
+  })
+  if (chain.length > 0) throw new StepError(`the goldens in ${paths.goldens} do not stand for this checkout's engine: ${chain.join('; ')}`)
   const meshProblems = corpusMeshProblems(doc, paths.corpus)
   if (meshProblems.length > 0) throw new StepError(`the corpus in ${paths.corpus} is not the one parity/corpus.json names (${meshProblems.slice(0, 5).join('; ')}); run parity corpus`)
   const pf = parityFile(ctx.engine.engine)
@@ -121,6 +137,10 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
   }
   const families = familyVerdicts(parity, verdicts)
   const { parity: raisedParity, raised, regressions } = raiseCertified(parity, families)
+  // The decline against the corpus's jobs: each that reaches an uncertified family is declined, naming it.
+  const declineGapList = doc.cases
+    .filter((c) => c.kind === 'job')
+    .flatMap((c) => declineGaps({ caseId: c.id, reaches: c.families, families: parity.families, rust: { side: rust, record: records.find((x) => x.id === c.id) } }))
   const report: CertifyReport = {
     format: CERTIFY_FORMAT,
     createdAt: new Date().toISOString(),
@@ -130,6 +150,7 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
     goldens: paths.goldens,
     summary: { families: families.length, passed: families.filter((f) => f.passed).length, certified: raisedParity.families.filter((f) => f.certified).length, raised, regressions },
     families,
+    declineGaps: declineGapList,
   }
   writeJsonAtomic(files.report, report)
   for (const f of families) {
@@ -141,9 +162,9 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
     say(`raised in ${pf}: ${raised.join(', ')}`)
   }
   say(`written: ${files.report}`)
-  if (regressions.length > 0) {
-    say(`REGRESSION: parity.json certifies ${regressions.join(', ')}, which ${regressions.length === 1 ? 'does' : 'do'} not pass now`)
-    return 1
-  }
-  return 0
+  const jobs = doc.cases.filter((c) => c.kind === 'job').length
+  if (declineGapList.length === 0) say(`the decline: every run of the ${jobs} corpus jobs that reach an uncertified family is declined, naming each`)
+  else say(`DECLINE GAP: ${declineGapList.length} runs of corpus jobs are let through for a family that is not certified: ${declineGapList.slice(0, 5).join(' | ')}`)
+  if (regressions.length > 0) say(`REGRESSION: parity.json certifies ${regressions.join(', ')}, which ${regressions.length === 1 ? 'does' : 'do'} not pass now`)
+  return regressions.length > 0 || declineGapList.length > 0 ? 1 : 0
 }

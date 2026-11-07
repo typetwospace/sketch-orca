@@ -17,7 +17,14 @@
 // `job`), the program wrote nothing the C++ run did not, and no family it misses is a front family
 // or certified. A family is certified when every run of every case of it passes. parity.json's
 // flags are raised, never lowered; --check writes no parity.json and fails on a regression (a
-// family parity.json certifies that does not pass now).
+// family parity.json certifies that does not pass now). Before any of it, the oracle staged in the
+// work folder must be the one this checkout makes (cli/ included), parity neutral must have passed
+// with it and the goldens must have been recorded with it (oracleChainProblems), so a change to
+// cli/ cannot reach certify without parity oracle, neutral and record run again. Apart from the
+// families, the decline itself is held to the corpus (declineGaps): every run of a corpus job that
+// reaches a family parity.json does not certify (the corpus's families for it, corpus.ts
+// familiesFor) must be declined, naming each such family (crates/orca-cli/src/decline.rs), so the
+// program never does a step that is not certified; a gap fails certify and certify --check.
 
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -26,7 +33,8 @@ import type { Platform } from '../env.ts'
 import { lineShape, type EnvelopeReport, type OutputEnvelope } from './envelope.ts'
 import { portableBytes, type OutputClass } from './classes.ts'
 import { compareOutput, type Mask, type OutputStatus } from './masks.ts'
-import { maskName, outputBytes, outputNames, portableRoots, type FamilyEntry, type ParityDocument } from './record.ts'
+import type { NeutralReport } from './neutral.ts'
+import { maskName, outputBytes, outputNames, portableRoots, type FamilyEntry, type GoldensIndex, type ParityDocument } from './record.ts'
 import { runStore, type CaseRecord, type RecordedRun } from './same.ts'
 
 export const CERTIFY_FORMAT = 'sketch-orca-parity-certify/1'
@@ -289,6 +297,33 @@ export function compareCase(o: {
   return { id: o.caseId, runs }
 }
 
+/**
+ * Where the decline lets a corpus job through: each run of the Rust program, of a job whose corpus
+ * families (`reaches`) include one parity.json does not certify (front families aside), that is
+ * not a not-ported result naming each such family, as `<case>/<run>: what`. Empty when every run
+ * is declined so.
+ */
+export function declineGaps(o: { caseId: string; reaches: string[]; families: FamilyEntry[]; rust: { side: Side; record: CaseRecord | undefined } }): string[] {
+  const front = FRONT_FAMILIES as readonly string[]
+  const uncertified = o.reaches.filter((f) => !front.includes(f) && o.families.find((x) => x.name === f)?.certified !== true)
+  if (uncertified.length === 0) return []
+  if (!o.rust.record || o.rust.record.runs.length === 0) return [`${o.caseId}: the Rust program did not run it`]
+  const out: string[] = []
+  o.rust.record.runs.forEach((r, i) => {
+    const exitByte = r.code === null ? null : ((r.code % 256) + 256) % 256
+    const results = r.files.map((f) => outputBytes(o.rust.side.store, o.caseId, r, `files/${f}`)).filter((b) => isResult(b))
+    const v = results.length === 1 ? (jsonOf(results[0]) as Record<string, unknown>) : undefined
+    if (r.timedOut || exitByte !== ((NOT_PORTED_EXIT % 256) + 256) % 256 || !v || v.code !== NOT_PORTED) {
+      out.push(`${o.caseId}/${i}: it reaches ${uncertified.join(', ')}, which parity.json does not certify, and was not declined (exit ${r.timedOut ? 'timeout' : String(r.code)}, result ${JSON.stringify(v?.code ?? null)})`)
+      return
+    }
+    const missing = Array.isArray(v.missing) ? v.missing.map(String) : []
+    const unnamed = uncertified.filter((f) => !missing.includes(f))
+    if (unnamed.length > 0) out.push(`${o.caseId}/${i}: its decline does not name ${unnamed.join(', ')}, which the job reaches and parity.json does not certify`)
+  })
+  return out
+}
+
 export interface FamilyVerdict {
   name: string
   cases: number
@@ -347,6 +382,26 @@ export interface CertifyReport {
   goldens: string
   summary: { families: number; passed: number; certified: number; raised: string[]; regressions: string[] }
   families: FamilyVerdict[]
+  /** Where the decline let a corpus job through (declineGaps); certify fails on any. */
+  declineGaps: string[]
+}
+
+/**
+ * Why the goldens cannot be held against this checkout's cli/: the chain CONTRIBUTING.md asks for
+ * after a change to cli/ or the patches (parity oracle, then parity neutral, then parity record)
+ * must have run for the oracle staged now. The caller has already checked that oracle against this
+ * checkout (oracle.ts oracleUnderTest: the commit, patches/, the oracle patches and cli/); here
+ * parity neutral must have passed with that very oracle, and the goldens must have been recorded
+ * with it. Empty when they were.
+ */
+export function oracleChainProblems(o: { oracle: { exeSha256: string; cli: string }; neutral: Pick<NeutralReport, 'passed' | 'engines'> | undefined; goldens: Pick<GoldensIndex, 'oracle'> }): string[] {
+  const out: string[] = []
+  if (!o.neutral) out.push('parity neutral has not run (no neutral.json); run parity neutral')
+  else if (o.neutral.engines.oracle.exeSha256 !== o.oracle.exeSha256) out.push('parity neutral last ran with another oracle than the one staged; run parity neutral')
+  else if (!o.neutral.passed) out.push('parity neutral did not pass with the staged oracle')
+  if (!o.goldens.oracle) out.push('the goldens do not name the oracle they were recorded with (recorded before goldens.json named it); run parity record')
+  else if (o.goldens.oracle.exeSha256 !== o.oracle.exeSha256 || o.goldens.oracle.cli !== o.oracle.cli) out.push('the goldens were recorded with another oracle than the one staged (another cli/, patches or build); run parity record')
+  return out
 }
 
 /** <work>/parity/runs/certify (the cases' folder and the Rust program's runs) and the report. */

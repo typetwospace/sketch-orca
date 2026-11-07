@@ -178,7 +178,9 @@ fatal to 5 trace; 1, errors, by default).
   naming the culprit where there is one; a failure about one object names it in `objectIndex`.
 - `missing` comes only with `not-ported` (below): the steps the job needs that the engine does
   not do yet, by their names in the engine's parity record (`model-load`, `slice-mesh`,
-  `gcode-export`, ...), each once.
+  `gcode-export`, ...), each once. For a slice they include the steps its settings turn on
+  (`supports`, `ironing`, an infill pattern such as `infill-gyroid`, ...); when the engine cannot
+  read the job's presets it names every step a setting can turn on.
 - `layers` gives each object's layers as `[bottom, top]` print Z, ascending; `printZ` the print Z
   of every layer of the plate, ascending. Print Z is the height of the top of a layer above the
   bed, not counting the printer's `z_offset` (G-code Z is print Z plus `z_offset`).
@@ -233,11 +235,13 @@ Other codes may appear in later versions; they are lower-case words joined by `-
 OrcaSlicer's code still writes an `internal-error` result, and the process ends with -1.
 
 `sketch-orca-rs`, the Rust translation of the engine, does only the steps its parity record
-certifies. It checks a job as the C++ program does, with the same results for a job that is not
-valid. A valid job that reaches a step it does not do yet gets `not-ported` with exit code -8, the
-same class as `unsupported`, before it writes any output
-(`examples/result-not-ported.json`). A client that gets `not-ported` can run the same job with the
-C++ program.
+certifies. It reads the command line and the job as the C++ program does: a command line or job
+that the C++ program refuses while reading them gets the same result. A refusal the C++ program
+makes later, after the job is read (an unknown setting, a model it cannot read, a model bigger
+than the bed and the like), comes from a step the Rust program does not do yet, so such a job gets
+`not-ported` like any job that reaches such a step: exit code -8, the same class as
+`unsupported`, before any output is written (`examples/result-not-ported.json`). A client that
+gets `not-ported` can run the same job with the C++ program, which gives its own result.
 
 Process exit codes reach a client in different forms: Node on Windows reports -3 as 4294967293,
 Bun on Windows as 253. Compare the low byte only when the exit code has a small code's form, from
