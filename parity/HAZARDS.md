@@ -19,7 +19,7 @@ The classes:
 Status is what holds the translation to the C++ today: **probed** (a probe record covers it and
 the crates' probe tests, `crates/orca-{crt,fmt,stl,tbb}/tests/probes.rs`, replay it: every record
 of the committed subset and of the full set gave the same bits, outputs, orders and comparator
-calls on 2026-11-06), **pinned** (an oracle knob), **open** (nothing yet; the task that reaches the
+calls on 2026-11-06; phase O2's crates replay their own files from 2026-11-07), **pinned** (an oracle knob), **open** (nothing yet; the task that reaches the
 code must), **n/a** (class O).
 
 ## The C runtime's maths (class R)
@@ -179,7 +179,7 @@ work runs in one order. `orca-tbb` reproduces the partitioners' split decisions:
 
 | What | Where | Status |
 | --- | --- | --- |
-| Eigen 3.5.0 (as its `Version` header numbers it) | `Point.hpp:15-41` and every `Vec`, `Mat`, `Transform3d`; `.norm()`, `.dot()`, `.normalized()` and the other reductions (about 1100 sites in libslic3r) | open: Eigen's evaluation order (its packet reductions sum in a tree of SSE2 lanes, not left to right) is translated with the code that uses it |
+| Eigen 3.5.0 (as its `Version` header numbers it) | `Point.hpp:15-41` and every `Vec`, `Mat`, `Transform3d`; `.norm()`, `.dot()`, `.normalized()` and the other reductions (about 1100 sites in libslic3r) | probed for the operations phase O2 reaches (orca-eigen, `geom.sop1`'s EVEC, EMAT, ETRF, EROT and ESVD, 2026-11-07; "orca-eigen" below); open for the rest, translated with the code that uses it: Eigen's packet reductions sum in a tree of SSE2 lanes, not left to right |
 | Boost.Polygon 1.84.0's Voronoi builder | `Geometry/Voronoi.cpp:28-29`, `:307`, `Geometry/Voronoi.hpp:100-124`, `Geometry/MedialAxis.cpp:460-468`, `Arachne/SkeletalTrapezoidation.cpp:378`, `MultiMaterialSegmentation.cpp:1555` | open: its predicates use `extended_int<64>` (64 chunks of 32 bits, 2048 bits; `boost/polygon/detail/voronoi_ctypes.hpp:228`) and its own `extended_exponent_fpt`, which the translation carries exactly |
 | 128-bit integers | `Int128.hpp:62-244` (`__int128` where the compiler has it, else `_mul128`: MSVC takes the `_mul128` branch), `Point.cpp:252-257`, `deps_src/clipper/clipper.cpp:319` (Clipper's `sign_determinant_2x2_filtered`), `Arrange.cpp:27`, `MinAreaBoundingBox.cpp:28` (`boost::rational<__int128>`, not compiled with MSVC) | open: Rust's `i128` gives the same integers |
 
@@ -434,7 +434,23 @@ of its code is **open**.
 ### orca-eigen
 
 Eigen 5.0.1's operations, as MSVC 14.42 compiles them with the engine's flags (`/O2`,
-`/fp:precise`, no `/arch`, so SSE2 packets). Probe file `geom.sop1`. Filled by o2-geom.
+`/fp:precise`, no `/arch`, so SSE2 packets): the fixed-size vectors and matrices of `Point.hpp`,
+`Transform3d` and `Transform3f`, `AngleAxis`, `Quaternion`, `eulerAngles` and the 3x3
+`JacobiSVD` that `computeRotationScaling` uses. Probe file `geom.sop1`: EVEC, EMAT, ETRF, EROT and
+ESVD (`parity/SOP1.md`), which `crates/orca-eigen/tests/probes.rs` replays; every comparison of
+both sets matched on 2026-11-07, debug and release. Filled by o2-geom on 2026-11-07. The hazards
+it owns:
+
+| What | Where (Eigen 5.0.1, `Eigen/src/`) | What the translation does |
+| --- | --- | --- |
+| Reduction order: a tree of SSE2 packets, the lanes folded `(a0 + a2) + (a1 + a3)`, the tail a tree joined last; without packet access one tree | `Core/Redux.h`, `Core/arch/SSE/Reductions.h` | probed: `redux.rs` `redux`, with each type's packet size (2 `double`s, 4 `float`s, 2 `int64_t`s, 4 `int32_t`s) |
+| Dot products: up to four packet accumulators, then the rest one by one | `Core/InnerProduct.h` | probed: `redux.rs` `dot` |
+| Small matrix products: the rows that fill whole packets left to right, the rest a tree (3-row `double` results differ in row 2, 3-row `float` results in every row) | `Core/ProductEvaluators.h` (`LazyCoeffBasedProductMode`), `Core/AssignEvaluator.h` | probed: `redux.rs` `product_coeff` and `packet_rows`; `Transform * point` is the 4x4 matrix times `(p, 1)` (`Geometry/Transform.h:1347`) |
+| `minCoeff(&i)` and `maxCoeff(&i)` search by packets: where a NaN shares a packet with a better coefficient, the index stays on the packet's first coefficient (the full set's `Vec4d` records found it) | `Core/FindCoeff.h` | probed: `redux.rs` `find_coeff` |
+| Quaternion products by Eigen's SSE2 kernels, in an order of their own for each type | `Geometry/arch/Geometry_SIMD.h` | probed: `rotation.rs` `QuatProduct` |
+| `sin`, `cos`, `atan2` and `pow` in `AngleAxis`, `Quaternion` and `eulerAngles` | `Geometry/AngleAxis.h`, `Geometry/Quaternion.h`, `Geometry/EulerAngles.h` | probed: the static UCRT's, through `orca-crt` (its FMA3 choice is the process's, as in the engine) |
+| `JacobiSVD` of a matrix holding a NaN or an infinity leaves U, V and the singular values uninitialised | `SVD/JacobiSVD.h` | open: undefined in C++, so `JacobiSvd3::compute` and `compute_rotation_scaling` return `None` and the caller decides |
+| NaN payloads when both operands are NaN: SSE2 returns the first operand's, and MSVC may swap the operands of a commutative operation | every floating-point operation | open: the probes use only the default quiet NaN (`0xFFF8000000000000`); a payload shows only in a printed NaN's sign |
 
 ### orca-geom
 

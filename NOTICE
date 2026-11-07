@@ -198,10 +198,12 @@ version 3 (LICENSE).
 
 orca-eigen (filled by the o2-geom task)
   - Eigen 5.0.1 (https://gitlab.com/libeigen/eigen, the archive eigen-5.0.1.zip that OrcaSlicer
-    v2.4.2's dependency build pins; its headers number it 3.5.0), by Benoit Jacob, Gael Guennebaud
-    and the Eigen contributors, under the Mozilla Public License, version 2.0 (MPL-2.0;
-    licenses/MPL-2.0.txt): the fixed-size vectors and matrices, Transform, AngleAxis and the
-    reductions libslic3r's geometry reaches (Eigen/src/Core and Eigen/src/Geometry). As section 3
+    v2.4.2's dependency build pins; its headers number it 3.5.0), by Benoit Jacob, Gael
+    Guennebaud, Hauke Heibel, Rohit Garg and the Eigen contributors, under the Mozilla Public
+    License, version 2.0 (MPL-2.0; licenses/MPL-2.0.txt): the fixed-size vectors and matrices,
+    their reductions, products and casts as SSE2 evaluates them, Transform, AngleAxis, Quaternion,
+    eulerAngles, the 3x3 determinant and inverse, and the 3x3 JacobiSVD that libslic3r's geometry
+    reaches (Eigen/src/Core, Geometry, LU, SVD, Jacobi and misc/RealSvd2x2.h). As section 3
     of that licence asks, the files that carry Eigen code stay under MPL-2.0, say so with its
     Exhibit A notice, and keep their source available here; its section 3.3 lets the program
     combine them with code under the GNU Affero General Public License, version 3.

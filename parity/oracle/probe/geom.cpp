@@ -9,17 +9,28 @@
 // (LICENSE) for more details.
 //
 // geom.sop1: Clipper 6.4.2, ClipperUtils, libslic3r's geometry and the Eigen operations they reach
-// (parity/SOP1.md, "Probe files"), which orca-geom and orca-eigen replay. The o2-geom task records
-// here; until then this is a stub that writes HEAD and PRUN only, and the crate's tests/probes.rs
-// fails as soon as the file holds a record it does not replay. Registered 2026-11-07
-// (scripts/lib/parity/probe.ts, PROBE_REGISTRY).
+// (parity/SOP1.md, "geom.sop1"), recorded by the o2-geom task (2026-11-07) from the engine's own
+// libslic3r. orca-eigen's tests/probes.rs replays the Eigen records (geom/eigen.cpp) and
+// orca-geom's the rest (geom/clipper.cpp, geom/geometry.cpp).
 #include "probe.hpp"
 
 namespace probe {
 
+void record_eigen(Sets &sets);
+void record_clipper(Sets &sets);
+void record_geometry(Sets &sets);
+
 namespace {
 
-bool run_geom(const Options &options, std::string &error) { return write_stub("geom", options, error); }
+bool run_geom(const Options &options, std::string &error)
+{
+    Sets sets;
+    head(sets, "geom");
+    record_eigen(sets);
+    record_clipper(sets);
+    record_geometry(sets);
+    return save(sets, options, "geom.sop1", error);
+}
 
 } // namespace
 

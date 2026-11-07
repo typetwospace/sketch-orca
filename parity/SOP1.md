@@ -226,7 +226,7 @@ records below, END.
 | `stl.sop1` | O1 | SORT, VALS, HASH, UMAP, USET, RNGS, SSEQ, SHUF |
 | `tbb.sop1` | O1 | TBBA, TBBF, TBBR, TBBO |
 | `configdef.json` | O1 | not SOP1: `print_config_def` with every field of each option, the preset sections' keys, and `handle_legacy` on the legacy and defined keys (`configdef.cpp` says what it holds) |
-| `geom.sop1` | o2-geom | none yet: a stub (`orca-geom`, `orca-eigen`) |
+| `geom.sop1` | o2-geom | EVEC, EMAT, ETRF, EROT, ESVD (`orca-eigen`) |
 | `qhull.sop1` | o2-mesh | none yet: a stub (`orca-qhull`) |
 | `mesh.sop1` | o2-mesh | none yet: a stub (`orca-mesh`) |
 | `cstdio.sop1` | o2-mesh | none yet: a stub (`orca-fmt`'s `stdio` and `scanf`) |
@@ -414,6 +414,61 @@ An order: `str` what (`for_index`, `for_each`, `invoke`, `task_group`, `task_gro
 `for_each`: `iterators`, `range`), `i32` P, `vec<i64>` parameters (`for_index`: first, last,
 step; the others: the count), `vec<i32>` the order the functions or indices ran in (`task_group`
 pushes -1 when its `run` calls are done, before `wait`).
+
+### EVEC
+
+A fixed-size vector's operations, as the engine's Eigen 5.0.1 computes them
+(`parity/oracle/probe/geom/eigen.cpp`, added 2026-11-07): `u8` type (0 `double`, 1 `float`, 2
+`int64_t`, 3 `int32_t`), `u8` size N (2, 3 or 4; the integer types 2 and 3), then each value a
+`u64`: a's N coefficients and c's N; `a.dot(c)`, `squaredNorm()`, `sum()`, `prod()`,
+`minCoeff()`, `maxCoeff()`, `(a - c).squaredNorm()`, the indices `minCoeff(&i)` and `maxCoeff(&i)`
+give; N each of `cwiseMin(c)`, `cwiseMax(c)`, `cwiseAbs()`, `cwiseProduct(c)`, `a + c`, `a - c`;
+for `double` and `float` then `norm()`, N of `normalized()`, `isApprox(c, 1e-3)` (0 or 1), N of
+`a * 0.375` and N of `a / 3`; for N = 3 the 3 of `cross(c)`, for N = 2 the scalar `cross(c)`; last
+N each of the casts to `double`, `float`, `int64_t` and `int32_t`. Coefficients are wide (`ldexp`
+of a 53-bit mantissa, exponents -30 to 30, either sign, so that the order of additions shows),
+small integers or signed zeros; the floating types also take infinities and the default quiet
+NaN, never another NaN. 512 cases of each floating size and 256 of each integer size (the
+committed set 8 and 4).
+
+### EMAT
+
+`u8` type (0 `double`, 1 `float`), `u8` N (`double` 2, 3, 4; `float` 3, 4), then A's N²
+coefficients column by column, C's, and v's N; then `A * C`, `A * v`, `A * C.transpose()`,
+`-A * v`, `A * v.asDiagonal()`, `v.asDiagonal() * A`, `sum()`, `squaredNorm()`, `trace()`,
+`isDiagonal()` (0 or 1), and for N = 3 `determinant()` and the 9 of `inverse()`. Finite inputs, as
+EVEC's. 256 or 512 cases a size (the committed set 4 or 8).
+
+### ETRF
+
+`Transform3d` (`Transform<double, 3, Affine, DontAlign>`): seven 3-vectors in, t1, r1, s1, t2, r2,
+s2, pt; a and c are built as `Geometry::assemble_transform` builds them (from the identity:
+`translate(t)`, `rotate(AngleAxis(r.z, Z) * AngleAxis(r.y, Y) * AngleAxis(r.x, X))`, `scale(s)`).
+Then, matrices column by column: a's 16, c's 16, `a * c`'s 16, `a * pt`'s 3, `a.inverse()`'s 16,
+`a.linear() * pt`'s 3, `computeRotationScaling`'s rotation (9) and scaling (9), the rotation's
+`eulerAngles(2, 1, 0)` (3); a after `pretranslate(pt)`, after
+`prerotate(AngleAxis(r2.x, X).toRotationMatrix())`, after `prescale(s2)` and after `scale(s2.x)`
+(16 each); then as `Transform3f`, in `float`s: `a.cast<float>()` (16), that times
+`pt.cast<float>()` (3), its `linear()` times the same (3), and it times `c.cast<float>()` (16).
+Angles are 0, quarter turns or uniform in [-2π, 2π]; scales 1 or ±(1 to 2)·2^(-4 to 4). 512 cases
+(the committed set 6).
+
+### EROT
+
+`f64` a1, `f64` a2, two unit axes (3 each), `f64` tiny (2^-60 to 2^-99), a 3x3 matrix rnd (9).
+Then: r1 = `AngleAxisd(a1, ax1).toRotationMatrix()` (9); q1 = `Quaterniond(aa1)`'s coefficients
+(x, y, z, w); `q1 * q2`; `aa1 * aa2`; `Quaternionf(af1) * Quaternionf(af2)` (4 `float`s, the
+angle-axes cast); `q1.toRotationMatrix()` (9); `Quaterniond(r1)` and `Quaterniond(rnd)` (4 each);
+the angle and the axis (1 and 3) of `AngleAxisd(q1)`, of `AngleAxisd(r1)` and of
+`AngleAxisd(Quaterniond(1, tiny, -tiny * 0.5, tiny * 0.25))`; `Quaterniond(rnd(0,0), rnd(1,0),
+rnd(2,0), rnd(0,1)).normalized()` (4); r1's `eulerAngles(2, 1, 0)`, `(0, 1, 2)` and `(2, 0, 2)`
+and rnd's `eulerAngles(1, 0, 1)` (3 each). 512 cases (the committed set 8).
+
+### ESVD
+
+`JacobiSVD<Matrix3d>(m, ComputeFullU | ComputeFullV)`: m's 9 (a diagonal matrix, a rotation times
+a scaling as `assemble_transform` makes them, or wide coefficients), then U's 9, V's 9, the 3
+singular values and `u64` `nonzeroSingularValues()`. 1024 cases (the committed set 12).
 
 ## Versions
 

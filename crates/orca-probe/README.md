@@ -14,7 +14,8 @@ The probe gate is the crates' `tests/probes.rs`, which replay every record of th
 | `crates/orca-fmt/tests/probes.rs` | `fmt.sop1` | PRTF, TOCH, OSTR, TOST, PARS |
 | `crates/orca-stl/tests/probes.rs` | `stl.sop1` | SORT (every comparator call), VALS, HASH, UMAP, USET, RNGS, SSEQ, SHUF |
 | `crates/orca-tbb/tests/probes.rs` | `tbb.sop1` | TBBA, TBBF, TBBR, TBBO, in serial arenas of each recorded P |
-| `crates/orca-eigen/tests/probes.rs`, `crates/orca-geom/tests/probes.rs` | `geom.sop1` | none yet: a stub until o2-geom records there |
+| `crates/orca-eigen/tests/probes.rs` | `geom.sop1` | EVEC, EMAT, ETRF, EROT, ESVD |
+| `crates/orca-geom/tests/probes.rs` | `geom.sop1` | the file's other records: none yet, until o2-geom records them |
 | `crates/orca-qhull/tests/probes.rs` | `qhull.sop1` | none yet: a stub until o2-mesh records there |
 | `crates/orca-mesh/tests/probes.rs` | `mesh.sop1`, `cstdio.sop1` | none yet: stubs until o2-mesh records there |
 | `crates/orca-zip/tests/probes.rs`, `crates/orca-xml/tests/probes.rs`, `crates/orca-model/tests/probes.rs` | `zip.sop1`, `xml.sop1`, `model.sop1` | none yet: stubs until o2-model records there |
