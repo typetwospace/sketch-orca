@@ -1,0 +1,16 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "not-fdm",
+  "message": "presets.machine: Voron 2.4 300 0.4 nozzle is not a filament (FFF) preset",
+  "exitCode": -7,
+  "warnings": [],
+  "command": "slice",
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.2.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

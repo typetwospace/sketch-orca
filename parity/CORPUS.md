@@ -7,7 +7,7 @@ parity corpus` writes it from the engine's checkout. The meshes stay in the work
 
 ## Cases
 
-There are 166 cases, of four kinds. Each case runs in its own folder, as a smoke case does
+There are 180 cases, of four kinds. Each case runs in its own folder, as a smoke case does
 (`same.ts` `runEngineCases`), so every output of every engine run is recorded the same way.
 
 | Kind | Cases | What runs |
@@ -15,7 +15,7 @@ There are 166 cases, of four kinds. Each case runs in its own folder, as a smoke
 | `smoke` | 18 | Each of the smoke run's cases (`smoke.ts` `SMOKE_CASES`) but `refusals`, with its own checks, as `smoke-<id>`. `refusals` runs every refused job in one case, across the families they reach, so the corpus leaves it out (`SMOKE_LEFT_OUT`): each refused job is a refusal case of its own. |
 | `job` | 127 | A job written from the protocol's job schema. There are 84 mesh jobs, `mesh-<mesh>-<command>`: each of the 28 meshes below as an `info`, a `layers` and a `slice` job, on the generic preset set with no overrides. There are 7 Sketch-shaped jobs, `sketch-*`, below. There are 36 family jobs, `family-*`, below. |
 | `example` | 7 | `protocol/examples/invalid/job-*.json`, its example paths moved into the case's folder (below), as `example-<name>`. |
-| `refusal` | 14 | Each refused job of the smoke run (`smoke.ts` `REFUSALS`), one case each, as `refusal-<id>`. |
+| `refusal` | 28 | Each refused job of the smoke run (`smoke.ts` `REFUSALS`), one case each, as `refusal-<id>`: 14 refused from the job's reading to the G-code's writing, and 14 of the presets stage and its folders, each changing one preset file, an override or a folder (`PRESET_REFUSE`), one of them a missing model after the stage's warnings. |
 
 A job, example or refusal is written as it is: there are no checks of `job.ts`, because the engine
 makes its own. It runs as `run --job job.json --out result.json --progress progress.ndjson` in the
@@ -202,7 +202,10 @@ it ends there: `flat-model` and `lone-triangle` to `model-load`, `too-big-for-th
 and `gcode-folder-unmakeable` to every family of its slice (its generic presets and the cube's
 overrides). Every other refusal, and each example, is made while the job, its presets and its
 model's file are read, and is `intake`'s: `intake` is certified on those runs, and only when
-each gives the C++ engine's outputs (a declined run passes no family).
+each gives the C++ engine's outputs (a declined run passes no family). `crates/orca-cli/tests/intake.rs`
+holds the Rust program to each of those goldens as well, and fails when such a refusal has no
+test there. The presets stage's `unknown-setting` warning has no case: Orca drops a key it does
+not have before the value is set, so the C++ program never gives it (`cli/presets.cpp`).
 
 ## Recording
 

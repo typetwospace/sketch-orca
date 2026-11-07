@@ -1,0 +1,16 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "preset-invalid",
+  "message": "presets.process: <case>\\presets\\process.json is not JSON ([json.exception.parse_error.101] parse error at line 1, column 20: syntax error while parsing object key - unexpected end of input; expected string literal)",
+  "exitCode": -5,
+  "warnings": [],
+  "command": "slice",
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.2.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

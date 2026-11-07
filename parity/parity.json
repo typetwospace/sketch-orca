@@ -2,7 +2,7 @@
   "format": "sketch-orca-parity/1",
   "corpus": {
     "file": "parity/corpus.json",
-    "sha256": "cb53927aa5e41b39aea5542a8ca1b8adc7c533c42e71ba7476111bb383f1ef0a"
+    "sha256": "a138f474f21ed5e9153546a938d902e1db6ded732c6ae2cf53ef320b2f721fc8"
   },
   "threads": [
     1,
@@ -56,7 +56,21 @@
         "refusal-renamed-key-dropped-value",
         "refusal-two-at-one-print-z",
         "refusal-profile-not-at-zero",
-        "refusal-drive-rooted-path"
+        "refusal-drive-rooted-path",
+        "refusal-missing-preset",
+        "refusal-preset-not-json",
+        "refusal-preset-not-object",
+        "refusal-preset-wrong-type",
+        "refusal-preset-bad-from",
+        "refusal-preset-unreadable-value",
+        "refusal-not-fdm",
+        "refusal-process-not-compatible",
+        "refusal-setting-bad-value",
+        "refusal-flush-volume-past-int",
+        "refusal-settings-orca-refuses",
+        "refusal-resources-without-profiles",
+        "refusal-work-folder-unmakeable",
+        "refusal-preset-warnings"
       ],
       "classes": [
         "B"

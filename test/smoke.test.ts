@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { scanGcode } from '../scripts/lib/gcode.ts'
+import { REFUSAL_FAMILIES } from '../scripts/lib/parity/corpus.ts'
 import { isEngineAbsolute, RESULT_FORMAT, validateJob, type JobResult } from '../scripts/lib/job.ts'
 import type { OrcaLock } from '../scripts/lib/lock.ts'
 import { writeStamp, workPaths } from '../scripts/lib/paths.ts'
@@ -23,6 +24,7 @@ import {
   FLUSH_JOBS,
   H2D_FLUSH,
   INVALID_COMMAND,
+  PRESET_REFUSE,
   PRIME_TOWER_JOBS,
   REFUSALS,
   REFUSE,
@@ -609,8 +611,13 @@ describe('jobs and the engine environment', () => {
     // Windows names for a file (a trailing dot or space, \\?\, ::$DATA, a named stream); version 10
     // the Rust program's cases (RUST_SMOKE_CASES), which stage runs; version 11 rs-intake's
     // refusals of the presets and the model's file, which sketch-orca-rs makes itself
-    // (RUST_OWN_REFUSALS), and its decline rule (endedWithinRust).
-    expect(SMOKE_VERSION).toBe(11)
+    // (RUST_OWN_REFUSALS), and its decline rule (endedWithinRust); version 12 the refusals of the
+    // presets stage and its folders (a missing, unreadable or wrong preset file, a resin printer, a
+    // process made for another printer, an override value the setting does not take, a
+    // nozzle_volume past the flushing volumes, settings Orca's check refuses, no profiles, a work
+    // folder that cannot be made) and a missing model with the stage's warnings, which checkRefusal
+    // now checks.
+    expect(SMOKE_VERSION).toBe(12)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
     expect(CAPITAL_KEY.key).not.toBe(CAPITAL_KEY.key.toLowerCase())
@@ -1006,6 +1013,18 @@ describe('exit codes, refusals and info', () => {
     expect(checkExitCode(null, failed())).toEqual(["the engine was stopped before it exited; its result's exitCode is -3"])
   })
 
+  test('checkRefusal: the warnings asked for, by code and in order; not checked when none are asked for', () => {
+    const want = { code: 'file-not-found', exitCode: -3 }
+    const warned = failed({ warnings: [{ code: 'preset-value-skipped', message: 'a' }, { code: 'filament-not-compatible', message: 'b' }] })
+    expect(checkRefusal(warned, 253, want)).toEqual([])
+    expect(checkRefusal(warned, 253, { ...want, warnings: ['preset-value-skipped', 'filament-not-compatible'] })).toEqual([])
+    expect(checkRefusal(warned, 253, { ...want, warnings: ['filament-not-compatible', 'preset-value-skipped'] })).toEqual([
+      'the warnings are ["preset-value-skipped","filament-not-compatible"], expected ["filament-not-compatible","preset-value-skipped"]',
+    ])
+    expect(checkRefusal(failed(), 253, { ...want, warnings: ['setting-substituted'] })).toEqual(['the warnings are [], expected ["setting-substituted"]'])
+    expect(checkRefusal(failed(), 253, { ...want, warnings: [] })).toEqual([])
+  })
+
   test('checkRefusal: the named error, exit code and object, a message and no outputs', () => {
     const want = { code: 'file-not-found', exitCode: -3 }
     expect(checkRefusal(failed(), 253, want)).toEqual([])
@@ -1045,18 +1064,38 @@ describe('exit codes, refusals and info', () => {
       'layers-above-the-nozzle',
       'gcode-folder-unmakeable',
       'drive-rooted-path',
+      'missing-preset',
+      'preset-not-json',
+      'preset-not-object',
+      'preset-wrong-type',
+      'preset-bad-from',
+      'preset-unreadable-value',
+      'not-fdm',
+      'process-not-compatible',
+      'setting-bad-value',
+      'flush-volume-past-int',
+      'settings-orca-refuses',
+      'resources-without-profiles',
+      'work-folder-unmakeable',
+      'preset-warnings',
     ])
     for (const r of REFUSALS) expect(`${r.code} ${table.get(r.code)}`).toBe(`${r.code} ${r.exitCode}`)
     for (const j of FLUSH_JOBS) if (j.refused) expect(`${j.refused.code} ${table.get(j.refused.code)}`).toBe(`${j.refused.code} ${j.refused.exitCode}`)
     const dir = resolve(scratch, 'refuse')
     const res = resolve(scratch, 'resources')
     const presets = { machine: join(dir, 'machine.json'), process: join(dir, 'process.json'), filaments: [join(dir, 'filament_1.json')] }
+    // The generic set's files, which the refusals of the presets stage copy and change.
+    mkdirSync(dir, { recursive: true })
+    const generic = { machine: { type: 'machine', name: 'M', from: 'system', printer_technology: 'FFF' }, process: { type: 'process', name: 'P', from: 'system', layer_height: '0.2' }, filament: { type: 'filament', name: 'F', from: 'system' } }
+    writeFileSync(presets.machine, JSON.stringify(generic.machine))
+    writeFileSync(presets.process, JSON.stringify(generic.process))
+    writeFileSync(presets.filaments[0]!, JSON.stringify(generic.filament))
     const made = Object.fromEntries(REFUSALS.map((r) => [r.id, r.make(join(dir, r.id), res, presets)]))
     for (const r of REFUSALS) {
       const { job } = made[r.id]!
       expect(job.command).toBe(['profile-not-at-zero', 'layers-above-the-nozzle'].includes(r.id) ? 'layers' : 'slice')
       expect(job.output.gcode).toBe(r.id === 'gcode-folder-unmakeable' ? join(dir, r.id, 'blocker', 'out.gcode') : join(dir, r.id, 'out.gcode'))
-      expect(job.overrides.layer_height).toBe(String(CUBE.layerHeight))
+      expect(job.overrides.layer_height).toBe(r.id === 'settings-orca-refuses' ? PRESET_REFUSE.refusedSetting.value : String(CUBE.layerHeight))
       // The jobs written unchecked are the ones job.ts refuses itself: the engine must refuse them too.
       if (r.unchecked) expect(() => validateJob(job)).toThrow()
       else expect(() => validateJob(job)).not.toThrow()
@@ -1097,6 +1136,41 @@ describe('exit codes, refusals and info', () => {
     expect(REFUSE.belowFirstLayer).toBeLessThanOrEqual(0.5 * CUBE.firstLayer)
     expect(made['too-big-for-the-bed']!.model!.triangles).toEqual(cube(REFUSE.tooBig).triangles)
     expect(REFUSALS.find((r) => r.id === 'too-big-for-the-bed')!.objectIndex).toBe(0)
+
+    // The presets stage's refusals: each changes one preset file, written into the refusal's own
+    // presets/ folder (the layout of crates/orca-cli/tests/intake.rs), and leaves the others the set's.
+    const own = (id: string, file: string) => join(dir, id, 'presets', `${file}.json`)
+    const read = (path: string) => JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+    expect(made['missing-preset']!.job.presets).toEqual({ ...presets, machine: own('missing-preset', 'machine') })
+    expect(existsSync(own('missing-preset', 'machine'))).toBe(false)
+    expect(made['preset-not-json']!.job.presets).toEqual({ ...presets, process: own('preset-not-json', 'process') })
+    expect(readFileSync(own('preset-not-json', 'process'), 'utf8')).toBe(PRESET_REFUSE.notJson)
+    expect(() => JSON.parse(PRESET_REFUSE.notJson)).toThrow()
+    expect(Array.isArray(JSON.parse(readFileSync(own('preset-not-object', 'process'), 'utf8')))).toBe(true)
+    // The process preset, as it is, in the machine's place.
+    expect(made['preset-wrong-type']!.job.presets).toEqual({ ...presets, machine: own('preset-wrong-type', 'machine') })
+    expect(read(own('preset-wrong-type', 'machine'))).toEqual(generic.process)
+    expect(read(own('preset-bad-from', 'process'))).toEqual({ ...generic.process, from: PRESET_REFUSE.from })
+    expect(read(own('preset-unreadable-value', 'process'))).toEqual({ ...generic.process, layer_height: PRESET_REFUSE.unreadable.value })
+    expect(read(own('not-fdm', 'machine'))).toEqual({ ...generic.machine, printer_technology: PRESET_REFUSE.resin })
+    expect(read(own('process-not-compatible', 'process'))).toEqual({ ...generic.process, compatible_printers: [PRESET_REFUSE.otherPrinter] })
+    expect(made['setting-bad-value']!.job.overrides[PRESET_REFUSE.badOverride.key]).toBe(PRESET_REFUSE.badOverride.value)
+    expect(made['flush-volume-past-int']!.job.overrides[PRESET_REFUSE.flushVolume.key]).toBe(PRESET_REFUSE.flushVolume.value)
+    // Its own resources folder, without profiles; a file where the work folder's orca-data goes.
+    expect(made['resources-without-profiles']!.job.resources).toBe(join(dir, 'resources-without-profiles', 'resources'))
+    expect(existsSync(join(dir, 'resources-without-profiles', 'resources', 'profiles'))).toBe(false)
+    expect(made['work-folder-unmakeable']!.job.workDir).toBe(join(dir, 'work-folder-unmakeable', 'work'))
+    expect(readFileSync(join(dir, 'work-folder-unmakeable', 'work', 'orca-data'), 'utf8')).toBe('a file, not a folder\n')
+    // A missing model on presets that give each of the stage's warnings but unknown-setting, which
+    // Orca's handle_legacy never lets through.
+    const warned = made['preset-warnings']!
+    expect(warned.model).toBeUndefined()
+    expect(warned.job.model.path).toBe(join(dir, 'preset-warnings', 'missing.stl'))
+    expect(warned.job.presets).toEqual({ machine: presets.machine, process: own('preset-warnings', 'process'), filaments: [own('preset-warnings', 'filament_1')] })
+    expect(read(own('preset-warnings', 'process'))).toEqual({ ...generic.process, ironing_speed: { value: 30 }, wall_loops: [[2], 3], sparse_infill_pattern: 'nopepattern' })
+    expect(read(own('preset-warnings', 'filament_1'))).toEqual({ ...generic.filament, compatible_printers: [PRESET_REFUSE.otherPrinter] })
+    expect(REFUSALS.find((r) => r.id === 'preset-warnings')!.warnings).toEqual(['preset-value-skipped', 'preset-value-skipped', 'setting-substituted', 'filament-not-compatible'])
+    expect(REFUSALS.filter((r) => r.warnings !== undefined).map((r) => r.id)).toEqual(['preset-warnings'])
   })
 
   test('bedOutline reads printable_area', () => {
@@ -1154,7 +1228,30 @@ describe("the Rust program's cases", () => {
 
   test("its own refusals are refusals of the smoke run, refused past reading the job, in the presets or at the model's file", () => {
     for (const id of RUST_OWN_REFUSALS) expect(REFUSALS.find((r) => r.id === id)?.code).toBeDefined()
-    expect(RUST_OWN_REFUSALS.map((id) => REFUSALS.find((r) => r.id === id)!.code)).toEqual(['file-not-found', 'setting-invalid', 'setting-invalid', 'setting-invalid'])
+    expect(RUST_OWN_REFUSALS.map((id) => REFUSALS.find((r) => r.id === id)!.code)).toEqual([
+      'file-not-found',
+      'setting-invalid',
+      'setting-invalid',
+      'setting-invalid',
+      'file-not-found',
+      'preset-invalid',
+      'preset-invalid',
+      'preset-invalid',
+      'preset-invalid',
+      'preset-invalid',
+      'not-fdm',
+      'process-not-compatible',
+      'setting-invalid',
+      'config-invalid',
+      'config-invalid',
+      'environment',
+      'output-failed',
+      'file-not-found',
+    ])
+    // Every refusal past reading the job and before the model is read is one of them: the corpus
+    // holds each to the C++ result as an intake golden (parity/goldens/front/intake/).
+    const beforeTheModel = REFUSALS.filter((r) => !['preset-file-key', 'two-at-one-print-z', 'profile-not-at-zero', 'drive-rooted-path'].includes(r.id) && REFUSAL_FAMILIES[r.id] === undefined).map((r) => r.id)
+    expect(beforeTheModel).toEqual([...RUST_OWN_REFUSALS])
     // A decline of a job the C++ refused within those steps is wrong; past them it is not.
     expect(endedWithinRust(['job', 'presets', 'failed'], 'setting-invalid')).toBe(true)
     expect(endedWithinRust(['job', 'presets', 'model', 'failed'], 'file-not-found')).toBe(true)

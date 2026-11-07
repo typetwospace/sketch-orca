@@ -56,7 +56,13 @@
 //                    model, a lone triangle (OBJ), layer profiles that do not start at 0 or go above the nozzle, a
 //                    G-code folder that cannot be made and a work folder from the root of the current drive
 //                    (\sketch-smoke-work, absolute on no system) get their named errors, exit codes and object, and
-//                    write no G-code
+//                    write no G-code; so do the refusals of the presets stage and its folders: a missing preset
+//                    file, one that is not JSON or not a JSON object, a preset of the wrong type, a "from" Orca
+//                    does not take, a preset value Orca cannot read, a resin printer, a process made for another
+//                    printer, an override value the setting does not take, a nozzle_volume past what the
+//                    flushing volumes take, settings Orca's check refuses (layer_height 0), a resources folder
+//                    without profiles and a work folder that cannot be made; and a missing model on presets
+//                    that give the stage's warnings gets them, in order
 // The Rust program's cases (RUST_SMOKE_CASES; `stage` runs them on the staged folder, each held to
 // the C++ engine beside it):
 //   rs-version       sketch-orca-rs version: the C++ program's fields, plus implementation rust
@@ -64,8 +70,8 @@
 //   rs-intake        the refusals (and a file that is not JSON, and a job with a field of the wrong
 //                    type): the C++ result, exit code and progress file, or not-ported for a job the
 //                    C++ took past what sketch-orca-rs does itself (reading the job, the presets and
-//                    the model's file: endedWithinRust); those it refuses itself in the presets and
-//                    at the model's file (RUST_OWN_REFUSALS) are never declined
+//                    the model's file: endedWithinRust); those it refuses itself in the presets
+//                    stage, its folders and at the model's file (RUST_OWN_REFUSALS) are never declined
 //   rs-decline       a slice job: not-ported, exit -8 (low byte 248), the missing steps, no output
 // Every run's exit code must be the one its result gives (exitCode). The engine is run hidden, with
 // a timeout; on Windows its libraries are checked first, so a missing DLL fails the case instead of
@@ -96,7 +102,7 @@ import { currentPlatform } from './toolchain.ts'
 import { extractZipEntry, readZipEntries } from './zip.ts'
 
 /** Bump when the cases or their expectations change: a passed stamp of an older version does not count. */
-export const SMOKE_VERSION = 11
+export const SMOKE_VERSION = 12
 /** Folders of Orca's resources/ that libslic3r reads (resources_dir()): presets, nozzle tables, flush volumes. */
 export const ENGINE_RESOURCES = ['profiles', 'info', 'flush'] as const
 
@@ -684,9 +690,11 @@ export interface RefusalExpectation {
   objectIndex?: number
   /** What the message must name (the setting, the file). */
   mentions?: string
+  /** The codes of the result's warnings, in their order (not checked when left out). */
+  warnings?: string[]
 }
 
-/** A refused job: not ok, with the named error, its exit code (in the result and as the engine's own) and object, a message naming the culprit, and no outputs. */
+/** A refused job: not ok, with the named error, its exit code (in the result and as the engine's own) and object, a message naming the culprit, the warnings asked for, and no outputs. */
 export function checkRefusal(result: JobResult, processCode: number | null, want: RefusalExpectation): string[] {
   if (result.ok) return [`the engine did the job; expected ${want.code} (${want.exitCode})`]
   const p: string[] = []
@@ -696,6 +704,8 @@ export function checkRefusal(result: JobResult, processCode: number | null, want
   if (result.objectIndex !== want.objectIndex) p.push(`objectIndex is ${result.objectIndex ?? 'missing'}, expected ${want.objectIndex ?? 'none'}`)
   if (result.message.trim() === '') p.push('the message is empty')
   else if (want.mentions !== undefined && !result.message.includes(want.mentions)) p.push(`the message does not name ${want.mentions}: ${JSON.stringify(result.message)}`)
+  const warnings = result.warnings.map((w) => w.code)
+  if (want.warnings !== undefined && JSON.stringify(warnings) !== JSON.stringify(want.warnings)) p.push(`the warnings are ${JSON.stringify(warnings)}, expected ${JSON.stringify(want.warnings)}`)
   if (result.outputs.gcode !== '' || result.outputs.bambu3mf !== '') p.push(`the failed job names outputs ${JSON.stringify(result.outputs)}`)
   return p
 }
@@ -960,6 +970,47 @@ export const REFUSE = {
   driveRooted: '\\sketch-smoke-work',
 } as const
 
+/**
+ * What the refused jobs of the presets stage put in their preset files (each a copy of the generic
+ * set's file with one thing changed, written into the refusal's own presets/ folder) and overrides:
+ * text that is not JSON, JSON that is not an object, a "from" Orca does not take, a preset value
+ * Orca cannot read, a resin printer, a printer no preset is made for, an override value the setting
+ * does not take, a nozzle_volume past the largest flushing volume, the value Orca's check refuses,
+ * and for preset-warnings what gives each warning of the stage: a value that is neither text nor a
+ * list (preset-value-skipped), a list that mixes lists and values (preset-value-skipped), an enum
+ * value Orca does not know (setting-substituted) and a filament made for another printer
+ * (filament-not-compatible). The stage's fourth warning, unknown-setting, cannot be given: Orca's
+ * handle_legacy drops every key it does not have before the value is set (cli/presets.cpp
+ * load_preset).
+ */
+export const PRESET_REFUSE = {
+  notJson: '{"type": "process",',
+  notObject: '[1, 2]',
+  from: 'elsewhere',
+  unreadable: { key: 'layer_height', value: 'abc' },
+  resin: 'SLA',
+  otherPrinter: 'Another printer',
+  badOverride: { key: 'sparse_infill_pattern', value: 'zzz' },
+  flushVolume: { key: 'nozzle_volume', value: '1e100' },
+  refusedSetting: { key: 'layer_height', value: '0' },
+  neitherTextNorList: { key: 'ironing_speed', value: { value: 30 } },
+  mixedList: { key: 'wall_loops', value: [[2], 3] },
+  substituted: { key: 'sparse_infill_pattern', value: 'nopepattern' },
+} as const
+
+/** Writes `text` as `<dir>/presets/<file>.json` (the layout of the Rust program's intake tests) and returns its path. */
+export function refusalPresetFile(dir: string, file: string, text: string): string {
+  mkdirSync(join(dir, 'presets'), { recursive: true })
+  const path = join(dir, 'presets', `${file}.json`)
+  writeFileSync(path, text)
+  return path
+}
+
+/** A copy of the preset file `from` with `change` made to it, written by refusalPresetFile; its path. */
+export function changedPresetFile(dir: string, from: string, file: string, change: (p: Record<string, unknown>) => Record<string, unknown>): string {
+  return refusalPresetFile(dir, file, JSON.stringify(change(JSON.parse(readFileSync(from, 'utf8')) as Record<string, unknown>), null, 2) + '\n')
+}
+
 export interface Refusal extends RefusalExpectation {
   id: string
   /** The job, writing into `dir`, and its model (none: no model file is written). */
@@ -1145,6 +1196,176 @@ export const REFUSALS: Refusal[] = [
       job: { ...smokeJob({ command: 'slice', dir, resources, presets, overrides: cubeOverrides }), workDir: REFUSE.driveRooted },
       model: cube(CUBE.size),
     }),
+  },
+  // The refusals of the presets stage and its folders (cli/run.cpp set_up_folders, cli/presets.cpp
+  // load_settings), which sketch-orca-rs makes itself; each changes one preset file (PRESET_REFUSE),
+  // an override or a folder of the job.
+  {
+    id: 'missing-preset',
+    code: 'file-not-found',
+    exitCode: -3,
+    mentions: 'presets.machine: there is no file',
+    make: (dir, resources, presets) => ({ job: smokeJob({ command: 'slice', dir, resources, presets: { ...presets, machine: join(dir, 'presets', 'machine.json') }, overrides: cubeOverrides }), model: cube(CUBE.size) }),
+  },
+  {
+    id: 'preset-not-json',
+    code: 'preset-invalid',
+    exitCode: -5,
+    mentions: 'process.json is not JSON',
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'slice', dir, resources, presets: { ...presets, process: refusalPresetFile(dir, 'process', PRESET_REFUSE.notJson) }, overrides: cubeOverrides }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    id: 'preset-not-object',
+    code: 'preset-invalid',
+    exitCode: -5,
+    mentions: 'process.json is not a JSON object',
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'slice', dir, resources, presets: { ...presets, process: refusalPresetFile(dir, 'process', PRESET_REFUSE.notObject) }, overrides: cubeOverrides }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    // The process preset given as the machine preset.
+    id: 'preset-wrong-type',
+    code: 'preset-invalid',
+    exitCode: -5,
+    mentions: 'machine.json is a process preset, not a machine preset',
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'slice', dir, resources, presets: { ...presets, machine: changedPresetFile(dir, presets.process, 'machine', (p) => p) }, overrides: cubeOverrides }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    id: 'preset-bad-from',
+    code: 'preset-invalid',
+    exitCode: -5,
+    mentions: `"from" must be system, User or user, got "${PRESET_REFUSE.from}"`,
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'slice', dir, resources, presets: { ...presets, process: changedPresetFile(dir, presets.process, 'process', (p) => ({ ...p, from: PRESET_REFUSE.from })) }, overrides: cubeOverrides }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    id: 'preset-unreadable-value',
+    code: 'preset-invalid',
+    exitCode: -5,
+    mentions: `${PRESET_REFUSE.unreadable.key} has a value Orca cannot read`,
+    make: (dir, resources, presets) => ({
+      job: smokeJob({
+        command: 'slice',
+        dir,
+        resources,
+        presets: { ...presets, process: changedPresetFile(dir, presets.process, 'process', (p) => ({ ...p, [PRESET_REFUSE.unreadable.key]: PRESET_REFUSE.unreadable.value })) },
+        overrides: cubeOverrides,
+      }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    id: 'not-fdm',
+    code: 'not-fdm',
+    exitCode: -7,
+    mentions: 'is not a filament (FFF) preset',
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'slice', dir, resources, presets: { ...presets, machine: changedPresetFile(dir, presets.machine, 'machine', (p) => ({ ...p, printer_technology: PRESET_REFUSE.resin })) }, overrides: cubeOverrides }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    id: 'process-not-compatible',
+    code: 'process-not-compatible',
+    exitCode: -17,
+    mentions: 'is not made for the printer',
+    make: (dir, resources, presets) => ({
+      job: smokeJob({
+        command: 'slice',
+        dir,
+        resources,
+        presets: { ...presets, process: changedPresetFile(dir, presets.process, 'process', (p) => ({ ...p, compatible_printers: [PRESET_REFUSE.otherPrinter] })) },
+        overrides: cubeOverrides,
+      }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    // An override of a setting Orca has, with a value it does not take (the setting's values named).
+    id: 'setting-bad-value',
+    code: 'setting-invalid',
+    exitCode: -2,
+    mentions: `${PRESET_REFUSE.badOverride.key} cannot be "${PRESET_REFUSE.badOverride.value}"`,
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'slice', dir, resources, presets, overrides: { ...cubeOverrides, [PRESET_REFUSE.badOverride.key]: PRESET_REFUSE.badOverride.value } }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    // The flushing volumes' inputs, checked before Orca would convert them to int.
+    id: 'flush-volume-past-int',
+    code: 'config-invalid',
+    exitCode: -18,
+    mentions: `${PRESET_REFUSE.flushVolume.key} cannot be`,
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'slice', dir, resources, presets, overrides: { ...cubeOverrides, [PRESET_REFUSE.flushVolume.key]: PRESET_REFUSE.flushVolume.value } }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    // Orca's own check of the settings (PrintConfig validate), at the end of the stage.
+    id: 'settings-orca-refuses',
+    code: 'config-invalid',
+    exitCode: -18,
+    mentions: `Orca refuses these settings: ${PRESET_REFUSE.refusedSetting.key}`,
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'slice', dir, resources, presets, overrides: { ...cubeOverrides, [PRESET_REFUSE.refusedSetting.key]: PRESET_REFUSE.refusedSetting.value } }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    // A resources folder of the refusal's own, with no profiles folder in it.
+    id: 'resources-without-profiles',
+    code: 'environment',
+    exitCode: -1,
+    mentions: 'has no profiles folder',
+    make: (dir, _resources, presets) => {
+      mkdirSync(join(dir, 'resources'), { recursive: true })
+      return { job: smokeJob({ command: 'slice', dir, resources: join(dir, 'resources'), presets, overrides: cubeOverrides }), model: cube(CUBE.size) }
+    },
+  },
+  {
+    // The work folder's orca-data folder has the name of a file.
+    id: 'work-folder-unmakeable',
+    code: 'output-failed',
+    exitCode: -13,
+    mentions: 'cannot use the work folder',
+    make: (dir, resources, presets) => {
+      mkdirSync(join(dir, 'work'), { recursive: true })
+      writeFileSync(join(dir, 'work', 'orca-data'), 'a file, not a folder\n')
+      return { job: smokeJob({ command: 'slice', dir, resources, presets, overrides: cubeOverrides }), model: cube(CUBE.size) }
+    },
+  },
+  {
+    // A missing model, refused after the presets stage, which gives its warnings in their order:
+    // each preset file's skipped values in key order, then its substitutions, then the filaments
+    // that do not match the printer.
+    id: 'preset-warnings',
+    code: 'file-not-found',
+    exitCode: -3,
+    mentions: 'missing.stl',
+    warnings: ['preset-value-skipped', 'preset-value-skipped', 'setting-substituted', 'filament-not-compatible'],
+    make: (dir, resources, presets) => {
+      const w = PRESET_REFUSE
+      const process = changedPresetFile(dir, presets.process, 'process', (p) => ({
+        ...p,
+        [w.neitherTextNorList.key]: w.neitherTextNorList.value,
+        [w.mixedList.key]: w.mixedList.value,
+        [w.substituted.key]: w.substituted.value,
+      }))
+      const filament = changedPresetFile(dir, presets.filaments[0]!, 'filament_1', (p) => ({ ...p, compatible_printers: [w.otherPrinter] }))
+      return { job: { ...smokeJob({ command: 'slice', dir, resources, presets: { ...presets, process, filaments: [filament] }, overrides: cubeOverrides }), model: { path: join(dir, 'missing.stl') } } }
+    },
   },
 ]
 
@@ -2090,7 +2311,7 @@ export const SMOKE_CASES: SmokeCase[] = [
   },
   {
     id: 'refusals',
-    title: 'refused jobs get their named error, exit code and object, and write no G-code',
+    title: 'refused jobs get their named error, exit code, object and the warnings asked for, and write no G-code',
     async run(env) {
       const problems: string[] = []
       const warnings: string[] = []
@@ -2184,11 +2405,35 @@ export function endedWithinRust(stages: string[], code: string | undefined): boo
 }
 
 /**
- * The refusals sketch-orca-rs makes itself past reading the job: in the presets stage (an override
- * Orca does not have, or the old name of one whose value Orca drops) and at the model's file
- * (crates/orca-cli/src/run.rs). rs-intake compares each with the C++ result; a decline fails it.
+ * The refusals sketch-orca-rs makes itself past reading the job (crates/orca-cli/src/run.rs): in
+ * the presets stage (an override Orca does not have, or the old name of one whose value Orca drops;
+ * a preset file that is missing, not JSON, not an object, of the wrong type, from elsewhere, with a
+ * value Orca cannot read or for a resin printer; a process made for another printer; an override
+ * value the setting does not take; settings Orca's check refuses, the flushing volumes' inputs
+ * included), in its folders (no profiles in the
+ * resources, a work folder that cannot be made) and at the model's file, with or without the
+ * stage's warnings. rs-intake compares each with the C++ result; a decline fails it.
  */
-export const RUST_OWN_REFUSALS = ['missing-model', 'unknown-setting', 'unknown-capitalised-setting', 'renamed-key-dropped-value'] as const
+export const RUST_OWN_REFUSALS = [
+  'missing-model',
+  'unknown-setting',
+  'unknown-capitalised-setting',
+  'renamed-key-dropped-value',
+  'missing-preset',
+  'preset-not-json',
+  'preset-not-object',
+  'preset-wrong-type',
+  'preset-bad-from',
+  'preset-unreadable-value',
+  'not-fdm',
+  'process-not-compatible',
+  'setting-bad-value',
+  'flush-volume-past-int',
+  'settings-orca-refuses',
+  'resources-without-profiles',
+  'work-folder-unmakeable',
+  'preset-warnings',
+] as const
 
 /**
  * Runs one job with both programs in `dir` (the C++ engine first), each with its own result and

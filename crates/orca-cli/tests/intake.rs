@@ -11,18 +11,23 @@
 //! `sketch-orca-rs run` on invalid jobs, against the C++ program's results
 //! (parity/goldens/front/intake/): the invalid examples of protocol/examples/invalid, moved into a
 //! folder as the parity corpus moves them, the smoke refusals the C++ refuses while reading the
-//! job, and those it refuses in the presets stage (an override Orca does not have) or at the
-//! model's file (a model that is not there) get the same result, byte for byte (the engine block
-//! apart: this program's version and `implementation`), the same exit code and the same progress
-//! file. The run's files are kept apart as the C++ keeps them: a result that would replace a file
-//! of the run is not written, a progress file that would is refused, and a job whose outputs would
-//! replace an input is refused; a command line it does not take still gets its result.
+//! job, and those it refuses in the presets stage (an override Orca does not have or a value it
+//! does not take; a preset file that is missing, not JSON, not an object, of the wrong type, from
+//! elsewhere, with a value Orca cannot read or for a resin printer; a process made for another
+//! printer; the flushing volumes' inputs and Orca's own check), in its folders (no profiles, a work
+//! folder that cannot be made) or at the model's file (a model that is not there, with and without
+//! the stage's warnings) get the same result, byte for byte (the engine block apart: this
+//! program's version and `implementation`), the same exit code and the same progress file; every
+//! intake refusal of the corpus is one of them. The run's files are kept apart as the C++ keeps
+//! them: a result that would replace a file of the run is not written, a progress file that would
+//! is refused, and a job whose outputs would replace an input is refused; a command line it does
+//! not take still gets its result.
 
 mod common;
 
 use common::{
     Scratch, as_cpp_result, failed_at_intake_progress, fixture_files, program, progress_text, repo,
-    stream_text, valid_job, write_fixtures, write_job,
+    stream_text, valid_job, write_fixtures, write_job, write_named_preset,
 };
 use orca_json::{Object, Order, Value, parse};
 
@@ -192,20 +197,22 @@ fn the_refusals_of_the_job_itself_get_the_cpp_programs_result() {
     }
 }
 
+/// The cube's overrides (smoke.ts cubeOverrides), which every smoke refusal's job has.
+const CUBE: [(&str, &str); 7] = [
+    ("brim_type", "no_brim"),
+    ("skirt_loops", "0"),
+    ("enable_support", "0"),
+    ("enable_arc_fitting", "0"),
+    ("precise_z_height", "0"),
+    ("layer_height", "0.2"),
+    ("initial_layer_print_height", "0.25"),
+];
+
 #[test]
 fn the_refusals_of_the_presets_stage_and_the_models_file_get_the_cpp_programs_result() {
     // smoke.ts REFUSALS: the cube's overrides (cubeOverrides), then the one refused, on presets
     // that load (common::write_fixtures; the goldens' came from the generic set, and neither
     // gives a warning).
-    const CUBE: [(&str, &str); 7] = [
-        ("brim_type", "no_brim"),
-        ("skirt_loops", "0"),
-        ("enable_support", "0"),
-        ("enable_arc_fitting", "0"),
-        ("precise_z_height", "0"),
-        ("layer_height", "0.2"),
-        ("initial_layer_print_height", "0.25"),
-    ];
     let presets_stage: &[&str] = &["job", "presets"];
     let model_stage: &[&str] = &["job", "presets", "model"];
     for (id, refused, stages) in [
@@ -240,9 +247,7 @@ fn the_refusals_of_the_presets_stage_and_the_models_file_get_the_cpp_programs_re
             job.insert("model", model);
         }
         let path = write_job(&scratch, &job);
-        // The golden names the case's folder <case>, as JSON text.
-        let folder = Value::from(scratch.0.to_string_lossy().into_owned()).dump(None);
-        let want = golden(id).replace("<case>", &folder[1..folder.len() - 1]);
+        let want = golden_in(id, &scratch);
         let w = parse(want.as_bytes(), Order::Insertion).unwrap();
         let (code, result, progress) = run(&scratch, &path);
         assert_eq!(as_cpp_result(&result), want, "{id}");
@@ -259,6 +264,231 @@ fn the_refusals_of_the_presets_stage_and_the_models_file_get_the_cpp_programs_re
         assert_eq!(
             scratch.files(),
             fixture_files(&["progress.ndjson", "result.json"]),
+            "{id}"
+        );
+    }
+}
+
+/// The names of smoke.ts's generic preset set (`SMOKE_PRESETS.generic`), which the goldens of the
+/// presets stage's refusals name.
+const GENERIC_MACHINE: &str = "Voron 2.4 300 0.4 nozzle";
+const GENERIC_PROCESS: &str = "0.20mm Standard @Voron";
+const GENERIC_FILAMENT: &str = "Generic PLA @System";
+
+/// smoke.ts `PRESET_REFUSE`: a preset file that is not JSON and one that is not an object, and the
+/// printer no preset of the goldens is made for.
+const NOT_JSON: &str = "{\"type\": \"process\",";
+const NOT_OBJECT: &str = "[1, 2]";
+const OTHER_PRINTER: &str = "Another printer";
+
+/// The files a refusal of the presets stage starts from: [`common::write_fixtures`]'s, its presets
+/// named as the generic set's.
+fn write_generic_fixtures(dir: &Scratch) {
+    std::fs::create_dir_all(dir.path("resources/profiles")).unwrap();
+    write_named_preset(dir, "machine", "machine", GENERIC_MACHINE, &[]);
+    write_named_preset(dir, "process", "process", GENERIC_PROCESS, &[]);
+    write_named_preset(dir, "filament_1", "filament", GENERIC_FILAMENT, &[]);
+    std::fs::write(dir.path("model.stl"), b"solid").unwrap();
+}
+
+/// What the refusal `id` changes in the files of [`write_generic_fixtures`], the overrides or the
+/// job, as smoke.ts `REFUSALS` changes the generic set's (each preset file it changes is written
+/// in `presets/`, as there).
+fn change_for(id: &str, dir: &Scratch, overrides: &mut Object, job: &mut Object) {
+    let process = |settings: &[(&str, Value)]| {
+        write_named_preset(dir, "process", "process", GENERIC_PROCESS, settings);
+    };
+    match id {
+        "refusal-missing-preset" => std::fs::remove_file(dir.path("presets/machine.json")).unwrap(),
+        "refusal-preset-not-json" => {
+            std::fs::write(dir.path("presets/process.json"), NOT_JSON).unwrap()
+        }
+        "refusal-preset-not-object" => {
+            std::fs::write(dir.path("presets/process.json"), NOT_OBJECT).unwrap();
+        }
+        // The process preset in the machine's place.
+        "refusal-preset-wrong-type" => {
+            write_named_preset(dir, "machine", "process", GENERIC_PROCESS, &[]);
+        }
+        "refusal-preset-bad-from" => process(&[("from", Value::from("elsewhere"))]),
+        "refusal-preset-unreadable-value" => process(&[("layer_height", Value::from("abc"))]),
+        "refusal-not-fdm" => {
+            let sla = [("printer_technology", Value::from("SLA"))];
+            write_named_preset(dir, "machine", "machine", GENERIC_MACHINE, &sla);
+        }
+        "refusal-process-not-compatible" => {
+            process(&[("compatible_printers", Value::from(vec![OTHER_PRINTER]))]);
+        }
+        "refusal-setting-bad-value" => overrides.insert("sparse_infill_pattern", "zzz"),
+        "refusal-flush-volume-past-int" => overrides.insert("nozzle_volume", "1e100"),
+        "refusal-settings-orca-refuses" => overrides.insert("layer_height", "0"),
+        "refusal-resources-without-profiles" => {
+            std::fs::remove_dir(dir.path("resources/profiles")).unwrap();
+        }
+        // The work folder's orca-data folder has the name of a file.
+        "refusal-work-folder-unmakeable" => {
+            std::fs::create_dir_all(dir.path("work")).unwrap();
+            std::fs::write(dir.path("work/orca-data"), "a file, not a folder\n").unwrap();
+        }
+        // A missing model on presets that give the stage's warnings.
+        "refusal-preset-warnings" => {
+            let mut speed = Object::new(Order::Insertion);
+            speed.insert("value", 30);
+            process(&[
+                ("ironing_speed", Value::Object(speed)),
+                (
+                    "wall_loops",
+                    Value::Array(vec![Value::from(vec![2]), Value::from(3)]),
+                ),
+                ("sparse_infill_pattern", Value::from("nopepattern")),
+            ]);
+            let other = [("compatible_printers", Value::from(vec![OTHER_PRINTER]))];
+            write_named_preset(dir, "filament_1", "filament", GENERIC_FILAMENT, &other);
+            let mut model = Object::new(Order::Insertion);
+            model.insert("path", dir.path("missing.stl"));
+            job.insert("model", model);
+        }
+        other => panic!("no change for {other}"),
+    }
+}
+
+/// The golden of corpus case `id`, the case's folder `<case>` written as `dir`'s, as JSON text.
+fn golden_in(id: &str, dir: &Scratch) -> String {
+    let folder = Value::from(dir.0.to_string_lossy().into_owned()).dump(None);
+    golden(id).replace("<case>", &folder[1..folder.len() - 1])
+}
+
+#[test]
+fn the_refusals_and_warnings_of_the_presets_stage_and_its_folders_get_the_cpp_programs_result() {
+    // smoke.ts REFUSALS made past reading the job and before the model is read (RUST_OWN_REFUSALS
+    // but the four above), each the cube's job with one thing changed, here on presets that have
+    // the generic set's names and Orca's defaults (the generic set's own values reach none of
+    // these results). The run writes only its result and progress file.
+    let presets_stage: &[&str] = &["job", "presets"];
+    let model_stage: &[&str] = &["job", "presets", "model"];
+    for (id, stages) in [
+        ("refusal-missing-preset", presets_stage),
+        ("refusal-preset-not-json", presets_stage),
+        ("refusal-preset-not-object", presets_stage),
+        ("refusal-preset-wrong-type", presets_stage),
+        ("refusal-preset-bad-from", presets_stage),
+        ("refusal-preset-unreadable-value", presets_stage),
+        ("refusal-not-fdm", presets_stage),
+        ("refusal-process-not-compatible", presets_stage),
+        ("refusal-setting-bad-value", presets_stage),
+        ("refusal-flush-volume-past-int", presets_stage),
+        ("refusal-settings-orca-refuses", presets_stage),
+        ("refusal-resources-without-profiles", presets_stage),
+        ("refusal-work-folder-unmakeable", presets_stage),
+        ("refusal-preset-warnings", model_stage),
+    ] {
+        let scratch = Scratch::new("intake", id);
+        write_generic_fixtures(&scratch);
+        let mut job = valid_job(&scratch, "slice");
+        let mut overrides = Object::new(Order::Insertion);
+        for (k, v) in CUBE {
+            overrides.insert(k, v);
+        }
+        change_for(id, &scratch, &mut overrides, &mut job);
+        job.insert("overrides", overrides);
+        let path = write_job(&scratch, &job);
+        let mut files = scratch.files();
+        let want = golden_in(id, &scratch);
+        let w = parse(want.as_bytes(), Order::Insertion).unwrap();
+        let (code, result, progress) = run(&scratch, &path);
+        assert_eq!(as_cpp_result(&result), want, "{id}");
+        assert_eq!(
+            i64::from(code),
+            w["exitCode"].as_f64().unwrap() as i64,
+            "{id}"
+        );
+        assert_eq!(
+            progress,
+            progress_text(stages, Some(w["message"].as_str().unwrap())),
+            "{id}"
+        );
+        files.extend(["progress.ndjson".to_string(), "result.json".to_string()]);
+        orca_stl::sort(&mut files);
+        assert_eq!(scratch.files(), files, "{id}");
+    }
+
+    // The stage's warnings in their order: each preset file's skipped values in key order, its
+    // substitutions, then the filaments made for another printer. unknown-setting never comes:
+    // Orca's handle_legacy drops a key it does not have before the value is set.
+    let w = parse(
+        golden("refusal-preset-warnings").as_bytes(),
+        Order::Insertion,
+    )
+    .unwrap();
+    let codes: Vec<&str> = w["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            "preset-value-skipped",
+            "preset-value-skipped",
+            "setting-substituted",
+            "filament-not-compatible"
+        ]
+    );
+}
+
+#[test]
+fn every_intake_refusal_of_the_corpus_is_held_to_its_golden_here() {
+    // The corpus's refusal cases whose only family is intake (smoke.ts REFUSALS, in their order):
+    // the C++ refuses them up to the model's file, where this program must give the same result.
+    // Each is a case of one of the tests above: the job itself (preset-file-key, two-at-one-print-z,
+    // profile-not-at-zero, drive-rooted-path), the overrides and the model's file (missing-model,
+    // the unknown settings, renamed-key-dropped-value), or the presets stage and its folders (the
+    // rest). A refusal added to the corpus fails here until it has its test.
+    let corpus = std::fs::read(repo().join("parity/corpus.json")).unwrap();
+    let corpus = parse(&corpus, Order::Insertion).unwrap();
+    let intake: Vec<&str> = corpus["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| {
+            c["kind"].as_str() == Some("refusal")
+                && c["families"].as_array().map(Vec::as_slice) == Some(&[Value::from("intake")][..])
+        })
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        intake,
+        [
+            "refusal-missing-model",
+            "refusal-unknown-setting",
+            "refusal-unknown-capitalised-setting",
+            "refusal-preset-file-key",
+            "refusal-renamed-key-dropped-value",
+            "refusal-two-at-one-print-z",
+            "refusal-profile-not-at-zero",
+            "refusal-drive-rooted-path",
+            "refusal-missing-preset",
+            "refusal-preset-not-json",
+            "refusal-preset-not-object",
+            "refusal-preset-wrong-type",
+            "refusal-preset-bad-from",
+            "refusal-preset-unreadable-value",
+            "refusal-not-fdm",
+            "refusal-process-not-compatible",
+            "refusal-setting-bad-value",
+            "refusal-flush-volume-past-int",
+            "refusal-settings-orca-refuses",
+            "refusal-resources-without-profiles",
+            "refusal-work-folder-unmakeable",
+            "refusal-preset-warnings",
+        ]
+    );
+    for id in intake {
+        assert!(
+            repo()
+                .join(format!("parity/goldens/front/intake/{id}.result.json"))
+                .is_file(),
             "{id}"
         );
     }

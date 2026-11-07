@@ -270,7 +270,31 @@ describe('cases', () => {
   })
 
   test('a refusal is held to the families of the steps the C++ engine reaches before it refuses', () => {
-    const intake = ['missing-model', 'unknown-setting', 'unknown-capitalised-setting', 'preset-file-key', 'renamed-key-dropped-value', 'two-at-one-print-z', 'profile-not-at-zero', 'drive-rooted-path']
+    const intake = [
+      'missing-model',
+      'unknown-setting',
+      'unknown-capitalised-setting',
+      'preset-file-key',
+      'renamed-key-dropped-value',
+      'two-at-one-print-z',
+      'profile-not-at-zero',
+      'drive-rooted-path',
+      // The presets stage and its folders, and a missing model with the stage's warnings.
+      'missing-preset',
+      'preset-not-json',
+      'preset-not-object',
+      'preset-wrong-type',
+      'preset-bad-from',
+      'preset-unreadable-value',
+      'not-fdm',
+      'process-not-compatible',
+      'setting-bad-value',
+      'flush-volume-past-int',
+      'settings-orca-refuses',
+      'resources-without-profiles',
+      'work-folder-unmakeable',
+      'preset-warnings',
+    ]
     expect(REFUSALS.map((r) => r.id).filter((id) => REFUSAL_FAMILIES[id] === undefined)).toEqual(intake)
     const filled = withFamilies(cases, presetSets(), DEFAULTS)
     const of = (id: string) => filled.find((c) => c.id === `refusal-${id}`)!.families

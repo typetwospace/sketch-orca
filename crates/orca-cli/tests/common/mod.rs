@@ -133,10 +133,22 @@ pub fn write_job(dir: &Scratch, job: &Object) -> String {
 /// Writes the preset file `presets/<file>.json` of `kind` ("Test <kind>", from the system) with
 /// `settings` besides, in their order.
 pub fn write_preset(dir: &Scratch, file: &str, kind: &str, settings: &[(&str, Value)]) {
+    write_named_preset(dir, file, kind, &format!("Test {kind}"), settings);
+}
+
+/// Writes the preset file `presets/<file>.json` of `kind` named `name`, from the system, with
+/// `settings` besides, in their order (a setting named `from` takes the place of the system).
+pub fn write_named_preset(
+    dir: &Scratch,
+    file: &str,
+    kind: &str,
+    name: &str,
+    settings: &[(&str, Value)],
+) {
     std::fs::create_dir_all(dir.path("presets")).unwrap();
     let mut p = Object::new(Order::Insertion);
     p.insert("type", kind);
-    p.insert("name", format!("Test {kind}"));
+    p.insert("name", name);
     p.insert("from", "system");
     for (k, v) in settings {
         p.insert(*k, v.clone());

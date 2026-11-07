@@ -159,13 +159,22 @@ What `sketch-orca-rs` answers so far (`crates/orca-cli/README.md`):
   the presets stage as `cli/presets.cpp` does (the work folders made, the presets read, checked
   against each other and merged, the overrides applied and the settings checked as Orca checks
   them, with the C++ warnings in their order) and checks that the model's file is there. A command
-  line or job the C++ program refuses up to there (an unknown setting, a preset made for another
-  printer, settings Orca refuses, a missing model) gets the same result (code, message, exit code,
-  warnings), result file and progress file (`parity/goldens/front/intake/`). A refusal the C++
-  program makes from the reading of the model on (a model it cannot read or that is bigger than
-  the bed) belongs to a step that is not certified, so that job gets `not-ported` below instead,
-  until its family is; so does a preset with a compatibility condition, which needs Orca's
-  placeholder parser (the family `preset-conditions`).
+  line or job the C++ program refuses up to there gets the same result (code, message, exit code,
+  warnings), result file and progress file. The corpus holds the C++ result of these refusals
+  (`parity/goldens/front/intake/`, held by `crates/orca-cli/tests/intake.rs` and `parity
+  certify`): the invalid examples and the job's own refusals, an unknown setting or a bad value as
+  an override, a preset file that is missing, not JSON, not an object, of the wrong type, from
+  elsewhere, with a value Orca cannot read or for a resin printer, a process made for another
+  printer, settings Orca refuses (`layer_height` 0, a flushing volume past 20000), a resources
+  folder with no profiles, a work folder that cannot be made, and a missing model, also after the
+  stage's warnings (a skipped value, a substituted one, a filament made for another printer). Not
+  in the corpus yet: the thumbnails' internal error, and `setting-invalid` for a resin setting,
+  filament colours, the flushing matrix's size and a per-filament override's count
+  (`crates/orca-cli/src/presets.rs`); they are translated from `cli/presets.cpp` but not yet held
+  to a C++ run. A refusal the C++ program makes from the reading of the model on (a model it
+  cannot read or that is bigger than the bed) belongs to a step that is not certified, so that job
+  gets `not-ported` below instead, until its family is; so does a preset with a compatibility
+  condition, which needs Orca's placeholder parser (the family `preset-conditions`).
 - The decline: a job that gets past the model's file and reaches a step `parity/parity.json` does
   not certify, which for now is every `info`, `layers` and `slice` job, gets `not-ported`, exit -8
   (the class of `unsupported`; 248 as a low byte) and `missing`, the steps (`protocol/README.md`,
@@ -316,8 +325,8 @@ one of the staging inputs. The staged copy must report the C++ engine's version 
 `<work>/smoke/staged-rust`), each held to the staged C++ engine: `rs-version`, `rs-config-def`
 (the C++ program's file, byte for byte), `rs-intake` (the refusals' C++ results, or `not-ported`
 for a job the C++ took past the job, its presets and its model's file; a missing model, the
-unknown settings and a renamed key's dropped value are never declined, as `sketch-orca-rs` makes
-those refusals itself) and `rs-decline` (a slice job ends `not-ported`, exit -8, with no output);
+unknown settings, a renamed key's dropped value and the presets stage's refusals are never
+declined, as `sketch-orca-rs` makes those refusals itself, `RUST_OWN_REFUSALS`) and `rs-decline` (a slice job ends `not-ported`, exit -8, with no output);
 otherwise nothing is swapped in.
 
 Before staging, `stage` checks that the checkout is at the locked commit; that the patches `build`
@@ -510,7 +519,16 @@ cases are `SMOKE_CASES` in `scripts/lib/smoke.ts`:
   loader drops a lone facet; `model-unreadable`, -6, object 0), layer profiles that do not start
   at z 0 or go above the nozzle (`layer-profile-invalid`, -2, object 0), and a G-code folder that
   cannot be made (`output-failed`, -13, with no layers, printZ or outputs) are refused with that
-  error, exit code and object, a message naming the culprit where there is one, and no G-code.
+  error, exit code and object, a message naming the culprit where there is one, and no G-code. So
+  are the presets stage's refusals, each changing one preset file (`PRESET_REFUSE`), an override
+  or a folder of the job: a preset file that is missing (`file-not-found`, -3), not JSON, not an
+  object, of the wrong type, from elsewhere or with a value Orca cannot read (`preset-invalid`,
+  -5), for a resin printer (`not-fdm`, -7), a process made for another printer
+  (`process-not-compatible`, -17), a bad override value (`setting-invalid`, -2), a flushing volume
+  past 20000 and `layer_height` 0 (`config-invalid`, -18), a resources folder with no profiles
+  (`environment`, -1) and a work folder that cannot be made (`output-failed`, -13); and a missing
+  model after the stage's warnings, which must come in their order (two `preset-value-skipped`, a
+  `setting-substituted` and a `filament-not-compatible`).
   Jobs that `scripts/lib/job.ts` refuses itself are written unchecked, so the engine's own check
   is what is tested.
 

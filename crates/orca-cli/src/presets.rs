@@ -23,11 +23,13 @@
 //! - Each preset file ([`load_preset`]): read with sorted keys as Orca reads one; its description
 //!   keys (name, type, from ...) kept apart; a list written as Orca's text; each value read with
 //!   Orca's substitutions (an enum or bool value Orca does not know takes the default:
-//!   `setting-substituted`); a key Orca does not have skipped (`unknown-setting`), as is a value
-//!   that is neither text nor a list (`preset-value-skipped`). Refused: a missing file
-//!   (`file-not-found`), a file that is not a JSON object, a value Orca cannot read, a `from` that
-//!   is not system, User or user, a preset of the wrong type (`preset-invalid`), and a resin
-//!   printer (`not-fdm`). A bad thumbnails list stops the run as Orca's exception does
+//!   `setting-substituted`); a key Orca does not have skipped without a word, as Orca's
+//!   handle_legacy drops it before the value is set (so the C++ `unknown-setting` warning, kept
+//!   here as it is there, never comes), and a value that is neither text nor a list, or a list that
+//!   mixes lists and values, skipped with `preset-value-skipped`. Refused: a missing file
+//!   (`file-not-found`), a file that is not JSON or not a JSON object, a value Orca cannot read, a
+//!   `from` that is not system, User or user, a preset of the wrong type (`preset-invalid`), and a
+//!   resin printer (`not-fdm`). A bad thumbnails list stops the run as Orca's exception does
 //!   (`internal-error`).
 //! - The process must be made for the printer (`process-not-compatible`), and each filament is
 //!   checked against the printer and the process (`filament-not-compatible`, a warning), by their
@@ -43,6 +45,12 @@
 //!   retraction length the computation turns into a whole number, `config-invalid` past 20000),
 //!   Orca's normalisation, its defaults for every setting of a print, and its own check of the
 //!   values (`config-invalid`, "Orca refuses these settings: ...").
+//!
+//! The parity corpus holds a job for each of these refusals and warnings, and the C++ program's
+//! result for it as an intake golden (the smoke refusals, `scripts/lib/smoke.ts` `REFUSALS`;
+//! `parity/goldens/front/intake/`, `tests/intake.rs`), but for the thumbnails' internal error and
+//! the forms of `setting-invalid` past a key Orca does not have and a value it cannot read (a resin
+//! setting, filament colours, the flushing matrix's size and a per-filament override's count).
 //!
 //! Left out, as only the steps after the model check read them (and those are not ported): the
 //! flushing volumes themselves (`flush_volumes_matrix` is left as n x n zeros for each nozzle,

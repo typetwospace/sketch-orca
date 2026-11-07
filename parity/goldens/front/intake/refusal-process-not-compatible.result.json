@@ -1,0 +1,16 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "process-not-compatible",
+  "message": "the process preset \"0.20mm Standard @Voron\" is not made for the printer \"Voron 2.4 300 0.4 nozzle\" (its compatible_printers and compatible_printers_condition leave it out)",
+  "exitCode": -17,
+  "warnings": [],
+  "command": "slice",
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.2.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

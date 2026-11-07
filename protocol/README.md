@@ -237,15 +237,20 @@ OrcaSlicer's code still writes an `internal-error` result, and the process ends 
 `sketch-orca-rs`, the Rust translation of the engine, does only the steps its parity record
 certifies. It reads the command line and the job as the C++ program does, then reads, checks and
 merges the presets with the job's overrides and checks that the model's file is there: a command
-line, job, preset or setting that the C++ program refuses up to there (an unknown setting, a
-process made for another printer, settings OrcaSlicer refuses, a missing model) gets the same
-result, warnings and progress. A refusal the C++ program makes later, from the reading of the
-model on (a model it cannot read, a model bigger than the bed and the like), comes from a step the
-Rust program does not do yet, so such a job gets `not-ported` like any job that reaches such a
-step: exit code -8, the same class as `unsupported`, before any output is written
-(`examples/result-not-ported.json`). So does a job with a preset whose compatibility condition the
-Rust program cannot work out yet (`missing` names `preset-conditions`). A client that gets
-`not-ported` can run the same job with the C++ program, which gives its own result.
+line, job, preset or setting that the C++ program refuses up to there gets the same result,
+warnings and progress. The repository's parity record holds it to the C++ program's result
+(`parity/goldens/front/intake/`) for the invalid examples, an unknown setting or a value a
+setting does not take, a preset file that is missing, not JSON, not an object, of the wrong type,
+from elsewhere, with a value OrcaSlicer cannot read or for a resin printer, a process made for
+another printer, settings OrcaSlicer refuses, a resources folder with no profiles, a work folder
+that cannot be made, and a missing model, also after the presets' warnings (a skipped value, a
+substituted one, a filament made for another printer). A refusal the C++ program makes later,
+from the reading of the model on (a model it cannot read, a model bigger than the bed and the
+like), comes from a step the Rust program does not do yet, so such a job gets `not-ported` like
+any job that reaches such a step: exit code -8, the same class as `unsupported`, before any output
+is written (`examples/result-not-ported.json`). So does a job with a preset whose compatibility
+condition the Rust program cannot work out yet (`missing` names `preset-conditions`). A client
+that gets `not-ported` can run the same job with the C++ program, which gives its own result.
 
 Process exit codes reach a client in different forms: Node on Windows reports -3 as 4294967293,
 Bun on Windows as 253. Compare the low byte only when the exit code has a small code's form, from

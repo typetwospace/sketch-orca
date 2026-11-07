@@ -1,0 +1,33 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "file-not-found",
+  "message": "the model <case>\\missing.stl does not exist",
+  "exitCode": -3,
+  "warnings": [
+    {
+      "code": "preset-value-skipped",
+      "message": "presets.process: ironing_speed is neither text nor a list; it keeps Orca's default"
+    },
+    {
+      "code": "preset-value-skipped",
+      "message": "presets.process: wall_loops is a list Orca cannot read; it keeps Orca's default"
+    },
+    {
+      "code": "setting-substituted",
+      "message": "presets.process: sparse_infill_pattern = \"nopepattern\" is not a value Orca 2.4.2 knows; it uses \"crosshatch\""
+    },
+    {
+      "code": "filament-not-compatible",
+      "message": "presets.filaments[0]: \"Generic PLA @System\" is not made for the printer \"Voron 2.4 300 0.4 nozzle\"; Orca slices with it anyway"
+    }
+  ],
+  "command": "slice",
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.2.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

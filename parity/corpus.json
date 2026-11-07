@@ -1,6 +1,6 @@
 {
   "format": "sketch-orca-parity-corpus/1",
-  "smokeVersion": 11,
+  "smokeVersion": 12,
   "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
   "stl": "binary STL as Sketch writes model.stl: 80-byte header \"Sketch\" padded with zero bytes, u32 triangle count, per triangle the unit normal of (b-a)x(c-a) computed in double from the corners (zero when degenerate), corners a, b, c, all little-endian float32, then u16 0; an OBJ face of n corners is the fan (1,k,k+1)",
   "meshes": [
@@ -5471,6 +5471,132 @@
         "intake"
       ],
       "refusal": "drive-rooted-path"
+    },
+    {
+      "id": "refusal-missing-preset",
+      "kind": "refusal",
+      "title": "the smoke refusal missing-preset (file-not-found)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "missing-preset"
+    },
+    {
+      "id": "refusal-preset-not-json",
+      "kind": "refusal",
+      "title": "the smoke refusal preset-not-json (preset-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "preset-not-json"
+    },
+    {
+      "id": "refusal-preset-not-object",
+      "kind": "refusal",
+      "title": "the smoke refusal preset-not-object (preset-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "preset-not-object"
+    },
+    {
+      "id": "refusal-preset-wrong-type",
+      "kind": "refusal",
+      "title": "the smoke refusal preset-wrong-type (preset-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "preset-wrong-type"
+    },
+    {
+      "id": "refusal-preset-bad-from",
+      "kind": "refusal",
+      "title": "the smoke refusal preset-bad-from (preset-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "preset-bad-from"
+    },
+    {
+      "id": "refusal-preset-unreadable-value",
+      "kind": "refusal",
+      "title": "the smoke refusal preset-unreadable-value (preset-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "preset-unreadable-value"
+    },
+    {
+      "id": "refusal-not-fdm",
+      "kind": "refusal",
+      "title": "the smoke refusal not-fdm (not-fdm)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "not-fdm"
+    },
+    {
+      "id": "refusal-process-not-compatible",
+      "kind": "refusal",
+      "title": "the smoke refusal process-not-compatible (process-not-compatible)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "process-not-compatible"
+    },
+    {
+      "id": "refusal-setting-bad-value",
+      "kind": "refusal",
+      "title": "the smoke refusal setting-bad-value (setting-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "setting-bad-value"
+    },
+    {
+      "id": "refusal-flush-volume-past-int",
+      "kind": "refusal",
+      "title": "the smoke refusal flush-volume-past-int (config-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "flush-volume-past-int"
+    },
+    {
+      "id": "refusal-settings-orca-refuses",
+      "kind": "refusal",
+      "title": "the smoke refusal settings-orca-refuses (config-invalid)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "settings-orca-refuses"
+    },
+    {
+      "id": "refusal-resources-without-profiles",
+      "kind": "refusal",
+      "title": "the smoke refusal resources-without-profiles (environment)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "resources-without-profiles"
+    },
+    {
+      "id": "refusal-work-folder-unmakeable",
+      "kind": "refusal",
+      "title": "the smoke refusal work-folder-unmakeable (output-failed)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "work-folder-unmakeable"
+    },
+    {
+      "id": "refusal-preset-warnings",
+      "kind": "refusal",
+      "title": "the smoke refusal preset-warnings (file-not-found)",
+      "families": [
+        "intake"
+      ],
+      "refusal": "preset-warnings"
     }
   ]
 }
