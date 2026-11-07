@@ -14,7 +14,7 @@ number of times this run has reached it (counting from 1):
 
 | File | Written | Records |
 | --- | --- | --- |
-| `front-objects-<n>.sop1` | in the front end, once the objects are placed (after arranging and the build volume check) | HEAD, RUN, then for each model object: MODL, a CONF `model-object`, and a CONF `model-volume` for each of its volumes; END |
+| `front-objects-<n>.sop1` | in the front end, once the objects are placed (after arranging and the build volume check) | HEAD, RUN, a CONF `run`, PCGC, then for each model object: MODL, a CONF `model-object`, a CONF `model-volume` for each of its volumes, HRNG, a CONF `model-height-range` for each of its height ranges, BRIM, and a PNTV for each of its volumes; END. The CONF `run`, PCGC, HRNG, the `model-height-range` CONFs, BRIM and PNTV are oracle patch 0006's (2026-11-07) |
 | `front-config-<n>.sop1` | in the front end, once the config is resolved and applied to the print, before each slice | HEAD, RUN, CONF `job`, CONF `print-full`, CONF `print`, then for each print object a CONF `object` and a CONF `region` for each of its printing regions; END |
 | `object<i>-<step>-<n>.sop1` | after the print object `i` (its index in the print) finishes the step `<step>` (`PrintObjectBaseWithState::set_done`) | HEAD, RUN, OBJ, a LAYR for each layer, a SUPL for each support layer; END |
 | `print-<step>-<n>.sop1` | after the print finishes the step `<step>` (`PrintBaseWithState::set_done`) | HEAD, RUN, PRNT, TOOL, WIPE, STAT, CNFL; END |
@@ -30,7 +30,7 @@ whole, under one lock.
 `front-objects` in phase O2) of each oracle pass beside its runs, and `parity certify` compares the
 Rust program's dumps of those boundaries with them byte for byte. Paths differ between the folders
 a dump is written in, so before two dumps are compared each side's folders are written as
-`<case>`, `<cases>`, `<resources>` and `<work>` inside the strings of HEAD, RUN, CONF and MODL,
+`<case>`, `<cases>`, `<resources>` and `<work>` inside the strings of HEAD, RUN, CONF, MODL and PCGC,
 each string's length and its record's length written again (`neutral.ts` `portableDump`); the
 kinds without a string field that can hold a path are compared as they are.
 
@@ -43,8 +43,8 @@ records   ...      each: kind (4 bytes), length (u64), payload (length bytes)
 END       record   kind "END ", payload one u64: the number of records before it
 ```
 
-A kind is four ASCII letters, padded with spaces: `HEAD`, `RUN `, `CONF`, `MODL`, `OBJ `, `LAYR`,
-`SUPL`, `PRNT`, `TOOL`, `WIPE`, `STAT`, `CNFL`, `END `. Nothing follows END. A reader refuses a file
+A kind is four ASCII letters, padded with spaces: `HEAD`, `RUN `, `CONF`, `MODL`, `PCGC`, `HRNG`,
+`BRIM`, `PNTV`, `OBJ `, `LAYR`, `SUPL`, `PRNT`, `TOOL`, `WIPE`, `STAT`, `CNFL`, `END `. Nothing follows END. A reader refuses a file
 whose magic, version, lengths or END count do not hold.
 
 ## Values
@@ -126,8 +126,10 @@ and no floats.
 
 | Scope | Config | Object | Part |
 | --- | --- | --- | --- |
+| `run` | the front end's config once the objects are placed: `load_settings`' config with `place_prime_tower`'s `wipe_tower_x` and `wipe_tower_y` (patch 0006) | -1 | -1 |
 | `model-object` | the model object's own settings | model object | -1 |
 | `model-volume` | a volume's own settings | model object | volume |
+| `model-height-range` | a height range's settings (`layer_config_ranges`, patch 0006) | model object | range, in HRNG's order |
 | `job` | the config the front end resolved and applied | -1 | -1 |
 | `print-full` | `Print::full_print_config()` | -1 | -1 |
 | `print` | `Print::config()` | -1 | -1 |
@@ -140,6 +142,37 @@ A model object, as placed: `i64` index, `str` name, `bool` printable, `vec<f64>`
 profile, `vec` of instances (`matrix`, `bool` printable), `vec` of volumes, each: `str` name, `i32`
 type (`ModelVolumeType`), `matrix`, `vec` of vertices as three `f32`, `vec` of triangles as three
 `i32` vertex indices.
+
+### PCGC
+
+The plates' custom G-code (oracle patch 0006): `i32` the current plate
+(`Model::curr_plate_index`), then a `vec` of plates (`Model::plates_custom_gcodes`, by plate
+index), each: `i32` plate index, `i32` mode (`CustomGCode::Mode`), `vec` of items, each: `f64`
+print z, `i32` type (`CustomGCode::Type`), `i32` extruder, `str` colour, `str` extra (a pause's
+message or a custom G-code).
+
+### HRNG
+
+A model object's height ranges (oracle patch 0006): `i64` object index, then a `vec` of ranges in
+the order `layer_config_ranges` holds them (by from, then to), each: `f64` from, `f64` to. A CONF
+`model-height-range` follows for each range, with its settings.
+
+### BRIM
+
+A model object's brim ears (`ModelObject::brim_points`, oracle patch 0006): `i64` object index,
+then a `vec` of ears, each: `f32` x, `f32` y, `f32` z (its `pos`), `f32` head front radius.
+
+### PNTV
+
+A volume's painting (oracle patch 0006): `i64` object index, `i64` volume index, then four
+paintings in this order: supports (`supported_facets`), seams (`seam_facets`), colours
+(`mmu_segmentation_facets`) and fuzzy skin (`fuzzy_skin_facets`). Each is the
+`TriangleSelector::TriangleSplittingData` the volume holds: a `vec` of split triangles, each `i32`
+triangle index and `i32` index of its first bit; `u64` the bitstream's length in bits; a `vec<u8>`
+of the bits, eight to a byte, the first bit in the lowest bit of the first byte (the last byte's
+unused bits 0); and a `vec<bool>` of the states used (`used_states`, one per
+`EnforcerBlockerType` up to `ExtruderMax`). An unpainted volume has empty vectors and its states
+all 0.
 
 ### OBJ
 
@@ -242,7 +275,7 @@ records below, END.
 | `xml.sop1` | o2-model | none yet: a stub (`orca-xml`) |
 | `model.sop1` | o2-model | none yet: a stub (`orca-model`) |
 | `arrange.sop1` | o2-arrange | none yet: a stub (`orca-arrange`, `orca-exact`) |
-| `placeholder.sop1` | o2-front | none yet: a stub (`orca-placeholder`) |
+| `placeholder.sop1` | o2-front | PHCF, PHEV (`orca-placeholder`) |
 
 A stub is HEAD, PRUN and END: the task that fills it adds its records here, and the crate's probe
 test fails as soon as the file holds a record it does not replay.
@@ -638,6 +671,35 @@ overlapping squares; a mirrored, scaled quarter-turn transform with squares apar
 random: 3 to 20 points in [-100, 100] cubed, now and then one more 1 above the first; soups of 3
 to 16 points in GPNT's ranges capped at 1e8, as `convex_polygons_intersect` loops forever on some
 larger ones (`parity/HAZARDS.md`); the committed set those and the first 16 of at most 3 KB.
+
+### PHCF
+
+A configuration the PHEV records evaluate against (`placeholder.sop1`): `u32` id, `str` name, then
+a `vec` of options, each `str` key and `str` value as `ConfigOption::serialize` writes it. Only the
+keys the expressions name are listed (every identifier of the configuration's expressions, with
+each percentage's `ratio_over` chain), in key order. Ids 0 and 1 are the hand-written cases'
+configuration (a printer's and a process's defaults with a few values set) and its printer
+override (`printer_preset` "Test Printer", `num_extruders` its nozzle count). In the full set,
+each instantiated printer of a vendor profile (`<vendor>/machine/<name>`, the type's defaults then
+its `inherits` chain read with `load_from_json`, the root first) is followed by its override
+(`<vendor>/override/<name>`, as `is_compatible_with_printer` builds it), and each instantiated
+process (`<vendor>/process/<name>`) has no override. The vendor profiles are those of the oracle's
+source tree, found from the probe's own path (`<exe>/../src/resources/profiles`).
+
+### PHEV
+
+One `PlaceholderParser::evaluate_boolean_expression(template, config, override)`: `u32` the
+config's PHCF id, `i32` the override's PHCF id (or -1 for none), `str` the template, `u8` outcome
+(0 a result, 1 `PlaceholderParserError`, 2 another `std::exception`, 3 anything else), `bool` the
+result (false unless the outcome is 0), `str` the exception's `what()` (empty for 0 and 3). Both
+sets have the hand-written cases twice, without and with the override (about 370 expressions:
+every operator, function, type error, regular expression form and regex error, and syntax errors
+at many places, invalid UTF-8 among them). The full set adds every distinct
+`compatible_printers_condition` of a vendor's processes and filaments against each of its
+printers with the override, and every `compatible_prints_condition` of its filaments against each
+of its processes. `orca-placeholder`'s `tests/probes.rs` replays every PHEV: a result or a
+`PlaceholderParserError`'s message must match exactly, and outcomes 2 and 3 must be declined
+(`Unsupported`).
 
 ## Versions
 

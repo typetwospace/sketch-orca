@@ -219,6 +219,37 @@ describe("a dump's paths", () => {
     expect(portableDump(dump2, [[join(other, 'cube'), '<case>'], [other, '<cases>']])!.equals(p)).toBe(true)
   })
 
+  test("the custom G-code's strings too; height ranges, brim ears and painting are read whole and kept", () => {
+    const f64 = (v: number) => {
+      const b = Buffer.alloc(8)
+      b.writeDoubleLE(v)
+      return b
+    }
+    const f32 = (v: number) => {
+      const b = Buffer.alloc(4)
+      b.writeFloatLE(v)
+      return b
+    }
+    const pcgc = (extra: string) => Buffer.concat([i32(0), u64(1), i32(0), i32(1), u64(1), f64(2.4), i32(4), i32(1), str('#FF0000'), str(extra)])
+    const painting = Buffer.concat([u64(1), i32(3), i32(0), u64(10), u64(2), Buffer.from([0xff, 0x03]), u64(2), bool(false), bool(true)])
+    const empty = Buffer.concat([u64(0), u64(0), u64(0), u64(0)])
+    const rest: [string, Buffer][] = [
+      ['HRNG', Buffer.concat([i64(0), u64(1), f64(0), f64(1.5)])],
+      ['BRIM', Buffer.concat([i64(0), u64(1), f32(1), f32(2), f32(0), f32(0.5)])],
+      ['PNTV', Buffer.concat([i64(0), i64(0), painting, empty, empty, empty])],
+    ]
+    const dump = sop1([['HEAD', head('objects', 1)], ['PCGC', pcgc(`M117 ${root}\\cube`)], ...rest])
+    const file = readSop1(portableDump(dump, roots)!)
+    const r = new Sop1Reader(file.records[1]!.payload)
+    const z = f64(2.4).readBigUInt64LE()
+    expect([r.i32(), r.u64(), r.i32(), r.i32(), r.u64(), r.u64(), r.i32(), r.i32(), r.str(), r.str()]).toEqual([0, 1n, 0, 1, 1n, z, 4, 1, '#FF0000', 'M117 <case>'])
+    expect(r.done()).toBe(true)
+    expect(file.records.slice(2)).toEqual(rest.map(([kind, payload]) => ({ kind, payload })))
+    // A PNTV that does not read as its fields leaves the whole dump as it is.
+    const short = sop1([['PCGC', pcgc(`${root}\\cube`)], ['PNTV', Buffer.concat([i64(0), i64(0), painting])]])
+    expect(portableDump(short, roots)).toBe(short)
+  })
+
   test('a dump with no path in it, or that is no SOP1 file, is left as it is', () => {
     const dump = frontObjects('1')
     expect(portableDump(dump, roots)).toBe(dump)

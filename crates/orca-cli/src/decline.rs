@@ -17,9 +17,11 @@
 //! `unsupported`), and `missing`, those families in parity.json's order. It is refused before any
 //! output file is written: the result, the progress file, and the work folder and its orca-data
 //! folder (which the C++ engine makes before the presets, as this program does) are the run's
-//! only files. A job whose presets need a compatibility condition worked out, which this program
-//! cannot do yet (`presets.rs`), is declined in the presets stage with the family
-//! preset-conditions besides those it reaches ([`preset_conditions`]).
+//! only files. A job whose presets have a compatibility condition Orca works out reaches the
+//! family preset-conditions ([`preset_families`], as corpus.ts's `presetFamilies` finds it); the
+//! presets stage works the condition out (`presets.rs`, orca-placeholder), and one the placeholder
+//! parser does not take is declined there, naming preset-conditions besides the families the job
+//! reaches ([`unsupported_condition`]).
 //!
 //! The families a job reaches are those `scripts/lib/parity/corpus.ts` gives it (`familiesFor`).
 //! Some every job of a command reaches ([`command_families`]): model-load and placement for every
@@ -57,7 +59,7 @@ const PARITY_JSON: &str = include_str!("../../../parity/parity.json");
 
 /// The families this program has the code for. A family is done only when it is here and
 /// parity.json certifies it.
-pub const PORTED: &[&str] = &["version", "config-def", "intake"];
+pub const PORTED: &[&str] = &["version", "config-def", "intake", "preset-conditions"];
 
 /// The families a setting can turn on besides the infill patterns (corpus.ts `familiesFor`), in
 /// parity.json's order.
@@ -289,13 +291,99 @@ fn points(layers: &[&Overrides], presets: &[Value], key: &str) -> Result<usize, 
         .map_or(0, comma_pieces))
 }
 
-/// The families `job` reaches: its command's, then those its settings turn on, each once.
+/// The families a job's presets reach besides those of its settings (corpus.ts `presetFamilies`):
+/// preset-conditions where Orca works a compatibility condition out, in the order the presets
+/// stage checks them (the process with the printer, where a list that leaves the printer out ends
+/// the job; then each filament with the printer and, when that holds, with the process). A
+/// compatibility is worked out where a preset has no list (an empty one, or none) and a condition
+/// that is not empty; a list holds when the printer (or the parent of a printer that is not a
+/// system preset), or the process, is in it, or the name is empty. Presets that cannot be read
+/// reach it too, so a job is never let through for it.
+#[must_use]
+pub fn preset_families(presets: Option<&[Value]>) -> Vec<String> {
+    let conditions = vec!["preset-conditions".to_string()];
+    let Some([process, machine, filaments @ ..]) = presets else {
+        return conditions;
+    };
+    let name = |p: &Value| {
+        p.get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut printer = vec![name(machine)];
+    if machine.get("from").and_then(Value::as_str) != Some("system")
+        && let Some(parent) = machine.get("inherits").and_then(Value::as_str)
+    {
+        printer.push(parent.to_string());
+    }
+    // compatibleByList: None where Orca works the condition out.
+    let by_list = |preset: &Value, list: &str, condition: &str, names: &[String]| -> Option<bool> {
+        let items: &[Value] = preset
+            .get(list)
+            .and_then(Value::as_array)
+            .map_or(&[], Vec::as_slice);
+        if items.is_empty() {
+            let has_condition = preset
+                .get(condition)
+                .and_then(Value::as_str)
+                .is_some_and(|c| !c.is_empty());
+            return if has_condition { None } else { Some(true) };
+        }
+        Some(
+            names[0].is_empty()
+                || names
+                    .iter()
+                    .any(|n| items.iter().any(|i| i.as_str() == Some(n.as_str()))),
+        )
+    };
+    let process_name = [name(process)];
+    match by_list(
+        process,
+        "compatible_printers",
+        "compatible_printers_condition",
+        &printer,
+    ) {
+        None => return conditions,
+        Some(false) => return Vec::new(),
+        Some(true) => {}
+    }
+    for f in filaments {
+        match by_list(
+            f,
+            "compatible_printers",
+            "compatible_printers_condition",
+            &printer,
+        ) {
+            None => return conditions,
+            Some(true)
+                if by_list(
+                    f,
+                    "compatible_prints",
+                    "compatible_prints_condition",
+                    &process_name,
+                )
+                .is_none() =>
+            {
+                return conditions;
+            }
+            _ => {}
+        }
+    }
+    Vec::new()
+}
+
+/// The families `job` reaches: those of its presets, its command's, then those its settings turn
+/// on, each once.
 #[must_use]
 pub fn reached(job: &Job) -> Vec<String> {
-    let mut out: Vec<String> = command_families(job.command)
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect();
+    let presets = read_presets(job);
+    let mut out = preset_families(presets.as_deref());
+    out.extend(
+        command_families(job.command)
+            .iter()
+            .map(|s| (*s).to_string()),
+    );
     if job.command == Command::Slice {
         let infill = infill_families(&families());
         let mut views: Vec<Vec<&Overrides>> = vec![vec![&job.overrides]];
@@ -305,7 +393,7 @@ pub fn reached(job: &Job) -> Vec<String> {
                 views.push(vec![&range.overrides, &object.overrides, &job.overrides]);
             }
         }
-        let settled = read_presets(job).and_then(|presets| {
+        let settled = presets.and_then(|presets| {
             let mut all = Vec::new();
             for view in &views {
                 let get = |key: &str| lookup(view, &presets, key);
@@ -379,13 +467,17 @@ pub fn check(job: &Job) -> Result<(), Failure> {
     }
 }
 
-/// The decline of a job whose presets need a compatibility condition worked out (`presets.rs`),
-/// which this program cannot do yet: the family preset-conditions, besides those the job reaches.
+/// The decline of a job whose presets have a compatibility condition the placeholder parser does
+/// not take (`presets.rs`, orca-placeholder's `Unsupported`): the families the job reaches, with
+/// preset-conditions first among them even where parity.json certifies it, since this job's
+/// condition is past what was certified.
 #[must_use]
-pub fn preset_conditions(job: &Job) -> Failure {
-    let mut reach = vec!["preset-conditions".to_string()];
-    reach.extend(reached(job));
-    not_ported(&job.command_name, missing_of(&reach))
+pub fn unsupported_condition(job: &Job) -> Failure {
+    let mut missing = missing_of(&reached(job));
+    if !missing.iter().any(|m| m == "preset-conditions") {
+        missing.insert(0, "preset-conditions".to_string());
+    }
+    not_ported(&job.command_name, missing)
 }
 
 #[cfg(test)]

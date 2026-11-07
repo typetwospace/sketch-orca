@@ -1,0 +1,198 @@
+sketch-orca oracle patch 0006: the front end's objects in full, under SKETCH_ORCA_ORACLE_DUMP.
+Modified for Sketch, 2026-11-07.
+
+With SKETCH_ORCA_ORACLE_DUMP=<folder> (patch 0005), front-objects-<n>.sop1 holds all the front end
+has once the objects are placed, so that the Rust translation's preset loading, model loading and
+placement can be checked at that boundary (parity/SOP1.md):
+- a CONF "run" after the RUN record: run()'s config at that point, load_settings' config with
+  place_prime_tower's wipe_tower_x and wipe_tower_y (the call becomes
+  dump_front_objects(model, cfg));
+- a PCGC record: the plates' custom G-code (Model::plates_custom_gcodes) and the current plate;
+- for each model object, after its MODL and CONF records: an HRNG record, its height ranges
+  (layer_config_ranges), then a CONF "model-height-range" for each range; a BRIM record, its brim
+  ears (brim_points); and a PNTV record for each volume, its painting (the TriangleSelector data
+  of its supports, seams, colours and fuzzy skin).
+It reads no knob of its own. A dump folder that does not exist stops the oracle before it does
+anything else, with exit code 78 (patch 0005). Unset, nothing is written and nothing changes.
+
+---
+diff --git a/sketch-orca/cli/run.cpp b/sketch-orca/cli/run.cpp
+index a6ac5456..6b1122f8 100644
+--- a/sketch-orca/cli/run.cpp
++++ b/sketch-orca/cli/run.cpp
+@@ -1700,7 +1700,9 @@ void run(const Job &job, json &result, Warnings &warnings, Progress &progress)
+     check_build_volume(model, cfg);
+     // sketch-orca oracle patch 0005 (2026-11-06): the objects are placed; with SKETCH_ORCA_ORACLE_DUMP
+     // set, the model is dumped here.
+-    Slic3r::Oracle::dump_front_objects(model);
++    // sketch-orca oracle patch 0006 (2026-11-07): with run()'s config ("SKETCH_ORCA_ORACLE_DUMP" set
++    // only): load_settings' config with place_prime_tower's wipe_tower_x and wipe_tower_y.
++    Slic3r::Oracle::dump_front_objects(model, cfg);
+ 
+     // OrcaSlicer.cpp: the plate's print configuration.
+     DynamicPrintConfig new_cfg = cfg;
+diff --git a/src/libslic3r/OracleDump.cpp b/src/libslic3r/OracleDump.cpp
+index 93239909..3b8a7278 100644
+--- a/src/libslic3r/OracleDump.cpp
++++ b/src/libslic3r/OracleDump.cpp
+@@ -14,6 +14,8 @@
+ // Every value is little-endian; floats are written as their exact bit patterns. The record kinds
+ // written here (HEAD, RUN, CONF, MODL, OBJ, LAYR, SUPL, PRNT, TOOL, WIPE, STAT, CNFL, END) and their
+ // payloads are listed there field by field, in the order this file writes them.
++// sketch-orca oracle patch 0006 (2026-11-07): front-objects-<n>.sop1 adds the kinds PCGC, HRNG, BRIM
++// and PNTV, and the CONF scopes run and model-height-range.
+ #include "OracleDump.hpp"
+ 
+ #include <algorithm>
+@@ -811,6 +813,95 @@ const char *object_step_name(int step)
+     return step >= 0 && step < int(posCount) ? names[step] : nullptr;
+ }
+ 
++// ---- The front end's model (sketch-orca oracle patch 0006, 2026-11-07) ----
++
++// PCGC: the plates' custom G-code (Model::plates_custom_gcodes) and the current plate.
++Payload plates_custom_gcodes_record(const Model &model)
++{
++    Payload p;
++    p.i32(int32_t(model.curr_plate_index));
++    p.count(model.plates_custom_gcodes.size());
++    for (const auto &plate : model.plates_custom_gcodes) {
++        p.i32(int32_t(plate.first));
++        p.i32(int32_t(plate.second.mode));
++        p.count(plate.second.gcodes.size());
++        for (const CustomGCode::Item &item : plate.second.gcodes) {
++            p.f64(item.print_z);
++            p.i32(int32_t(item.type));
++            p.i32(int32_t(item.extruder));
++            p.str(item.color);
++            p.str(item.extra);
++        }
++    }
++    return p;
++}
++
++// HRNG: an object's height ranges (ModelObject::layer_config_ranges), in the map's order.
++Payload height_ranges_record(const ModelObject &object, int64_t index)
++{
++    Payload p;
++    p.i64(index);
++    p.count(object.layer_config_ranges.size());
++    for (const auto &range : object.layer_config_ranges) {
++        p.f64(double(range.first.first));
++        p.f64(double(range.first.second));
++    }
++    return p;
++}
++
++// BRIM: an object's brim ears (ModelObject::brim_points).
++Payload brim_ears_record(const ModelObject &object, int64_t index)
++{
++    Payload p;
++    p.i64(index);
++    p.count(object.brim_points.size());
++    for (const BrimPoint &ear : object.brim_points) {
++        p.f32(ear.pos.x());
++        p.f32(ear.pos.y());
++        p.f32(ear.pos.z());
++        p.f32(ear.head_front_radius);
++    }
++    return p;
++}
++
++// One painting (TriangleSelector::TriangleSplittingData): the triangles to split with where their
++// bits start, the bitstream (its length, then its bits eight to a byte, the first in the lowest
++// bit) and the states used.
++void put_painting(Payload &p, const FacetsAnnotation &facets)
++{
++    const TriangleSelector::TriangleSplittingData &data = facets.get_data();
++    p.count(data.triangles_to_split.size());
++    for (const TriangleSelector::TriangleBitStreamMapping &m : data.triangles_to_split) {
++        p.i32(int32_t(m.triangle_idx));
++        p.i32(int32_t(m.bitstream_start_idx));
++    }
++    p.u64(uint64_t(data.bitstream.size()));
++    p.count((data.bitstream.size() + 7) / 8);
++    for (size_t at = 0; at < data.bitstream.size(); at += 8) {
++        uint8_t byte = 0;
++        for (size_t b = 0; b < 8 && at + b < data.bitstream.size(); ++b)
++            if (data.bitstream[at + b])
++                byte |= uint8_t(1u << b);
++        p.u8(byte);
++    }
++    p.count(data.used_states.size());
++    for (bool used : data.used_states)
++        p.boolean(used);
++}
++
++// PNTV: a volume's painting: supports, seams, colours (MMU segmentation), fuzzy skin.
++Payload painting_record(const ModelVolume &volume, int64_t object, int64_t index)
++{
++    Payload p;
++    p.i64(object);
++    p.i64(index);
++    put_painting(p, volume.supported_facets);
++    put_painting(p, volume.seam_facets);
++    put_painting(p, volume.mmu_segmentation_facets);
++    put_painting(p, volume.fuzzy_skin_facets);
++    return p;
++}
++
+ } // namespace
+ 
+ bool dump_enabled() { return dump_knob().valid; }
+@@ -841,12 +932,15 @@ void dump_object_step(const PrintObjectBase &base, int step)
+     write_object_dump(*object, object_index(*object->print(), object), name);
+ }
+ 
+-void dump_front_objects(const Model &model)
++void dump_front_objects(const Model &model, const DynamicPrintConfig &config)
+ {
+     if (!dump_enabled())
+         return;
+     std::lock_guard<std::mutex> lock(dump_mutex());
+     Dump dump("front", "objects", -1);
++    // sketch-orca oracle patch 0006 (2026-11-07): run()'s config, then the plates' custom G-code.
++    dump.record("CONF", config_record("run", -1, -1, config));
++    dump.record("PCGC", plates_custom_gcodes_record(model));
+     for (size_t i = 0; i < model.objects.size(); ++i) {
+         const ModelObject *object = model.objects[i];
+         Payload            modl;
+@@ -885,6 +979,15 @@ void dump_front_objects(const Model &model)
+         dump.record("CONF", config_record("model-object", int64_t(i), -1, object->config.get()));
+         for (size_t v = 0; v < object->volumes.size(); ++v)
+             dump.record("CONF", config_record("model-volume", int64_t(i), int64_t(v), object->volumes[v]->config.get()));
++        // sketch-orca oracle patch 0006 (2026-11-07): the height ranges with their configs, the brim
++        // ears and each volume's painting.
++        dump.record("HRNG", height_ranges_record(*object, int64_t(i)));
++        int64_t r = 0;
++        for (const auto &range : object->layer_config_ranges)
++            dump.record("CONF", config_record("model-height-range", int64_t(i), r++, range.second.get()));
++        dump.record("BRIM", brim_ears_record(*object, int64_t(i)));
++        for (size_t v = 0; v < object->volumes.size(); ++v)
++            dump.record("PNTV", painting_record(*object->volumes[v], int64_t(i), int64_t(v)));
+     }
+     dump.write();
+ }
+diff --git a/src/libslic3r/OracleDump.hpp b/src/libslic3r/OracleDump.hpp
+index 9b78076a..fc6434ce 100644
+--- a/src/libslic3r/OracleDump.hpp
++++ b/src/libslic3r/OracleDump.hpp
+@@ -16,6 +16,8 @@
+ // - after each Print step (PrintBaseWithState::set_done): print-<step>-<n>.sop1, the skirt, brims,
+ //   tool ordering, wipe tower, statistics and conflict check;
+ // - in the front end once the objects are placed: front-objects-<n>.sop1, the model;
++//   sketch-orca oracle patch 0006 (2026-11-07): with the front end's config at that point, the
++//   plates' custom G-code, and each object's height ranges, brim ears and volumes' painting;
+ // - in the front end once the config is resolved, before each slice: front-config-<n>.sop1, the
+ //   front end's config, the print's, and each object's and region's.
+ // <i> is the object's index in the print, <step> the step's name in Print.hpp (posSlice,
+@@ -47,7 +49,8 @@ std::string dump_knob_problem();
+ void dump_print_step(const PrintBase &print, int step);
+ void dump_object_step(const PrintObjectBase &object, int step);
+ // The front end's two boundaries.
+-void dump_front_objects(const Model &model);
++// sketch-orca oracle patch 0006 (2026-11-07): dump_front_objects takes run()'s config as well.
++void dump_front_objects(const Model &model, const DynamicPrintConfig &config);
+ void dump_front_config(const Print &print, const DynamicPrintConfig &config);
+ 
+ } // namespace Oracle

@@ -173,8 +173,10 @@ What `sketch-orca-rs` answers so far (`crates/orca-cli/README.md`):
   (`crates/orca-cli/src/presets.rs`); they are translated from `cli/presets.cpp` but not yet held
   to a C++ run. A refusal the C++ program makes from the reading of the model on (a model it
   cannot read or that is bigger than the bed) belongs to a step that is not certified, so that job
-  gets `not-ported` below instead, until its family is; so does a preset with a compatibility
-  condition, which needs Orca's placeholder parser (the family `preset-conditions`).
+  gets `not-ported` below instead, until its family is. A preset with a compatibility condition
+  has it worked out by `orca-placeholder` as Orca works it out (2026-11-07), with Orca's messages
+  for a condition that does not parse; the job then reaches the family `preset-conditions`, and a
+  condition past what the parser takes is declined in the presets stage, naming it.
 - The decline: a job that gets past the model's file and reaches a step `parity/parity.json` does
   not certify, which for now is every `info`, `layers` and `slice` job, gets `not-ported`, exit -8
   (the class of `unsupported`; 248 as a low byte) and `missing`, the steps (`protocol/README.md`,
@@ -220,7 +222,7 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | `orca-mesh` | Phase O2: admesh's reading and repair and libslic3r's `TriangleMesh` (o2-mesh). |
 | `orca-zip` | Phase O2: ZIP archives as miniz reads and writes them, for 3MF files (o2-model). |
 | `orca-xml` | Phase O2: XML as expat 2.5.0 parses it, for 3MF files (o2-model). |
-| `orca-placeholder` | Phase O2: Orca's placeholder parser, for the presets' compatibility conditions (o2-front). |
+| `orca-placeholder` | Phase O2: Orca's placeholder parser's boolean expressions, for the presets' compatibility conditions, with `boost::regex` as an MSVC build reads it; `placeholder.sop1` holds every condition of the vendor profiles (o2-front). |
 | `orca-arrange` | Phase O2: arrangement with libnest2d, `Arrange.cpp`, NLopt 2.5.0 and Boost.Geometry's R*-tree (o2-arrange). |
 | `orca-model` | Phase O2: the STL, OBJ and 3MF readers, `Model`, `BuildVolume` and `ModelArrange` (o2-model). |
 

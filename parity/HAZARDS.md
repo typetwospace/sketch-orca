@@ -517,8 +517,39 @@ expat 2.5.0, the dependency build's. Probe file `xml.sop1`. Filled by o2-model.
 
 ### orca-placeholder
 
-The placeholder parser, for the presets' compatibility conditions. Probe file `placeholder.sop1`.
-Filled by o2-front.
+The placeholder parser's boolean expressions (`PlaceholderParser::evaluate_boolean_expression`),
+for the presets' compatibility conditions: the grammar with Spirit's semantics, the values and
+operators, `boost::regex` 1.84 with MSVC's narrow `w32_regex_traits`, and the error texts with
+`process_error_message`. Probe file `placeholder.sop1`: PHCF and PHEV (`parity/SOP1.md`), which
+`crates/orca-placeholder/tests/probes.rs` replays; every evaluation of both sets matched on
+2026-11-07 (740 committed, 3260 in the full set with every condition of the vendor profiles),
+debug and release. Filled by o2-front on 2026-11-07. The hazards it owns:
+
+| What | Where (OrcaSlicer 2.4.2, Boost 1.84.0) | What the translation does |
+| --- | --- | --- |
+| Boost.Regex's limit on a match's work (`error_complexity`, `std::runtime_error`), which the presets stage would catch and count as compatible | `boost/regex/v5/perl_matcher_common.hpp` (`estimate_max_state_count`) | open: not modelled; the crate matches by simulating the pattern, which never runs out. The profiles' patterns are short and match far below the limit (all 3260 matched) |
+| A class (`\w`, `[[:alpha:]]` and the rest) tested against a byte past ASCII: `w32_regex_traits` asks `GetStringTypeExA` with the user's code page | `boost/regex/v5/w32_regex_traits.hpp` | declined (`Unsupported`): the result rests on the machine's locale. A byte past ASCII as a literal, in a range or under `.` is compared as a byte, as Boost compares it |
+| The ASCII classes come from `GetStringTypeExA` too: `\s` holds 0x09-0x0D, 0x20 and 0x1C-0x1F (`C1_SPACE`), `\h` the same less the vertical ones, `\v` 0x0A-0x0D | `w32_regex_traits.hpp` (`isctype`, the `\h` and `\v` masks) | probed (`"\x1c" =~ /\s/` and the rest of the hand-written set) on this machine's code page; ASCII is the same in every Windows code page |
+| An error message's line goes through `boost::nowide::narrow(widen(line))`: bytes that are not UTF-8 become U+FFFD, each as `utf_traits<char>::decode` delimits it | `PlaceholderParser.cpp` (`process_error_message`), `boost/nowide/utf/utf.hpp` | probed: `parser.rs` `nowide_round_trip`, with the invalid sequences of the hand-written set (a lone continuation, an overlong form, a truncated sequence) |
+| A percentage over a line width (`ratio_over` ending in `line_width`) or a line width itself: `Flow::extrusion_width` | `PlaceholderParser.cpp` (`scalar_variable_to_expr`, `vector_element_to_expr`) | declined: `Flow` is not ported |
+| An error at a default-constructed iterator: `process_error_message` throws `std::length_error`, which the presets stage does not catch | `PlaceholderParser.cpp` (`process_error_message`) | declined, as the probe's outcome 2 says the C++ code throws |
+| `INT_MIN / -1` and `INT_MIN % -1`: undefined, a hardware exception on x64 | `PlaceholderParser.cpp` (`expr::operator/`, `operator%`) | declined |
+| An element of a points vector (`to_string(Vec2d)`), `digits()` past its 256-byte buffer, a string literal with a lead byte from 0xF8 (where `get_utf8_sequence_length` and the grammar count differently), `interpolate_table` of an empty table | `PlaceholderParser.cpp` | declined |
+| `random(a, b)` in a condition: `evaluate_boolean_expression` gives no context data, so it fails with "Random number generator not available in this context." and no generator is drawn from (the generator of "Clocks and generators" above is the custom G-code's, phase O4) | `PlaceholderParser.cpp` (`random()`) | translated: the same error |
+| A `double` printed into a string (`"v" + 1/3.0`): `std::ostringstream`'s `%g` with 6 digits | `PlaceholderParser.cpp` (`expr::to_string`) | probed: through `orca-fmt` |
+
+### The presets stage's flushing volumes and conditions (orca-cli, o2-front)
+
+`crates/orca-cli/src/presets.rs` completes the merged configuration as `cli/presets.cpp` does
+(2026-11-07): the compatibility conditions (through orca-placeholder), `printer_model_id`,
+`is_bbl_printer`, `curr_bed_type` and the flushing volumes. The hazards it owns:
+
+| What | Where (OrcaSlicer 2.4.2) | What the translation does |
+| --- | --- | --- |
+| `GenericFlushPredictor` keeps each dataset's predictor in a static map for the process's life; the translation keeps them for one computation of the volumes | `src/libslic3r/FlushVolPredictor.cpp:310-327` | the same results: a run computes the volumes once, and each data file is read once either way |
+| The predictors' data files are read with `operator>>` into `float` (`num_get`) | `FlushVolPredictor.cpp:239-253` | the shipped `resources/flush` files (decimal numbers) are read as the C++ reads them; a number past `float`'s range or in a form `num_get` collects differently (hexadecimal, `inf`) is open |
+| A condition that does not parse: the printer's check logs it (Boost.Log, `warning`), the process's prints it with `printf` | `src/libslic3r/Preset.cpp:771-845` | translated: the printer's to stderr at `SKETCH_ORCA_LOG_LEVEL` 2 or more, the process's to stdout |
+| `DynamicPrintConfig::get_index_for_extruder` is private in `crates/orca-cli/src/config.rs`, so `presets.rs` has its own copy (`printer_variant_index`, with `split_compress` and the variant string) | `src/libslic3r/PrintConfig.cpp` | one translation in two places, which must change together |
 
 ### orca-arrange
 

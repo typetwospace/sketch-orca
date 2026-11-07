@@ -185,13 +185,20 @@ const MATRIX: Sop1Field = { fixed: 16, of: ['f64'] }
 
 /**
  * The record kinds whose strings can hold a path (parity/SOP1.md): a config's values, an object's
- * or volume's name, and the knobs' values. Other kinds are compared as they are.
+ * or volume's name, the knobs' values, and a custom G-code's colour and text (PCGC). The other
+ * kinds of front-objects-<n>.sop1 (oracle patch 0006, 2026-11-07: HRNG, BRIM, PNTV) hold no
+ * string; they are listed so the whole file is read as its fields, and a record that does not read
+ * leaves the dump as it is. Other kinds are compared as they are.
  */
 export const SOP1_STRING_FIELDS: Record<string, Sop1Field[]> = {
   HEAD: ['str', 'str', 'i64', 'u32'],
   'RUN ': [{ count: ['str', 'bool', 'str'] }, 'i32', 'u64', 'i32'],
   CONF: ['str', 'i64', 'i64', { count: ['str', 'u32', 'str', { count: ['f64'] }] }],
   MODL: ['i64', 'str', 'bool', { count: ['f64'] }, { count: [MATRIX, 'bool'] }, { count: ['str', 'i32', MATRIX, { count: ['f32', 'f32', 'f32'] }, { count: ['i32', 'i32', 'i32'] }] }],
+  PCGC: ['i32', { count: ['i32', 'i32', { count: ['f64', 'i32', 'i32', 'str', 'str'] }] }],
+  HRNG: ['i64', { count: ['f64', 'f64'] }],
+  BRIM: ['i64', { count: ['f32', 'f32', 'f32', 'f32'] }],
+  PNTV: ['i64', 'i64', { fixed: 4, of: [{ count: ['i32', 'i32'] }, 'u64', { count: ['u8'] }, { count: ['bool'] }] }],
 }
 
 const FIXED_SIZE: Record<string, number> = { u8: 1, bool: 1, u32: 4, i32: 4, f32: 4, u64: 8, i64: 8, f64: 8 }

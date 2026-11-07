@@ -261,12 +261,20 @@ orca-xml (filled by the o2-model task)
     and Copyright (c) 2001-2022 Expat maintainers, as OrcaSlicer v2.4.2's dependency build
     compiles it from deps/EXPAT/expat, under the MIT licence (licenses/MIT-expat.txt).
 
-orca-placeholder (filled by the o2-front task)
-  - OrcaSlicer's src/libslic3r/PlaceholderParser.cpp, with its header. Its grammar is written with
-    Boost.Spirit of Boost 1.84.0 (Copyright (c) 2001-2011 Joel de Guzman, Hartmut Kaiser and the
-    Spirit contributors, under the Boost Software License, version 1.0; licenses/BSL-1.0.txt);
-    where the crate takes the behaviour of Spirit's own parsers, such as its number parsers, it
-    carries that code under that licence.
+orca-placeholder (filled by the o2-front task, 2026-11-07)
+  - OrcaSlicer's src/libslic3r/PlaceholderParser.cpp, with its header: the boolean expressions of
+    evaluate_boolean_expression (src/lib.rs, parser.rs and expr.rs).
+  - Boost.Spirit of Boost 1.84.0, which the grammar is written with, Copyright (c) 2001-2011 Joel
+    de Guzman, Hartmut Kaiser and the Spirit contributors, under the Boost Software License,
+    version 1.0 (licenses/BSL-1.0.txt): the parse semantics of its operators and parsers
+    (src/parser.rs) and its number parsers (src/number.rs).
+  - Boost.Regex of Boost 1.84.0, Copyright (c) 1998-2007 John Maddock, under the Boost Software
+    License, version 1.0 (licenses/BSL-1.0.txt): the pattern parser, its error messages, the
+    escapes and classes of w32_regex_traits and the matcher's line tests (src/regex.rs).
+  - Boost.Nowide of Boost 1.84.0, Copyright (c) 2009-2012 Artyom Beilis (Tonkikh) and Copyright
+    (c) 2020 Alexander Grund, under the Boost Software License, version 1.0
+    (licenses/BSL-1.0.txt): the UTF-8 round trip an error message's line goes through
+    (src/parser.rs).
 
 orca-arrange (filled by the o2-arrange task)
   - libnest2d, by Tamas Meszaros (https://github.com/tamasmeszaros/libnest2d), as OrcaSlicer
@@ -349,6 +357,12 @@ newest date of the patch headers.
       crates/orca-config/src/legacy.rs       (src/libslic3r/PrintConfig.cpp)
       crates/orca-config/src/def_generated.rs (src/libslic3r/PrintConfig.cpp, src/libslic3r/Preset.cpp,
                                               generated from the configdef probe)
+      crates/orca-cli/src/presets.rs         (cli/presets.cpp: src/OrcaSlicer.cpp,
+                                              src/slic3r/GUI/Plater.cpp, src/libslic3r/Preset.cpp;
+                                              from 2026-11-07 also src/libslic3r/FlushVolCalc.cpp,
+                                              src/libslic3r/FlushVolPredictor.cpp,
+                                              src/slic3r/Utils/ColorSpaceConvert.cpp and
+                                              src/libslic3r/PrintConfig.hpp and PrintConfig.cpp)
     On 2026-11-07 phase O2 added ten crates (orca-eigen, orca-geom, orca-exact, orca-qhull,
     orca-mesh, orca-zip, orca-xml, orca-placeholder, orca-arrange and orca-model), each described,
     with what it carries, in "Phase O2's crates, one by one" above.
@@ -356,8 +370,9 @@ newest date of the patch headers.
     format (parity/SOP1.md), the masks of what may differ between runs (parity/masks.json), and
     the oracle (parity/oracle/): the C++ engine built with knobs that pin its clock, seeds,
     threads and FMA3 choice and dump its intermediate data. The oracle's changes to OrcaSlicer's
-    files are parity/oracle/patches/0001 to 0005, each headed in the same form as patches/ with
-    "Modified for Sketch, 2026-11-06.", each acting only when its knob is set; the shipped engine
-    never gets them. parity/oracle/probe/ is a program built against the oracle's build tree that
-    records what the C++ engine's foundations do (parity/probes/), and its recorded/ folder keeps
-    the programs whose output the crates' own tests hold.
+    files are parity/oracle/patches/0001 to 0006, each headed in the same form as patches/ with
+    "Modified for Sketch, 2026-11-06." (0006: "Modified for Sketch, 2026-11-07."), each acting
+    only when its knob is set; the shipped engine never gets them. parity/oracle/probe/ is a
+    program built against the oracle's build tree that records what the C++ engine's foundations
+    do (parity/probes/), and its recorded/ folder keeps the programs whose output the crates' own
+    tests hold.

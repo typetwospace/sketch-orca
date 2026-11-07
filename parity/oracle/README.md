@@ -39,6 +39,7 @@ Every patch acts only when its knob is set: with no knob set the oracle is the e
 | `0003-oracle-threads.patch` | `SKETCH_ORCA_ORACLE_THREADS` |
 | `0004-oracle-fma3.patch` | `SKETCH_ORCA_ORACLE_FMA3` |
 | `0005-oracle-dumps.patch` | `SKETCH_ORCA_ORACLE_DUMP` |
+| `0006-oracle-front-objects.patch` | `SKETCH_ORCA_ORACLE_DUMP` (more in `front-objects-<n>.sop1`) |
 
 ## The knobs
 
@@ -111,7 +112,11 @@ An existing folder. The oracle writes SOP1 files there (`parity/SOP1.md`) at ste
 never inside a step: after each print object step and each print step (from `set_done`,
 `PrintBase.hpp`), and in the front end once the objects are placed and once the config is resolved
 and applied. `Print` gets one friend, `OracleDumpAccess`, for the brims, the skirt's convex hull and
-the wipe tower data.
+the wipe tower data. Patch 0006 (2026-11-07, no knob of its own) puts all the front end has into
+`front-objects-<n>.sop1`: the front end's config at that point (`load_settings`' config with the
+prime tower's place), the plates' custom G-code, and each object's height ranges, brim ears and
+volumes' painting, so the Rust translation's presets, model loading and placement can be checked
+at that boundary (`parity/SOP1.md`).
 
 Why: an output that differs says where, not why. The dumps give the state at each boundary, so a
 difference can be traced to the first step whose state differs.

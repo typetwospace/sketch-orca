@@ -186,7 +186,10 @@ else from Orca's default in `probes/configdef.json` (`familiesFor`):
 A job also gets `preset-conditions` when Orca would work out a condition of its presets
 (`presetFamilies`): a preset whose list (`compatible_printers`, `compatible_prints`) is empty and
 whose condition is not, checked in Orca's order, the process for the printer first, then each
-filament for the printer and, when that holds, for the process.
+filament for the printer and, when that holds, for the process. `sketch-orca-rs` finds the same
+(`decline::preset_families`) and works such a condition out in its presets stage
+(`orca-placeholder`, 2026-11-07); its `front-objects` dump, once it writes one, is what passes
+the family (below).
 
 Smoke cases are named by hand (`SMOKE_FAMILIES`): `version` and `config-def` are those families,
 `file-collisions` is `intake`'s, and `info`, `layers-only` and `sphere-adaptive` name their steps.
@@ -304,7 +307,8 @@ with forward slashes, and JSON-escaped, so a result's bytes do not name the mach
 Every family starts as `certified: false`. Certifying a family is later work (`parity certify`);
 `parity record` keeps a family that was certified before as it is. `parity certify` certifies a
 family when every run of every case of it passes: its outputs the goldens', and the dumps the
-goldens keep (`front-objects-<n>.sop1`, the model once the objects are placed) the same. A run the
+goldens keep (`front-objects-<n>.sop1`, the model once the objects are placed, with the front
+end's config from oracle patch 0006 on: `parity/SOP1.md`) the same. A run the
 Rust program declines passes no family, with one exception: a right decline that wrote every dump
 of a boundary as the C++ run did, its progress lines the C++ run's first lines, passes the families
 wholly before that boundary (`front-objects`: `preset-conditions`, `model-load` and `placement`).

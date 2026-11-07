@@ -17,14 +17,16 @@
 //! made, as the C++ program makes them). A slice's settings, its objects' and their height
 //! ranges' add the families they turn on, a preset value that is not text adds every one, and
 //! clumping detection with an exclusion area puts the prime tower on for one filament. Presets
-//! that need a compatibility condition worked out are declined in the presets stage, with the
-//! family preset-conditions.
+//! with a compatibility condition have it worked out (a condition that does not hold refuses the
+//! process or warns of the filament; one that does not parse is compatible, logged or printed as
+//! Orca does it) and reach the family preset-conditions; one past the placeholder parser is
+//! declined in the presets stage.
 
 mod common;
 
 use common::{
-    Scratch, declined_progress, fixture_files, program, progress_text, repo, valid_job,
-    write_fixtures, write_job, write_preset,
+    Scratch, declined_progress, fixture_files, program, progress_text, repo, stream_text,
+    valid_job, write_fixtures, write_job, write_preset,
 };
 use orca_json::{Object, Order, Value, parse};
 
@@ -271,23 +273,151 @@ fn info_and_layers_jobs_are_declined_too() {
     }
 }
 
-#[test]
-fn a_compatibility_condition_is_declined_in_the_presets_stage() {
-    // A process with a condition and no list of printers: Orca works the condition out.
-    let (scratch, code, result, progress) = declined("info", |_, dir| {
-        write_preset(
-            dir,
-            "process",
-            "process",
-            &text(&[("compatible_printers_condition", "nozzle_diameter[0]==0.4")]),
-        );
-    });
+/// Runs a valid info job whose process (and filament) presets get `process` and `filament` as
+/// settings, with `env`: the scratch folder, the exit code, the result, the progress file, and
+/// what the program wrote on stdout and stderr.
+fn with_conditions(
+    process: &[(&'static str, &'static str)],
+    filament: &[(&'static str, &'static str)],
+    env: &[(&str, &str)],
+) -> (Scratch, i32, String, String, String, String) {
+    let scratch = Scratch::new("decline", "conditions");
+    write_fixtures(&scratch);
+    write_preset(&scratch, "process", "process", &text(process));
+    write_preset(&scratch, "filament_1", "filament", &text(filament));
+    let job = valid_job(&scratch, "info");
+    let path = write_job(&scratch, &job);
+    let (out, progress) = (scratch.path("result.json"), scratch.path("progress.ndjson"));
+    let r = program(
+        &[
+            "run",
+            "--job",
+            &path,
+            "--out",
+            &out,
+            "--progress",
+            &progress,
+        ],
+        env,
+    );
+    let result = std::fs::read_to_string(&out).unwrap();
+    let progress = std::fs::read_to_string(&progress).unwrap();
+    (
+        scratch,
+        r.status.code().unwrap(),
+        result,
+        progress,
+        String::from_utf8_lossy(&r.stdout).into_owned(),
+        String::from_utf8_lossy(&r.stderr).into_owned(),
+    )
+}
+
+/// The decline of an info job whose presets reach preset-conditions: after the model's file
+/// check, naming it with the info job's own families.
+fn assert_declined_with_conditions(code: i32, result: &str, progress: &str) {
     assert_eq!(code, -8, "{result}");
-    let mut missing = missing_of(&result);
+    let mut missing = missing_of(result);
     orca_stl::sort(&mut missing);
     assert_eq!(
         missing,
         ["info", "model-load", "placement", "preset-conditions"]
+    );
+    assert_eq!(progress, declined_progress(&message_of(result)));
+}
+
+#[test]
+fn a_compatibility_condition_is_worked_out_and_the_job_reaches_preset_conditions() {
+    // A process with a condition and no list of printers: Orca works the condition out against
+    // the printer (Orca's defaults: one nozzle of 0.4 mm), and the job goes on to the decline.
+    let (scratch, code, result, progress, stdout, stderr) = with_conditions(
+        &[(
+            "compatible_printers_condition",
+            "nozzle_diameter[0]==0.4 and num_extruders==1 and printer_preset==\"Test machine\"",
+        )],
+        &[],
+        &[],
+    );
+    assert_declined_with_conditions(code, &result, &progress);
+    assert!(stdout.is_empty() && stderr.is_empty(), "{stdout}{stderr}");
+    assert_eq!(
+        scratch.files(),
+        fixture_files(&["progress.ndjson", "result.json"])
+    );
+}
+
+#[test]
+fn a_condition_that_does_not_hold_refuses_the_process_and_warns_of_a_filament() {
+    let (_scratch, code, result, _, _, _) = with_conditions(
+        &[("compatible_printers_condition", "nozzle_diameter[0]==0.6")],
+        &[],
+        &[],
+    );
+    let r = parse(result.as_bytes(), Order::Insertion).unwrap();
+    assert_eq!(
+        (code, r["code"].as_str()),
+        (-17, Some("process-not-compatible"))
+    );
+
+    let (_scratch, code, result, _, _, _) = with_conditions(
+        &[],
+        &[("compatible_prints_condition", "layer_height > 1")],
+        &[],
+    );
+    assert_eq!(code, -8, "{result}");
+    let r = parse(result.as_bytes(), Order::Insertion).unwrap();
+    let first = &r["warnings"].as_array().unwrap()[0];
+    assert_eq!(first["code"].as_str(), Some("filament-not-compatible"));
+    assert_eq!(
+        first["message"].as_str(),
+        Some(
+            "presets.filaments[0]: \"Test filament\" is not made for the process \"Test process\"; Orca slices with it anyway"
+        )
+    );
+}
+
+#[test]
+fn a_condition_that_does_not_parse_is_compatible_and_reported_as_orca_reports_it() {
+    // The printer's check logs a warning on stderr, at log level 2 or more only.
+    let printers = [("compatible_printers_condition", "foo == 1")];
+    let (_scratch, code, result, progress, stdout, stderr) = with_conditions(&printers, &[], &[]);
+    assert_declined_with_conditions(code, &result, &progress);
+    assert!(stdout.is_empty() && stderr.is_empty(), "{stdout}{stderr}");
+    let (_scratch, code, result, progress, stdout, stderr) =
+        with_conditions(&printers, &[], &[("SKETCH_ORCA_LOG_LEVEL", "2")]);
+    assert_declined_with_conditions(code, &result, &progress);
+    assert!(stdout.is_empty(), "{stdout}");
+    assert_eq!(
+        stderr,
+        stream_text(
+            "[warning] Slic3r::is_compatible_with_printer: parsing error of compatible_printers_condition Test machine: Parsing error at line 1: Not a variable name\nfoo == 1\n^\n"
+        )
+    );
+    // The process's check prints on stdout, at any level.
+    let (_scratch, code, result, progress, stdout, stderr) =
+        with_conditions(&[], &[("compatible_prints_condition", "1 +")], &[]);
+    assert_declined_with_conditions(code, &result, &progress);
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(
+        stdout,
+        stream_text(
+            "Preset::is_compatible_with_print - parsing error of compatible_prints_condition Test process:\nParsing error at line 1. Expecting an expression.\n1 +\n   ^\n\n"
+        )
+    );
+}
+
+#[test]
+fn a_condition_past_the_placeholder_parser_is_declined_in_the_presets_stage() {
+    let (scratch, code, result, progress, stdout, stderr) = with_conditions(
+        &[("compatible_printers_condition", "printer_model =~ /(?=x)/")],
+        &[],
+        &[],
+    );
+    assert_eq!(code, -8, "{result}");
+    assert!(stdout.is_empty() && stderr.is_empty(), "{stdout}{stderr}");
+    let missing = missing_of(&result);
+    assert_eq!(
+        missing,
+        ["preset-conditions", "model-load", "placement", "info"]
     );
     assert_eq!(
         progress,
