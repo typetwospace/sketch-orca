@@ -13,10 +13,13 @@
 //! The geometry everything after the model's reading stands on: Clipper 6.4.2 as OrcaSlicer vendors
 //! it (`deps_src/clipper`, compiled with `Slic3r::Point` as its `IntPoint`), with `Int128` as
 //! `i128`; libslic3r's `ClipperUtils`; and libslic3r's geometry: `Point`, `Polygon`, `Polyline`,
-//! `Line`, `MultiPoint` (Douglas-Peucker and Visvalingam), `ExPolygon` (without the medial axis),
-//! `BoundingBox`, the convex hulls of `Geometry.cpp` and `Geometry/ConvexHull.cpp`,
-//! `Geometry::Transformation`, and `scale_` and `unscale` with the command line's `SCALING_FACTOR`
-//! of 1e-6. `coord_t` is `i64`.
+//! `Line`, `MultiPoint` (Douglas-Peucker; Visvalingam is left out, as nothing calls it and its
+//! code is undefined behaviour), `ExPolygon` (without the medial axis), `BoundingBox`, the
+//! predicates, angles, transform builders and convex hulls of `Geometry.cpp` and
+//! `Geometry/ConvexHull.cpp`, and `scale_` and `unscale` with the command line's
+//! `SCALING_FACTOR` of 1e-6. `coord_t` is `i64`.
+//! `Geometry::Transformation`, `Geometry::arrange` and the arc fitting of `Polyline` are not
+//! here yet (`parity/HAZARDS.md`, orca-geom).
 //!
 //! Each module gives the results OrcaSlicer v2.4.2's code gives, bit for bit, which the records of
 //! the probe file `geom.sop1` prove (`tests/probes.rs` replays them):
@@ -28,11 +31,30 @@
 //!   Clipper throws to its caller is a panic whose payload is a `ClipperException`.
 //! - [`int128`]: `Int128`'s filtered predicates (Clipper's `SlopesEqual`, `Point.cpp`), as MSVC
 //!   compiles them, with `i128` for the exact products.
-//! - [`point`]: `coord_t` (`i64`) and `Point`.
+//! - [`point`]: `coord_t` (`i64`), `Point`, `scale_` and `unscale`. `cwiseMin` and `cwiseMax`
+//!   are Eigen's SSE2 ones, whose 64-bit compare takes the low halves signed, so a
+//!   `BoundingBox` of coordinates past 2^31 can miss a point exactly as the engine's does.
+//! - [`line`], [`multi_point`], [`polygon`], [`polyline`], [`expolygon`], [`bounding_box`]: the
+//!   point containers and their helpers.
+//! - [`clipper_utils`]: the offsets and boolean operations of `ClipperUtils`, on polygons,
+//!   ExPolygons, polylines and lines, the variable-width offsets and `top_level_islands`. The
+//!   C++ overloads are functions named for their argument types (`diff_ex_expolygons`); a
+//!   path provider is a list of point slices ([`clipper_utils::PathsRef`]).
+//! - [`geometry`], [`convex_hull`]: `Slic3r::Geometry`'s predicates, angles, transform builders
+//!   and convex hulls, and the rotating calipers of `convex_polygons_intersect`.
 
+pub mod bounding_box;
 pub mod clipper;
+pub mod clipper_utils;
+pub mod convex_hull;
+pub mod expolygon;
+pub mod geometry;
 pub mod int128;
+pub mod line;
+pub mod multi_point;
 pub mod point;
+pub mod polygon;
+pub mod polyline;
 
 /// The crate's name, as Cargo has it.
 pub const NAME: &str = "orca-geom";

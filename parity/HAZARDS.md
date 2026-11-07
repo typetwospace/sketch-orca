@@ -420,7 +420,7 @@ table; the task that translates the function finds it there.
 | --- | --- | --- |
 | `deps_src/clipper/clipper.cpp:319` and `src/libslic3r/Int128.hpp:62-244` | Clipper's `sign_determinant_2x2_filtered` and `Int128::multiply`: MSVC takes `_mul128` | probed: `i128` (orca-geom, `geom.sop1` CINT and CCLP) |
 | `src/libslic3r/Point.cpp:252-257` | 128-bit products | `i128` (orca-geom) |
-| `Geometry/ConvexHull.cpp`'s `rotcalip::cmp_angles` | `boost::multiprecision::int128_t` and `int256_t` products | exact integers (orca-geom, with orca-exact's `int128_t` where Boost's signed magnitude decides a result) |
+| `Geometry/ConvexHull.cpp`'s `rotcalip::cmp_angles` | `boost::multiprecision::int128_t` and `int256_t` products of `int64_t` dot products | probed (GXFM): exact in orca-geom, a sign and a 192-bit magnitude; the `int64_t` dot products wrap first, as in C++ (orca-geom below) |
 | `Arrange.cpp:29`, `MinAreaBoundingBox.cpp` | `boost::multiprecision::int128_t` and `boost::rational<int128_t>` | orca-exact (o2-arrange) |
 
 ## Phase O2's crates (2026-11-07)
@@ -447,6 +447,7 @@ it owns:
 | Dot products: up to four packet accumulators, then the rest one by one | `Core/InnerProduct.h` | probed: `redux.rs` `dot` |
 | Small matrix products: the rows that fill whole packets left to right, the rest a tree (3-row `double` results differ in row 2, 3-row `float` results in every row) | `Core/ProductEvaluators.h` (`LazyCoeffBasedProductMode`), `Core/AssignEvaluator.h` | probed: `redux.rs` `product_coeff` and `packet_rows`; `Transform * point` is the 4x4 matrix times `(p, 1)` (`Geometry/Transform.h:1347`) |
 | `minCoeff(&i)` and `maxCoeff(&i)` search by packets: where a NaN shares a packet with a better coefficient, the index stays on the packet's first coefficient (the full set's `Vec4d` records found it) | `Core/FindCoeff.h` | probed: `redux.rs` `find_coeff` |
+| SSE2 has no 64-bit integer compare, and without SSE4.2 `pcmp_lt<Packet2l>` compares the 32-bit halves signed, the low halves too: where the high halves are equal and one low half has its top bit set, the order is wrong (`0x1_8000_0000 < 0x1_0000_0000`). `pmin` and `pmax` select by it, so `cwiseMin` and `cwiseMax` of a `Vec2crd` (both lanes) or of a `Vec3crd` (the first two), the packet steps of an `int64_t` `minCoeff` and `maxCoeff` and the packet compares of their index forms can pick the wrong coefficient for values past 2^31; values in [-2^31, 2^31) compare right | `Core/arch/SSE/PacketMath.h` (`pcmp_lt`, `pmin`, `pmax` of `Packet2l`) | probed through orca-geom's `BoundingBox` (GPLY, coordinates up to 1e10, where 980 comparisons differed with a true compare): `scalar.rs` `pcmp_lt_i64` and `Scalar::packet_lt`, `packet_min`, `packet_max`, used by `Vector::cwise_min`, `cwise_max`, `redux_packets` and `find_coeff` |
 | Quaternion products by Eigen's SSE2 kernels, in an order of their own for each type | `Geometry/arch/Geometry_SIMD.h` | probed: `rotation.rs` `QuatProduct` |
 | `sin`, `cos`, `atan2` and `pow` in `AngleAxis`, `Quaternion` and `eulerAngles` | `Geometry/AngleAxis.h`, `Geometry/Quaternion.h`, `Geometry/EulerAngles.h` | probed: the static UCRT's, through `orca-crt` (its FMA3 choice is the process's, as in the engine) |
 | `JacobiSVD` of a matrix holding a NaN or an infinity leaves U, V and the singular values uninitialised | `SVD/JacobiSVD.h` | open: undefined in C++, so `JacobiSvd3::compute` and `compute_rotation_scaling` return `None` and the caller decides |
@@ -455,10 +456,22 @@ it owns:
 ### orca-geom
 
 Clipper 6.4.2, `ClipperUtils` and libslic3r's geometry (points, lines, polygons, polylines,
-ExPolygons, bounding boxes, convex hulls, `Geometry::Transformation`). Probe file `geom.sop1`:
-CCLP, COFF, CARE, CCLN, CSIM, CMNK and CINT (`parity/SOP1.md`), which
-`crates/orca-geom/tests/probes.rs` replays; every comparison of both sets matched on 2026-11-07,
-debug and release. Filled by o2-geom on 2026-11-07. The hazards it owns:
+ExPolygons, bounding boxes, the `Geometry` predicates, angles and transform builders, convex
+hulls). Probe file `geom.sop1`: CCLP, COFF, CARE, CCLN, CSIM, CMNK, CINT, GPNT, GPLY, GCLU and
+GXFM (`parity/SOP1.md`), which `crates/orca-geom/tests/probes.rs` replays; every comparison of
+both sets matched on 2026-11-07, debug and release. Filled by o2-geom on 2026-11-07.
+
+Not translated yet, for the task that first needs them: `Geometry::Transformation` and
+`TransformationSVD`, `Geometry::arrange`, `rotation_from_two_vectors`, `transform3d_from_string`,
+`rotation_xyz_diff`, `rotation_diff_z`, `is_rotation_ninety_degrees`,
+`mat_around_a_point_rotate`, `generate_transform` and `is_point_inside_polygon_corner`;
+`Polygon::densify`, `overlaps(Polygons)`, `convex_points`, `concave_points` and
+`parameter_by_length`; `Polyline`'s arc fitting (`fitting_result`, empty in all geometry code,
+so `Polyline` has none), `Polyline3` and `ThickPolyline`; ClipperUtils' `Surface` overloads,
+`union_pt_chained_outside_in`, `order_nodes` and `traverse_pt` (they need ShortestPath), the
+`ZPoints` and `Polyline3` overloads and `to_linesf`; `polygons_match` and `expolygons_match`.
+
+The hazards it owns:
 
 | What | Where | What the translation does |
 | --- | --- | --- |
@@ -470,6 +483,13 @@ debug and release. Filled by o2-geom on 2026-11-07. The hazards it owns:
 | `Round<cInt>`: `FRound` (0.49999999999999994 rounds to 0), then MSVC's truncating cast; `DoRound`'s `std::max<int>(Round(...), 1)` truncates the `int64` to `int`, and a NaN step count (a delta below 0.125 with ArcTolerance 0) gives `INT64_MIN`, so 0, so one step | `clipper.cpp:88-110`, `DoRound`, `DoOffset` | probed (COFF): `fround`, `orca_crt::f64_to_i64`, `as i32` |
 | Exceptions: `RangeTest`, an open clip path and `Execute(Paths&)` after an open path throw to the caller; `UpdateEdgeIntoAEL` and `DoMaxima` throw inside `ExecuteInternal`, which catches them and returns false | `clipper.cpp` | probed (CCLP and COFF cases): a panic whose payload is a `ClipperException` (`catch_unwind` and `downcast` catch it, as `catch (clipperException&)` does); the inner two a `Result` |
 | Undefined behaviour: `AddPaths` throwing midway leaves the earlier paths' local minima pointing into freed edges; `ProcessHorizontal` reads a maxima iterator uninitialised if the direction flips along a chain of horizontals; `Minkowski` of an empty open path divides by zero | `clipper.cpp` | open: no probe can record it; the translation does what each site's comment says (the last panics), and the engine's callers never get there |
+| `BoundingBox`'s `construct` and `merge` take `cwiseMin` and `cwiseMax` of `Point`s, which are Eigen's SSE2 `Packet2l` ones (orca-eigen above), so a box of points past 2^31 can miss a point, and `rotated`, `center`, `size` and `polygon` follow it | `src/libslic3r/BoundingBox.hpp:96-110`, `BoundingBox.cpp:73-100` | probed (GPLY, coordinates up to 1e10): `Point::cwise_min` and `cwise_max`, through `orca_eigen::Scalar::packet_min` and `packet_max` |
+| `convex_polygons_intersect`: `rotcalip`'s `dot` and `magnsq` are `int64_t` (the template default) before `cmp_angles` widens them, so for coordinates past about 1e9 (edges past about 2e9) they wrap, the angle comparisons go wrong and the caliper walk can loop forever (the probe found a case with coordinates near 1e10 that never ends) | `src/libslic3r/Geometry/ConvexHull.cpp:136-245` | open: the translation wraps the same way, so it can loop too; `cmp_angles` compares `magnsq * abs(dot) * dot` exactly (a sign and a 192-bit magnitude, as `int256_t` does); GXFM keeps its point sets within 1e8 |
+| `orient` takes 64-bit products when every coordinate is at most `0xffffffff`, with no lower bound, so large negative coordinates wrap; otherwise doubles | `src/libslic3r/Geometry.hpp` (`orient`) | probed (GPNT, coordinates up to 1e10): `wrapping_mul`, `as f64` |
+| `to_range_pi_pi` subtracts `int(round(a / 2π)) * 2 * π`, the `* 2` in `int` | `Geometry.hpp` | probed (GPNT): `f64_to_i32`, `wrapping_mul` |
+| `Point * double`: the member operator, which a non-const point picks, rounds (`Point(x * r, y * r)`); the free one, which a `const Point` picks, truncates. `BoundingBox::offset` subtracts and adds `Point(delta, delta)`, rounded | `Point.hpp`, `BoundingBox.cpp` | probed (GPLY `scale`, `offset`, `rotate`): `Point::mul_round`, `mul_trunc`, `from_f64` |
+| ClipperUtils and ExPolygon quirks kept as written: `diff_ex(ExPolygon, ExPolygon, do_safety_offset)` ignores the flag; `union_ex(ExPolygons, Polygons)` adds the polygons as clip paths; `offset_ex(ExPolygon)` unites with EvenOdd; `ExPolygon::contains(Polyline)` drops the `inflated(1)` box it computes; `remove_sticks(ExPolygon)` stops at the first contour that changes (`\|\|`) | `ClipperUtils.cpp`, `ExPolygon.cpp` | translated as written; GCLU probes the polygon and ExPolygons overloads |
+| Undefined behaviour: `to_lines(Polylines)` and `to_lines(ExPolygon)` read before the start of an empty path; `keep_largest_contour_only` with no contour of positive area dereferences null; Visvalingam's heap orders `vis_node*` by address and writes past `areas` (nothing calls it) | `Polyline.hpp`, `ExPolygon.hpp`, `ExPolygon.cpp`, `MultiPoint.cpp:254` | open: `to_lines(Polylines)` gives an empty polyline no lines, `to_lines(ExPolygon)` and `keep_largest_contour_only` panic, Visvalingam is left out |
 
 ### orca-exact
 

@@ -8,9 +8,10 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
 // (LICENSE) for more details.
 
-// Carries Eigen code: the packet sizes of Eigen/src/Core/arch/SSE/PacketMath.h, the casts of
-// Eigen/src/Core/arch/SSE/TypeCasting.h and numext::hypot of Eigen/src/Core/MathFunctionsImpl.h
-// (positive_real_hypot), of Eigen 5.0.1, translated on 2026-11-07. Their copyright is the Eigen
+// Carries Eigen code: the packet sizes and the SSE2 pcmp_lt, pmin and pmax of Packet2l of
+// Eigen/src/Core/arch/SSE/PacketMath.h, the casts of Eigen/src/Core/arch/SSE/TypeCasting.h and
+// numext::hypot of Eigen/src/Core/MathFunctionsImpl.h (positive_real_hypot), of Eigen 5.0.1,
+// translated on 2026-11-07. Their copyright is the Eigen
 // authors' (Benoit Jacob, Gael Guennebaud and the Eigen contributors), under the Mozilla Public
 // License, version 2.0 (MPL-2.0; licenses/MPL-2.0.txt).
 //
@@ -27,6 +28,12 @@
 //! which decides how Eigen vectorises a reduction or a product of that type (`redux.rs`).
 //! Integer arithmetic wraps, as MSVC's `imul` and `add` do (signed overflow is undefined in C++,
 //! and the engine's build wraps); so the order of an integer reduction never changes its result.
+//!
+//! A comparison inside a packet is the scalar one for every type but `int64_t`: SSE2 has no 64-bit
+//! compare, and Eigen builds one from 32-bit compares that takes the low halves signed
+//! ([`pcmp_lt_i64`]). [`Scalar::packet_lt`], [`Scalar::packet_min`] and [`Scalar::packet_max`]
+//! are the lane operations `cwiseMin`, `cwiseMax` and the packet steps of `minCoeff`, `maxCoeff`
+//! and their index forms use (`vector.rs`, `redux.rs`).
 //!
 //! [`Real`] adds what Eigen calls on `float` and `double`: `std::sqrt`, `std::sin`, `std::cos`,
 //! `std::atan2` through orca-crt (the static UCRT's results), and Eigen's own `numext::hypot`.
@@ -62,6 +69,38 @@ pub trait Scalar: Copy + PartialEq + PartialOrd + Debug + 'static {
     fn neg(self) -> Self;
     /// `std::abs(a)` (`fabs`; wrapping for integers, so `abs(INT64_MIN)` is `INT64_MIN`).
     fn abs(self) -> Self;
+    /// `pcmp_lt` in one lane of an SSE2 packet: `a < b` (`_mm_cmplt_pd`, `_mm_cmplt_ps`,
+    /// `_mm_cmplt_epi32`), but [`pcmp_lt_i64`] for `int64_t`.
+    #[inline]
+    fn packet_lt(self, rhs: Self) -> bool {
+        self < rhs
+    }
+    /// `pmin(a, b)` in one lane of an SSE2 packet: `std::min(a, b)` (`_mm_min_pd(b, a)`,
+    /// `_mm_min_ps(b, a)`, the `int32_t` select of `a < b`), but for `int64_t` `a` where
+    /// [`pcmp_lt_i64`]`(a, b)` and `b` otherwise.
+    #[inline]
+    fn packet_min(self, rhs: Self) -> Self {
+        orca_stl::min(self, rhs)
+    }
+    /// `pmax(a, b)` in one lane of an SSE2 packet: `std::max(a, b)`, but for `int64_t` `b` where
+    /// [`pcmp_lt_i64`]`(a, b)` and `a` otherwise.
+    #[inline]
+    fn packet_max(self, rhs: Self) -> Self {
+        orca_stl::max(self, rhs)
+    }
+}
+
+/// `pcmp_lt<Packet2l>(a, b)` as MSVC builds Eigen's SSE2 PacketMath.h, without SSE4.2's
+/// `_mm_cmpgt_epi64`: `hi(a) < hi(b) || (hi(a) == hi(b) && lo(a) < lo(b))`, each 32-bit half
+/// compared as a signed `int32_t` (`_mm_cmplt_epi32`), the low halves too. A true 64-bit compare
+/// takes the low halves unsigned, so this one is wrong where the high halves are equal and one low
+/// half has its top bit set while the other does not: `0x1_0000_0000 < 0x1_8000_0000` is false
+/// and `0x1_8000_0000 < 0x1_0000_0000` true. Values in [-2^31, 2^31) all compare right.
+#[must_use]
+pub fn pcmp_lt_i64(a: i64, b: i64) -> bool {
+    let (ha, hb) = ((a >> 32) as i32, (b >> 32) as i32);
+    let (la, lb) = (a as i32, b as i32);
+    ha < hb || (ha == hb && la < lb)
 }
 
 macro_rules! float_scalar {
@@ -99,7 +138,7 @@ macro_rules! float_scalar {
 }
 
 macro_rules! int_scalar {
-    ($t:ty, $packet:expr) => {
+    ($t:ty, $packet:expr $(; $($lanes:tt)*)?) => {
         impl Scalar for $t {
             const PACKET: usize = $packet;
             const ZERO: Self = 0;
@@ -128,6 +167,7 @@ macro_rules! int_scalar {
             fn abs(self) -> Self {
                 self.wrapping_abs()
             }
+            $($($lanes)*)?
         }
     };
 }
@@ -135,7 +175,22 @@ macro_rules! int_scalar {
 float_scalar!(f32, 4);
 float_scalar!(f64, 2);
 int_scalar!(i32, 4);
-int_scalar!(i64, 2);
+// `pmin<Packet2l>`: `por(pandnot(b, mask), pand(a, mask))` with `mask = pcmp_lt(a, b)`; `pmax`
+// selects the other way.
+int_scalar!(i64, 2;
+    #[inline]
+    fn packet_lt(self, rhs: Self) -> bool {
+        pcmp_lt_i64(self, rhs)
+    }
+    #[inline]
+    fn packet_min(self, rhs: Self) -> Self {
+        if pcmp_lt_i64(self, rhs) { self } else { rhs }
+    }
+    #[inline]
+    fn packet_max(self, rhs: Self) -> Self {
+        if pcmp_lt_i64(self, rhs) { rhs } else { self }
+    }
+);
 
 /// A floating-point coefficient: what Eigen computes on `float` and `double` beyond arithmetic.
 pub trait Real: Scalar {
@@ -337,6 +392,18 @@ mod tests {
         assert_eq!(Cast::<i32>::cast(3.0e9_f64), i32::MIN);
         assert_eq!(Cast::<i64>::cast(-2.9_f64), -2);
         assert_eq!(Cast::<f32>::cast(i64::MAX), 9.223_372e18_f32);
+    }
+
+    #[test]
+    fn int64_packet_compare_takes_the_low_halves_signed() {
+        assert!(!pcmp_lt_i64(0x1_0000_0000, 0x1_8000_0000));
+        assert!(pcmp_lt_i64(0x1_8000_0000, 0x1_0000_0000));
+        assert!(pcmp_lt_i64(-0x8000_0000, 0x7FFF_FFFF));
+        assert!(pcmp_lt_i64(-0x1_0000_0001, -1));
+        assert_eq!(0x1_0000_0000_i64.packet_min(0x1_8000_0000), 0x1_8000_0000);
+        assert_eq!(0x1_0000_0000_i64.packet_max(0x1_8000_0000), 0x1_0000_0000);
+        assert_eq!(5_i32.packet_min(-3), -3);
+        assert!(f64::NAN.packet_min(1.0).is_nan());
     }
 
     #[test]

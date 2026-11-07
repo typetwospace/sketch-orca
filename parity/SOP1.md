@@ -226,7 +226,7 @@ records below, END.
 | `stl.sop1` | O1 | SORT, VALS, HASH, UMAP, USET, RNGS, SSEQ, SHUF |
 | `tbb.sop1` | O1 | TBBA, TBBF, TBBR, TBBO |
 | `configdef.json` | O1 | not SOP1: `print_config_def` with every field of each option, the preset sections' keys, and `handle_legacy` on the legacy and defined keys (`configdef.cpp` says what it holds) |
-| `geom.sop1` | o2-geom | EVEC, EMAT, ETRF, EROT, ESVD (`orca-eigen`); CCLP, COFF, CARE, CCLN, CSIM, CMNK, CINT (`orca-geom`) |
+| `geom.sop1` | o2-geom | EVEC, EMAT, ETRF, EROT, ESVD (`orca-eigen`); CCLP, COFF, CARE, CCLN, CSIM, CMNK, CINT, GPNT, GPLY, GCLU, GXFM (`orca-geom`) |
 | `qhull.sop1` | o2-mesh | none yet: a stub (`orca-qhull`) |
 | `mesh.sop1` | o2-mesh | none yet: a stub (`orca-mesh`) |
 | `cstdio.sop1` | o2-mesh | none yet: a stub (`orca-fmt`'s `stdio` and `scanf`) |
@@ -239,9 +239,12 @@ records below, END.
 A stub is HEAD, PRUN and END: the task that fills it adds its records here, and the crate's probe
 test fails as soon as the file holds a record it does not replay.
 
-Inputs come from splitmix64 generators with fixed seeds (`probe.hpp`), so two runs write the same
-bytes (`parity probe --check`). An argument or a result that is a `double` or `float` is its bit
-pattern as a `u64`, a `float`'s zero-extended; an integer result is sign-extended to a `u64`.
+Inputs come from generators with fixed seeds, so two runs write the same bytes (`parity probe
+--check`): the splitmix64 of `probe.hpp`, or a `std::mt19937` in the Clipper and Geometry records
+of `geom.sop1` (seeds 0xC1199E2 and 0x6E0E7A1). Where a section has a value as a `u64`, a
+`double` or `float` is its bit pattern, a `float`'s zero-extended, and an integer is sign-extended;
+the Clipper and Geometry records write each value in its own width (`i64`, `i32`, `u8`, `f64`,
+`f32`), as their sections say.
 
 ### HEAD in a probe file
 
@@ -531,6 +534,102 @@ build the exact ones they fall back on are private): `i64` a, b, c and d, then `
 `sign_determinant_2x2_filtered(a, b, c, d)` and `i32` `compare_rationals_filtered(a, b, c, d)`. 64
 hand-made cases (values about 2^31 and 2^32, loRange, hiRange, `INT64_MIN`, `INT64_MAX`), then 4000
 random (wide values and nearly collinear quadruples; the committed set those and 32).
+
+### GPNT
+
+libslic3r's `Point`, `Line` and `Geometry` predicates (`parity/oracle/probe/geom/geometry.cpp`,
+added 2026-11-07). As in CCLP, a point is `i64` x and y and a path a `u32` count and its points;
+here a `Vec2d` is two `f64`, a `Vec3d` three, and "a point if" is `u8` the call's result and the
+point it gave, `(0, 0)` when it returned false. Inputs: points p, a, b, c, d and center, `f64`
+angle and `f64` dmax; l is `Line(a, b)`, m `Line(c, d)`. Results: p after `rotate(angle)`, then p
+after `rotate(angle, center)`; `f64` `p.ccw(a, b)` and `p.ccw_angle(a, b)`; `p.projection_onto(l)`; `f64`
+`l.distance_to(p)`, `Line::distance_to_infinite(p, a, b)` and `l.perp_distance_to(p)`;
+`l.intersection(m)` and `l.intersection_infinite(m)` as points if; `f64` `l.direction()`,
+`orientation()` and `atan2_()`; `u8` `l.parallel_to(m)`, `perpendicular_to(m)`,
+`parallel_to(angle)` and `perpendicular_to(angle)`; `l.midpoint()`, `l.normal()`; a and b of l
+after `extend(dmax)`; `u8` `l.overlap(m, len)` and `f64` len (0 when false); `i32`
+`Geometry::orient(a, b, p)`; `u8` `segments_intersect(a, b, c, d)`; `u8` `directions_parallel`
+and `directions_perpendicular` of angle and `m.direction()` within `dmax * 1e-9`; `f64`
+`to_range_pi_pi(angle * 7)` and `angle_to_0_2PI(angle)`; `f64` `l.distance_to_squared(p,
+&closest)` and closest; `f64` `l.distance_to_infinite_squared(p, &closest)` and closest; `i32`
+`p.nearest_point_index({a, b, c, d})`; `ray_ray_intersection` and `segment_segment_intersection`
+of (a, b - a) and (c, d - c), each `u8` and the `Vec2d` (0, 0 when false); `foot_pt(l, p)` as a
+`Vec2d`; `f64` `ray_point_distance(l, p)`. 5 hand-made cases (lines of one point, a quarter turn,
+collinear segments, coordinates near 6e9, the angle 0.49999999999999994 with overlapping
+segments), then 3000 random, every point within a range of 50, 1000, 30000, 1e6, 1e8 or 1e10
+(past `orient`'s 32-bit branch), now and then with b = a, parallel lines or c on l (the committed
+set those and the first 40 of at most 1 KB).
+
+### GPLY
+
+A point set as `Polygon`, `Polyline`, `MultiPoint` and `BoundingBox`. A list of polygons or
+polylines is a `u32` count and each one's points; a box is min, max and `u8` defined. Inputs:
+the points, points q, a and b, `f64` tol, frac, angle and factor; poly is `Polygon(points)`, pl
+`Polyline(points)`, l `Line(a, b)`, dist `frac * max(1, poly.length()) * 0.25`. Results: `f64`
+`area()` and `length()`; `centroid()`; `u8` `is_counter_clockwise()` and `Geometry::is_ccw`; `u8`
+`contains(q)` and `Slic3r::contains(poly, q, false)`; `point_projection(q)`; the points after
+`douglas_peucker(tol)`; the list `simplify(tol)`; the list `triangulate_convex`; `u8`
+`polygon_is_convex`; the points after `remove_collinear`; `u8` and the points of `remove_sticks`
+and of `remove_same_neighbor`; bb = `bounding_box()`, then bb after `offset(dist)`, after
+`scale(factor)`; bb's `center()`, `size()`, `f64` `radius()`, `u8` `contains(q)`, box
+`rotated(angle)` and `polygon()`'s points; `first_intersection(l)` as a point if; `u8`
+`intersections(l, &pts)` and the points; `intersection(l)` as a point if; `u8` `on_boundary(q,
+dist)`; `q.projection_onto(poly)`; `f64` `pl.length()`; pl's points after `clip_end(dist)`,
+`clip_start(dist)` and `extend_end(dist)`; with spacing `max(pl.length() / (2 + 18 * frac), 1)`,
+`equally_spaced_points(spacing)` and the list `equally_spaced_lines(spacing)`; the points after
+`simplify(tol)`; `u8` `split_at_length(pl.length() * frac)` and the two parts' points (empty when
+false); `leftmost_point()`; `u8` `is_straight()`; `i32` and point of `foot_pt(points, q)`; `u8`
+`has_duplicate_points(points)`; `Geometry::convex_hull(points)`'s points; the list
+`polygons_simplify({poly}, tol, true)`; box `get_extents_rotated(points, angle)`; poly's points
+after `rotate(angle, q)`, after `rotate(angle)`, after `scale(factor)`;
+`MultiPoint::_douglas_peucker(points, tol)`; `poly.equally_spaced_points(spacing)`. 6 hand-made
+cases (a square, a rectangle, three collinear points, duplicate points, a bow-tie, a stick), then
+1500 random: star polygons, clockwise stars and point soups of 3 to 24 points, now and then with a
+repeated or a collinear point, in GPNT's ranges (the committed set those and the first 12 of at
+most 4 KB).
+
+### GCLU
+
+ClipperUtils and `ExPolygon`. A list of ExPolygons is a `u32` count, each the contour's points
+and the holes as a list of polygons. Inputs: polygon lists A and B, `f32` delta, `u8` join
+(square, round, miter), `f64` the miter limit (the arc tolerance
+for round), `u8` safety (`ApplySafetyOffset::Yes`), a polyline's points, point q. With pos
+`fabs(delta) + 1.f`: the lists `offset(A, delta)` and `offset_ex(A, delta)`, `union_(A)`, EA =
+`union_ex(A)` (EB = `union_ex(B)` is not written); `diff(A, B)`, `diff_ex`, `intersection`,
+`intersection_ex`; `xor_ex(EA, EB)`, `diff_ex(EA, EB)`; `offset_ex(EA, delta)`, `offset(EA,
+delta)`, `offset2_ex(EA, delta, -0.5f * delta)`; `closing(A, pos)`, `opening(A, pos)`;
+`diff_pl({pl}, A)`, `intersection_pl({pl}, A)`, `diff_pl(A, B)`; `offset(pl, pos)` with the line
+defaults (square, 0, open butt); `simplify_polygons(A)`, `union_safety_offset(A)`,
+`contour_to_polygons(A, 2.f * pos)`; `diff_clipped(A, B)`, `intersection_clipped(A, B)`;
+`top_level_islands(A then B)`; `ClipperUtils::clip_clipper_polygons_with_subject_bbox(B,
+get_extents(A))`. When EA is not empty, of its first ExPolygon e: `f64` `area()`, `u8`
+`contains(q)` and `is_valid()`, `point_projection(q)`, `u8` `overlaps(EB[0])` (0 when EB is
+empty); then the variable offset deltas, drawn once e is known: for each contour and hole, a
+`u32` count and that many `f32` in [0, pos), then the same for the inner deltas in
+(-pos, 0]; and the lists `variable_offset_outer(e, outer)`, `variable_offset_inner(e, inner)`,
+`variable_offset_outer_ex`, `variable_offset_inner_ex`. The safety, join type and miter limit
+apply to every call that takes them. 2 hand-made cases (overlapping squares, a square with a
+hole), then 600 random (1 to 3 polygons each, as GPLY's, in ranges 1e5 and 1e6; the committed set
+those and the first 4 of at most 12 KB).
+
+### GXFM
+
+The transform builders and the hulls. Inputs: `Vec3d` t, r, s and m (each of m ±1), a list of
+`Vec3d` (`u32` count), the point soups sa and sb, `f64` radius, error and angle. Results: tr =
+`Geometry::assemble_transform(t, r, s, m)` and `rotation_transform(r)`, each as the 16 `f64` of
+its matrix row by row; `extract_euler_angles(tr)` (the `Transform3d` overload) and
+`extract_euler_angles` of `rotation_transform(r)`'s 3x3 block; the min and max of
+`BoundingBoxf3(list).transformed(tr)`; `Geometry::convex_hull(list)`, the hull in x and y (a
+list of `Vec3d`); `make_circle(radius, error)`'s points; `f64` `rad2deg_dir(angle)`; the points of ha =
+`convex_hull(sa)` and hb = `convex_hull(sb)`; `u8` `convex_polygons_intersect(ha, hb)` when both
+have 3 points or more (0 otherwise); the bottom and the top chain of
+`decompose_convex_polygon_top_bottom` of ha's points unscaled (`double(x) * SCALING_FACTOR`), each
+a `u32` count and its `Vec2d`s; then for each point of sb, no count, `u8` `inside_convex_polygon`
+of it unscaled (0 when the bottom chain is empty). 2 hand-made cases (the identity with
+overlapping squares; a mirrored, scaled quarter-turn transform with squares apart), then 1500
+random: 3 to 20 points in [-100, 100] cubed, now and then one more 1 above the first; soups of 3
+to 16 points in GPNT's ranges capped at 1e8, as `convex_polygons_intersect` loops forever on some
+larger ones (`parity/HAZARDS.md`); the committed set those and the first 16 of at most 3 KB.
 
 ## Versions
 

@@ -27,7 +27,11 @@
 //! Coefficient-wise operations (`+`, `-`, scalar `*` and `/`, `cwiseProduct`, `cwiseQuotient`,
 //! `cwiseMin`, `cwiseMax`, `cwiseAbs`) compute each coefficient on its own, so SSE2 gives the same
 //! values as a loop: `cwiseMin(a, b)` is `std::min(a_i, b_i)` (`_mm_min_pd(b, a)` per lane, the
-//! operands reversed to match `std::min`), `cwiseMax(a, b)` `std::max(a_i, b_i)`.
+//! operands reversed to match `std::min`), `cwiseMax(a, b)` `std::max(a_i, b_i)`. Except for
+//! `int64_t`: the coefficients that fill whole packets (both of a `Vec2crd`, the first two of a
+//! `Vec3crd`; the assignment's linear vectorised traversal does the rest one by one) go through
+//! `pmin<Packet2l>` and `pmax<Packet2l>`, whose emulated compare ([`crate::pcmp_lt_i64`]) is
+//! wrong past 2^31.
 //!
 //! Reductions follow `redux.rs`: the methods here assume the expression has packet access, as a
 //! plain vector and any coefficient-wise expression of plain vectors and casts do (`DontAlign`
@@ -35,7 +39,7 @@
 //! `*_strided` forms are for an expression without packet access: a row of a column-major matrix,
 //! a diagonal, a `unaryExpr` of a lambda.
 
-use crate::redux::{dot, find_coeff, redux};
+use crate::redux::{dot, find_coeff, redux, redux_packets};
 use crate::scalar::{Cast, Real, Scalar};
 use core::ops::{
     Add, AddAssign, Div, DivAssign, Index, IndexMut, Mul, MulAssign, Neg, Sub, SubAssign,
@@ -122,13 +126,30 @@ impl<T: Scalar, const N: usize> Vector<T, N> {
     pub fn cwise_quotient(&self, o: &Self) -> Self {
         self.zip(o, T::div)
     }
-    /// `cwiseMin(o)`: `std::min(self_i, o_i)`, `self_i` when they are unordered or equal.
+    /// `cwiseMin(o)`: `std::min(self_i, o_i)`, `self_i` when they are unordered or equal; the
+    /// coefficients of whole packets by `pmin` ([`Scalar::packet_min`], which differs only for
+    /// `int64_t`).
     pub fn cwise_min(&self, o: &Self) -> Self {
-        self.zip(o, orca_stl::min)
+        let whole = N / T::PACKET * T::PACKET;
+        Vector(core::array::from_fn(|i| {
+            if i < whole {
+                self.0[i].packet_min(o.0[i])
+            } else {
+                orca_stl::min(self.0[i], o.0[i])
+            }
+        }))
     }
-    /// `cwiseMax(o)`: `std::max(self_i, o_i)`, `self_i` when they are unordered or equal.
+    /// `cwiseMax(o)`: `std::max(self_i, o_i)`, `self_i` when they are unordered or equal; the
+    /// coefficients of whole packets by `pmax` ([`Scalar::packet_max`]).
     pub fn cwise_max(&self, o: &Self) -> Self {
-        self.zip(o, orca_stl::max)
+        let whole = N / T::PACKET * T::PACKET;
+        Vector(core::array::from_fn(|i| {
+            if i < whole {
+                self.0[i].packet_max(o.0[i])
+            } else {
+                orca_stl::max(self.0[i], o.0[i])
+            }
+        }))
     }
     /// `cwiseAbs()`.
     pub fn cwise_abs(&self) -> Self {
@@ -164,13 +185,13 @@ impl<T: Scalar, const N: usize> Vector<T, N> {
     pub fn dot_strided(&self, o: &Self) -> T {
         dot(&self.0, &o.0, false)
     }
-    /// `minCoeff()`: `std::min` folded in Eigen's order.
+    /// `minCoeff()`: `std::min` folded in Eigen's order, whole packets joined by `pmin`.
     pub fn min_coeff(&self) -> T {
-        redux(&self.0, T::PACKET, true, orca_stl::min)
+        redux_packets(&self.0, T::PACKET, true, T::packet_min, orca_stl::min)
     }
-    /// `maxCoeff()`: `std::max` folded in Eigen's order.
+    /// `maxCoeff()`: `std::max` folded in Eigen's order, whole packets joined by `pmax`.
     pub fn max_coeff(&self) -> T {
-        redux(&self.0, T::PACKET, true, orca_stl::max)
+        redux_packets(&self.0, T::PACKET, true, T::packet_max, orca_stl::max)
     }
     /// `minCoeff()` of an expression without packet access.
     pub fn min_coeff_strided(&self) -> T {
@@ -187,6 +208,7 @@ impl<T: Scalar, const N: usize> Vector<T, N> {
             &self.0,
             T::PACKET,
             true,
+            |inc: T, cand: T| inc.packet_lt(cand),
             |inc, cand| cand > inc,
             orca_stl::max,
         )
@@ -198,6 +220,7 @@ impl<T: Scalar, const N: usize> Vector<T, N> {
             &self.0,
             T::PACKET,
             true,
+            |inc: T, cand: T| cand.packet_lt(inc),
             |inc, cand| cand < inc,
             orca_stl::min,
         )

@@ -32,6 +32,9 @@
 //! Maths functions go through orca-crt (the static UCRT's `sin`, `cos`, `atan2`, `pow`), float
 //! min and max through orca-stl (`std::min` and `std::max`, whose operand order SSE2's `minpd` and
 //! `maxpd` reproduce), and float-to-integer casts through orca-crt's conversions (`cvttsd2si`).
+//! An `int64_t` comparison inside a packet is SSE2's emulated one, which takes the low 32-bit
+//! halves signed ([`pcmp_lt_i64`]), so `cwiseMin` and `cwiseMax` of `Vec2crd` can pick the wrong
+//! coefficient past 2^31 as the engine does.
 //!
 //! The files that carry Eigen's code say so in a dated block of their header, which names the
 //! Eigen sources, and stay under the Mozilla Public License, version 2.0 (MPL-2.0;
@@ -51,7 +54,7 @@ pub use matrix::{Mat2, Mat3, Mat4, Matrix, Matrix2d, Matrix3d, Matrix3f, Matrix4
 pub use rotation::{
     AngleAxis, AngleAxisd, QuatProduct, Quaternion, Quaterniond, euler_angles, stable_norm3,
 };
-pub use scalar::{Cast, Real, Scalar, hypot};
+pub use scalar::{Cast, Real, Scalar, hypot, pcmp_lt_i64};
 pub use svd::JacobiSvd3;
 pub use transform::{Transform3, Transform3d, Transform3f};
 pub use vector::{

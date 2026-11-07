@@ -96,11 +96,25 @@ fn vec_tree<T: Copy>(
 /// column-major matrix), `packet` the scalar's SSE2 packet size. `op(a, b)` is the functor:
 /// `a + b` for `sum`, `std::min(a, b)` for `minCoeff`, `std::max(a, b)` for `maxCoeff`.
 pub fn redux<T: Copy>(c: &[T], packet: usize, vectorized: bool, op: impl Fn(T, T) -> T) -> T {
+    redux_packets(c, packet, vectorized, &op, &op)
+}
+
+/// [`redux`] for a functor whose packet operation can differ from its scalar one in a lane:
+/// `packet_op` joins whole packets lane by lane (`func.packetOp`; `pmin<Packet2l>` for an
+/// `int64_t` `minCoeff`), `op` folds the lanes of the result (`predux_min` of a `Packet2l` stores
+/// the lanes and takes `std::min`) and combines the coefficients past the last whole packet.
+pub fn redux_packets<T: Copy>(
+    c: &[T],
+    packet: usize,
+    vectorized: bool,
+    packet_op: impl Fn(T, T) -> T,
+    op: impl Fn(T, T) -> T,
+) -> T {
     assert!(!c.is_empty(), "Eigen reduces no empty expression");
     let n = c.len();
     if vectorized && n >= packet {
         let packets = n / packet;
-        let lanes = vec_tree(c, 0, packets, packet, &op);
+        let lanes = vec_tree(c, 0, packets, packet, &packet_op);
         let res = predux(&lanes, &op);
         if packets * packet == n {
             res
@@ -191,8 +205,9 @@ pub fn dot<T: Scalar>(a: &[T], b: &[T], vectorized: bool) -> T {
 /// `minCoeff(&index)` or `maxCoeff(&index)` of the coefficients `c` of a vector, with the default
 /// `PropagateFast` (FindCoeff.h, `find_coeff_loop<.., Linear, ..>`): the extreme coefficient and
 /// its index. `better(incumbent, candidate)` is the functor's comparison (`candidate < incumbent`
-/// for the minimum, `candidate > incumbent` for the maximum), `op` its packet reduction
-/// (`std::min` or `std::max`), `vectorized` whether the expression has packet access.
+/// for the minimum, `candidate > incumbent` for the maximum), `packet_better` the same comparison
+/// in a packet lane (`comparePacket`: `pcmp_lt`, the emulated one for `int64_t`), `op` its packet
+/// reduction (`std::min` or `std::max`), `vectorized` whether the expression has packet access.
 ///
 /// With packet access and at least one whole packet, the result starts as `c[0]`. Each packet
 /// holding a coefficient better than the result (`predux_any` of the lane comparisons) makes its
@@ -201,11 +216,12 @@ pub fn dot<T: Scalar>(a: &[T], b: &[T], vectorized: bool) -> T {
 /// in that packet, from its first coefficient. Otherwise one scan from `c[0]`. The two agree but
 /// where a NaN shares a packet with a better coefficient: the packet's `predux` can be the NaN,
 /// which no later coefficient beats, and the second search then stays on the packet's first
-/// coefficient.
+/// coefficient; or where an `int64_t` lane comparison is wrong (past 2^31).
 pub fn find_coeff<T: Copy>(
     c: &[T],
     packet: usize,
     vectorized: bool,
+    packet_better: impl Fn(T, T) -> bool,
     better: impl Fn(T, T) -> bool,
     op: impl Fn(T, T) -> T,
 ) -> (T, usize) {
@@ -225,7 +241,7 @@ pub fn find_coeff<T: Copy>(
     let packet_end = n / packet * packet;
     let mut check_packet = false;
     for (p, lanes) in c[..packet_end].chunks_exact(packet).enumerate() {
-        if lanes.iter().any(|&x| better(result, x)) {
+        if lanes.iter().any(|&x| packet_better(result, x)) {
             index = p * packet;
             result = predux(lanes, &op);
             check_packet = true;
@@ -320,16 +336,38 @@ mod tests {
         let better = |inc: f64, cand: f64| cand > inc;
         let c = [1.0, 0.0, f64::NAN, 5.0];
         // A plain scan skips the NaN and finds 5.0; the packet [NaN, 5.0] reduces to the NaN.
-        assert_eq!(find_coeff(&c, 2, false, better, max).1, 3);
-        let (v, i) = find_coeff(&c, 2, true, better, max);
+        assert_eq!(find_coeff(&c, 2, false, better, better, max).1, 3);
+        let (v, i) = find_coeff(&c, 2, true, better, better, max);
         assert!(v.is_nan());
         assert_eq!(i, 2);
         // Ties keep the first coefficient either way.
         assert_eq!(
-            find_coeff(&[2.0, 7.0, 7.0, 1.0], 2, true, better, max),
+            find_coeff(&[2.0, 7.0, 7.0, 1.0], 2, true, better, better, max),
             (7.0, 1)
         );
-        assert_eq!(find_coeff(&[7.0, 1.0, 7.0], 2, true, better, max), (7.0, 0));
+        assert_eq!(
+            find_coeff(&[7.0, 1.0, 7.0], 2, true, better, better, max),
+            (7.0, 0)
+        );
+    }
+
+    #[test]
+    fn int64_lanes_compare_as_sse2_emulates() {
+        use crate::scalar::Scalar;
+        let max = |a: i64, b: i64| if a < b { b } else { a };
+        let packet_better = |inc: i64, cand: i64| inc.packet_lt(cand);
+        let better = |inc: i64, cand: i64| cand > inc;
+        // In the packet [2^32, 2^32 + 2^31] the larger lane does not compare greater.
+        let c = [0x1_0000_0000_i64, 0x1_8000_0000];
+        assert_eq!(find_coeff(&c, 2, false, better, better, max), (c[1], 1));
+        assert_eq!(
+            find_coeff(&c, 2, true, packet_better, better, max),
+            (c[0], 0)
+        );
+        let pmax = |a: i64, b: i64| a.packet_max(b);
+        let c4 = [0x1_0000_0000_i64, 0, 0x1_8000_0000, 0];
+        assert_eq!(redux_packets(&c4, 2, true, pmax, max), 0x1_0000_0000);
+        assert_eq!(redux(&c4, 2, true, max), 0x1_8000_0000);
     }
 
     #[test]
