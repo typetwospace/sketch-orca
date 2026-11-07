@@ -8,8 +8,10 @@
 //   test             cargo test --locked
 //   clippy           cargo clippy --locked --all-targets  (the lint flags, -D warnings, go after a --)
 //   fmt              cargo fmt --all                      (--check only checks)
+//   vendor           cargo vendor --locked                (the source step's copy of the crates)
 //
-// The package scripts run them: bun run rs:build, rs:test, rs:clippy, rs:fmt:check. Exit codes:
+// The package scripts run them: bun run rs:build, rs:test, rs:clippy, rs:fmt:check; the pipeline's
+// stage and source steps run build --release and vendor through scripts/lib/rust.ts. Exit codes:
 // cargo's own when cargo ran; 3 when the runner refuses (another Visual Studio, MSVC, SDK or
 // rustc than the pinned ones, or the cargo run was stopped after its time limit); 64 for a command
 // line it does not take (run.ts, EXIT). The cargo run ends at the latest after 45 minutes

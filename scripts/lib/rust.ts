@@ -138,7 +138,7 @@ function isLibtestFlag(arg: string): boolean {
 
 /**
  * The cargo command line for a request, `argv` being what follows the script's name:
- * `<build|test|clippy|fmt> [cargo arguments] [-- arguments for the tool]`.
+ * `<build|test|clippy|fmt|vendor> [cargo arguments] [-- arguments for the tool]`.
  *
  * - Every cargo run gets `--locked`, so the lock file is never changed behind anyone's back
  *   (fmt is the one exception: `cargo fmt` takes no --locked and resolves no dependencies).
