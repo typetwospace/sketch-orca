@@ -767,4 +767,21 @@ void record_stl(Sets &sets)
     record_random(sets);
 }
 
+namespace {
+
+bool run_stl(const Options &options, std::string &error)
+{
+    Sets sets;
+    record_stl(sets);
+    return save(sets, options, "stl.sop1", error);
+}
+
+} // namespace
+
+const Target &target()
+{
+    static const Target t{"stl", false, run_stl};
+    return t;
+}
+
 } // namespace probe

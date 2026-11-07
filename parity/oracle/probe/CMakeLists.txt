@@ -1,11 +1,12 @@
 # Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# sketch-orca-probe: the program that records what the C++ engine's foundations do (main.cpp), built
-# against the parity oracle's build tree with the engine's own compile and link lines. Never run
-# CMake on this by hand: bun scripts/orca.ts parity probe (scripts/lib/parity/probe.ts) reads the
-# lines from the oracle's build.ninja, writes them as response files, and configures this with
-# Ninja and cl, with no Fortran compiler to look for, into <work>/oracle/probe-build:
+# The probe programs: one per probe file of the registry (scripts/lib/parity/probe.ts,
+# PROBE_REGISTRY), each recording what one part of the C++ engine does (main.cpp), built against
+# the parity oracle's build tree with the engine's own compile and link lines. Never run CMake on
+# this by hand: bun scripts/orca.ts parity probe [--only <name>] (scripts/lib/parity/probe.ts)
+# reads the lines from the oracle's build.ninja, writes them as response files, and configures this
+# with Ninja and cl, with no Fortran compiler to look for, into <work>/oracle/probe-build:
 #
 #   PROBE_COMPILE_RSP  the defines, include folders and flags of the engine's cli/config_def.cpp
 #                      (so libslic3r's headers, nlohmann/json.hpp and legacy_keys.inc are found),
@@ -30,6 +31,18 @@ set(CMAKE_CXX_FLAGS "")
 set(CMAKE_CXX_FLAGS_RELEASE "")
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 
-add_executable(sketch-orca-probe main.cpp crt.cpp fmt.cpp stl.cpp tbb.cpp configdef.cpp)
-target_compile_options(sketch-orca-probe PRIVATE "@${PROBE_COMPILE_RSP}")
-target_link_options(sketch-orca-probe PRIVATE "@${PROBE_LINK_RSP}")
+# The registry's names, in its order (test/parity-probe.test.ts holds the two lists equal; added
+# 2026-11-07). Each is a program sketch-orca-probe-<name> of main.cpp, which every program shares,
+# and <name>.cpp, which defines probe::target(), with the .cpp files of a folder <name>/ beside it
+# if the probe has one. So a task that fills a probe changes only its own sources.
+set(PROBE_NAMES crt fmt stl tbb configdef geom qhull mesh cstdio zip xml model arrange placeholder)
+
+add_library(sketch-orca-probe-main OBJECT main.cpp)
+target_compile_options(sketch-orca-probe-main PRIVATE "@${PROBE_COMPILE_RSP}")
+
+foreach(name IN LISTS PROBE_NAMES)
+    file(GLOB extra CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${name}/*.cpp")
+    add_executable(sketch-orca-probe-${name} ${name}.cpp ${extra} $<TARGET_OBJECTS:sketch-orca-probe-main>)
+    target_compile_options(sketch-orca-probe-${name} PRIVATE "@${PROBE_COMPILE_RSP}")
+    target_link_options(sketch-orca-probe-${name} PRIVATE "@${PROBE_LINK_RSP}")
+endforeach()

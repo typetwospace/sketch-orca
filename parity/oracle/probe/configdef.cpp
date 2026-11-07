@@ -163,4 +163,19 @@ std::string record_configdef()
     return out.dump(1, ' ', false, json::error_handler_t::replace) + "\n";
 }
 
+namespace {
+
+bool run_configdef(const probe::Options &options, std::string &error)
+{
+    return save_text(record_configdef(), options, "configdef.json", error);
+}
+
+} // namespace
+
+const probe::Target &target()
+{
+    static const probe::Target t{"configdef", false, run_configdef};
+    return t;
+}
+
 } // namespace probe

@@ -10,8 +10,9 @@
 //
 // sketch-orca-probe: what the C++ engine's foundations do, recorded for the Rust translation's
 // probe gate (parity/SOP1.md, "Probe files"). This header is shared by the probe sources: the SOP1
-// writer, the seeded input generator and the two sets a run writes (the committed subset in the
-// repository's parity/probes/ and the full set in <work>/parity/probes/).
+// writer, the seeded input generator, the two sets a run writes (the committed subset in the
+// repository's parity/probes/ and the full set in <work>/parity/probes/) and the registry's
+// Target, which each probe executable's source defines.
 //
 // Every probe source records its cases into both sets from one generator: the committed set takes
 // the first cases of each record, the full set all of them, so the committed set is a true subset.
@@ -133,7 +134,8 @@ struct File
 };
 
 // The two sets a run writes. `committed` holds the first cases of each record (the repository's
-// parity/probes/, under 8 MB with configdef.json), `full` all of them (<work>/parity/probes/).
+// parity/probes/, within its file's budget: crt, fmt, stl, tbb and configdef.json under 8 MB
+// together, every other file 512 KB at most), `full` all of them (<work>/parity/probes/).
 struct Sets
 {
     File committed;
@@ -194,5 +196,33 @@ void record_stl(Sets &sets);
 void record_tbb(Sets &sets);
 // configdef.json: the engine's ConfigDef and handle_legacy, as JSON text.
 std::string record_configdef();
+
+// What one run of a probe executable is told; main.cpp reads it from the command line.
+struct Options
+{
+    std::string              committed;   // --committed: the committed set's folder
+    std::string              full;        // --full: the full set's folder
+    std::vector<std::string> crt_symbols; // --crt-symbols: the CRT maths functions of the oracle's map
+};
+
+// One probe of the registry (scripts/lib/parity/probe.ts, PROBE_REGISTRY; added 2026-11-07): an
+// executable of its own, sketch-orca-probe-<name>, built from main.cpp and its source <name>.cpp
+// (with the .cpp files of a folder <name>/ beside it, if there is one), that writes one file into
+// both sets. Each probe source defines target(); main.cpp is the same in every executable.
+struct Target
+{
+    const char *name;        // the registry's name: crt, fmt, ..., geom, qhull, ...
+    bool        crt_symbols; // whether it takes --crt-symbols
+    // Records and writes the probe's file into both folders; false, with `error`, when it cannot.
+    bool (*run)(const Options &options, std::string &error);
+};
+const Target &target();
+
+// Writes `sets` as `file` into both folders; false, with `error`, when it cannot.
+bool save(Sets &sets, const Options &options, const std::string &file, std::string &error);
+// Writes `text` as `file` into both folders; false, with `error`, when it cannot.
+bool save_text(const std::string &text, const Options &options, const std::string &file, std::string &error);
+// A stub's run, for a probe whose task has not recorded yet: <name>.sop1 with HEAD and PRUN only.
+bool write_stub(const std::string &name, const Options &options, std::string &error);
 
 } // namespace probe

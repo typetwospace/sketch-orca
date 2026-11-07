@@ -434,4 +434,20 @@ bool record_crt(Sets &sets, const std::vector<std::string> &crt_symbols, std::st
     return true;
 }
 
+namespace {
+
+bool run_crt(const Options &options, std::string &error)
+{
+    Sets sets;
+    return record_crt(sets, options.crt_symbols, error) && save(sets, options, "crt.sop1", error);
+}
+
+} // namespace
+
+const Target &target()
+{
+    static const Target t{"crt", true, run_crt};
+    return t;
+}
+
 } // namespace probe

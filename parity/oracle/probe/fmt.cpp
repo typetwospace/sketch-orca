@@ -502,4 +502,21 @@ void record_fmt(Sets &sets)
     record_parsing(sets);
 }
 
+namespace {
+
+bool run_fmt(const Options &options, std::string &error)
+{
+    Sets sets;
+    record_fmt(sets);
+    return save(sets, options, "fmt.sop1", error);
+}
+
+} // namespace
+
+const Target &target()
+{
+    static const Target t{"fmt", false, run_fmt};
+    return t;
+}
+
 } // namespace probe

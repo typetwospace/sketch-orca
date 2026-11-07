@@ -177,14 +177,18 @@ Run again, it keeps what still holds: a change to the patches or to `cli/` makes
 beside the clone and writes only the files that differ into it, so Ninja rebuilds only what they
 touch; another compiler environment or dependency build starts `<work>/oracle/build` over.
 
-`bun run engine parity probe` builds the probe program (`parity/oracle/probe/`) after `parity
-oracle`, into `<work>/oracle/probe-build`. It compiles with the compile line of the oracle's own
-`config_def.cpp` and links with the oracle's link line, both read from `<work>/oracle/build`'s
-`build.ninja` (`scripts/lib/parity/probe.ts`), so it runs the code the engine runs. It is held to
-"No window, no IDE" too: CMake configures it with Ninja for C++ only, `CMAKE_Fortran_COMPILER` set
-to `NOTFOUND`, `BUILD_TESTING` and `EIGEN_BUILD_TESTING` off, and it builds with 2 Ninja jobs; a
-`CompilerIdFortran` folder or a `.vfproj` file in `<work>/oracle/probe-build` before or after the
-build fails it. The program runs hidden, with the oracle's library folders on `PATH`.
+`bun run engine parity probe` builds the probe programs (`parity/oracle/probe/`) after `parity
+oracle`, into `<work>/oracle/probe-build`, and runs them. There is one program per probe file, as
+the registry in `scripts/lib/parity/probe.ts` (`PROBE_REGISTRY`) lists them:
+`sketch-orca-probe-<name>`, from the shared `main.cpp` and the probe's `<name>.cpp`.
+`parity probe --only <name>` builds and runs one of them and writes only its file, with or without
+`--check`. Each compiles with the compile line of the oracle's own `config_def.cpp` and links with
+the oracle's link line, both read from `<work>/oracle/build`'s `build.ninja`, so it runs the code
+the engine runs. They are held to "No window, no IDE" too: CMake configures them with Ninja for
+C++ only, `CMAKE_Fortran_COMPILER` set to `NOTFOUND`, `BUILD_TESTING` and `EIGEN_BUILD_TESTING`
+off, and builds them with 2 Ninja jobs; a `CompilerIdFortran` folder or a `.vfproj` file in
+`<work>/oracle/probe-build` before or after the build fails the run. The programs run hidden, one
+after the other, with the oracle's library folders on `PATH`.
 
 ## OpenSSL
 

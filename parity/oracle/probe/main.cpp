@@ -8,19 +8,25 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
 // (LICENSE) for more details.
 //
-// sketch-orca-probe: records what the C++ engine's foundations do (the static UCRT's maths, MSVC
-// 14.42's casts, printf, to_chars, iostreams and parsers, the STL's algorithms, containers and
-// random numbers, oneTBB 2021.5.0's partitioners, and Orca's ConfigDef), built against the
-// oracle's build tree and the engine's dependency build with the engine's flags (CMakeLists.txt),
-// so the Rust translation can be held to it (parity/SOP1.md, crates/*/tests/probes.rs). It never
-// ships. bun scripts/orca.ts parity probe builds and runs it:
+// The probe programs: they record what the C++ engine's foundations and libraries do (the static
+// UCRT's maths, MSVC 14.42's casts, printf, to_chars, iostreams and parsers, the STL's algorithms,
+// containers and random numbers, oneTBB 2021.5.0's partitioners, Orca's ConfigDef, and from phase
+// O2 the geometry and the rest of what the model's reading reaches), built against the oracle's
+// build tree and the engine's dependency build with the engine's flags (CMakeLists.txt), so the
+// Rust translation can be held to it (parity/SOP1.md, crates/*/tests/probes.rs). They never ship.
 //
-//   sketch-orca-probe --committed <folder> --full <folder> --crt-symbols <file>
+// Each probe of the registry (scripts/lib/parity/probe.ts, PROBE_REGISTRY) is a program of its
+// own, sketch-orca-probe-<name>, built from this file and the probe's source, which defines
+// probe::target() (probe.hpp). bun scripts/orca.ts parity probe [--only <name>] builds and runs
+// them:
 //
-// It writes crt.sop1, fmt.sop1, stl.sop1, tbb.sop1 and configdef.json into both folders: the
-// committed subset and the full set (probe.hpp). --crt-symbols names the CRT maths functions of
-// the oracle's linker map, one per line. Exit 0 when every file is written, 2 for a command line
-// it does not take, 3 when a probe fails.
+//   sketch-orca-probe-<name> --committed <folder> --full <folder> [--crt-symbols <file>]
+//
+// Each writes its one file into both folders: the committed subset and the full set (probe.hpp).
+// --crt-symbols, which only the crt probe takes and needs, names the CRT maths functions of the
+// oracle's linker map, one per line. Exit 0 when the file is written, 2 for a command line it does
+// not take, 3 when the probe fails. Before 2026-11-07 one program, sketch-orca-probe, wrote the
+// first five files.
 #include <cstdio>
 #include <fstream>
 #include <map>
@@ -63,15 +69,15 @@ void head(Sets &sets, const std::string &name)
     }
 }
 
-} // namespace probe
+bool save(Sets &sets, const Options &options, const std::string &file, std::string &error)
+{
+    if (sets.committed.write(options.committed + "/" + file) && sets.full.write(options.full + "/" + file))
+        return true;
+    error = "cannot write " + file;
+    return false;
+}
 
 namespace {
-
-int usage(const char *message)
-{
-    std::fprintf(stderr, "sketch-orca-probe: %s\nusage: sketch-orca-probe --committed <folder> --full <folder> --crt-symbols <file>\n", message);
-    return 2;
-}
 
 bool write_text(const std::string &path, const std::string &text)
 {
@@ -84,72 +90,71 @@ bool write_text(const std::string &path, const std::string &text)
 
 } // namespace
 
+bool save_text(const std::string &text, const Options &options, const std::string &file, std::string &error)
+{
+    if (write_text(options.committed + "/" + file, text) && write_text(options.full + "/" + file, text))
+        return true;
+    error = "cannot write " + file;
+    return false;
+}
+
+bool write_stub(const std::string &name, const Options &options, std::string &error)
+{
+    Sets sets;
+    head(sets, name);
+    return save(sets, options, name + ".sop1", error);
+}
+
+} // namespace probe
+
+namespace {
+
+int usage(const probe::Target &t, const std::string &message)
+{
+    std::fprintf(stderr, "sketch-orca-probe-%s: %s\nusage: sketch-orca-probe-%s --committed <folder> --full <folder>%s\n", t.name, message.c_str(), t.name,
+                 t.crt_symbols ? " --crt-symbols <file>" : "");
+    return 2;
+}
+
+} // namespace
+
 int main(int argc, char **argv)
 {
+    const probe::Target &t = probe::target();
     std::map<std::string, std::string> opts;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a.rfind("--", 0) != 0 || i + 1 >= argc)
-            return usage(("unexpected argument " + a).c_str());
+            return usage(t, "unexpected argument " + a);
         opts[a.substr(2)] = argv[++i];
     }
-    for (const char *need : {"committed", "full", "crt-symbols"})
-        if (!opts.count(need))
-            return usage((std::string("--") + need + " is missing").c_str());
-    if (opts.size() != 3)
-        return usage("unknown option");
+    std::vector<std::string> need = {"committed", "full"};
+    if (t.crt_symbols)
+        need.push_back("crt-symbols");
+    for (const std::string &n : need)
+        if (!opts.count(n))
+            return usage(t, "--" + n + " is missing");
+    if (opts.size() != need.size())
+        return usage(t, "unknown option");
 
-    std::vector<std::string> symbols;
-    {
+    probe::Options options;
+    options.committed = opts["committed"];
+    options.full      = opts["full"];
+    if (t.crt_symbols) {
         std::ifstream in(opts["crt-symbols"]);
         if (!in)
-            return usage(("cannot read " + opts["crt-symbols"]).c_str());
+            return usage(t, "cannot read " + opts["crt-symbols"]);
         for (std::string line; std::getline(in, line);) {
             while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
                 line.pop_back();
             if (!line.empty())
-                symbols.push_back(line);
+                options.crt_symbols.push_back(line);
         }
     }
 
-    const std::string committed = opts["committed"], full = opts["full"];
-    const auto save = [&](probe::Sets &sets, const char *name) {
-        const bool ok = sets.committed.write(committed + "/" + name) && sets.full.write(full + "/" + name);
-        if (!ok)
-            std::fprintf(stderr, "sketch-orca-probe: cannot write %s\n", name);
-        return ok;
-    };
-    {
-        probe::Sets sets;
-        std::string error;
-        if (!probe::record_crt(sets, symbols, error)) {
-            std::fprintf(stderr, "sketch-orca-probe: crt: %s\n", error.c_str());
-            return 3;
-        }
-        if (!save(sets, "crt.sop1"))
-            return 3;
-    }
-    {
-        probe::Sets sets;
-        probe::record_fmt(sets);
-        if (!save(sets, "fmt.sop1"))
-            return 3;
-    }
-    {
-        probe::Sets sets;
-        probe::record_stl(sets);
-        if (!save(sets, "stl.sop1"))
-            return 3;
-    }
-    {
-        probe::Sets sets;
-        probe::record_tbb(sets);
-        if (!save(sets, "tbb.sop1"))
-            return 3;
-    }
-    const std::string config = probe::record_configdef();
-    if (!write_text(committed + "/configdef.json", config) || !write_text(full + "/configdef.json", config)) {
-        std::fprintf(stderr, "sketch-orca-probe: cannot write configdef.json\n");
+    std::string error;
+    if (!t.run(options, error)) {
+        std::fprintf(stderr, "sketch-orca-probe-%s: %s\n", t.name, error.c_str());
         return 3;
     }
     return 0;

@@ -1,20 +1,25 @@
-// The probe program (parity/oracle/probe/): it records what the C++ engine's foundations do (the
+// The probe programs (parity/oracle/probe/): they record what the C++ engine's foundations do (the
 // static UCRT's maths, MSVC 14.42's casts, printf, to_chars, iostreams and parsers, the STL's
 // algorithms, containers and random numbers, oneTBB 2021.5.0's split trees, and Orca's ConfigDef)
-// into SOP1 files (parity/SOP1.md, "Probe files") and configdef.json, which the Rust crates'
-// probe tests replay.
+// and, from phase O2, the libraries the model's reading reaches (geometry, meshes, archives,
+// arrangement, the placeholder parser) into SOP1 files (parity/SOP1.md, "Probe files") and
+// configdef.json, which the Rust crates' probe tests replay.
 //
-// It is built against the parity oracle's build tree (run parity oracle first), with the engine's
-// own compile line (that of cli/config_def.cpp, read from the oracle's build.ninja) and link line
+// The registry (PROBE_REGISTRY, 2026-11-07) lists the probes: one program and one file each,
+// sketch-orca-probe-<name> from parity/oracle/probe/main.cpp and <name>.cpp. parity probe builds
+// and runs them all; parity probe --only <name> builds and runs one and writes only its file. Each
+// is built against the parity oracle's build tree (run parity oracle first), with the engine's own
+// compile line (that of cli/config_def.cpp, read from the oracle's build.ninja) and link line
 // (sketch-orca.exe's libraries and flags), the oracle's compiled gui_symbols.cpp, with CMake and
 // Ninja into <work>/oracle/probe-build: no Fortran compiler is looked for and no IDE project can
-// be made (noide.ts checks the folder after each step). The CRT maths functions it probes are the
-// ones the oracle's linker map lists.
+// be made (noide.ts checks the folder before and after each build). The CRT maths functions the
+// crt probe calls are the ones the oracle's linker map lists.
 //
-// One run writes two sets from the same cases: the full set into <work>/parity/probes and the
-// committed subset into the repository's parity/probes (under PROBE_COMMITTED_MAX_BYTES together).
-// Nothing in them depends on the machine, the time or the folder, so a second run (parity probe
-// --check) must write the same bytes.
+// A run writes two sets from the same cases: the full set into <work>/parity/probes and the
+// committed subset into the repository's parity/probes, each file within its budget (crt, fmt,
+// stl, tbb and configdef.json under PROBE_COMMITTED_MAX_BYTES together, every later file
+// PROBE_FILE_MAX_BYTES at most). Nothing in them depends on the machine, the time or the folder, so
+// a second run (parity probe --check) must write the same bytes.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -22,19 +27,81 @@ import { formatCommand, WIN32_DEP_CMAKE_OPTS } from '../cmake.ts'
 import { compilerEnv as sharedCompilerEnv } from '../depsinputs.ts'
 import { assertNoIdeProjects } from '../noide.ts'
 import { readStamp, sha256File, sha256Text, writeStamp, type ParityPaths, type WorkPaths } from '../paths.ts'
-import { runLogged, StepError, type Log } from '../run.ts'
+import { runLogged, StepError, UsageError, type Log } from '../run.ts'
 import { engineLibraryDirs } from '../smoke.ts'
 import type { Toolchain } from '../toolchain.ts'
 import { ORACLE_EXE, ORACLE_MAP, oracleStateDir } from './oracle.ts'
 import { runHidden, type RunProcess } from './same.ts'
 
-/** The files a probe run writes into each set, in the order it writes them. */
-export const PROBE_FILES = ['crt.sop1', 'fmt.sop1', 'stl.sop1', 'tbb.sop1', 'configdef.json'] as const
-
-/** The committed set's size limit, the five files together. */
+/** The committed size limit of the five foundation files (crt, fmt, stl, tbb, configdef.json) together. */
 export const PROBE_COMMITTED_MAX_BYTES = 8 * 1024 * 1024
 
-export const PROBE_EXE = 'sketch-orca-probe.exe'
+/** The committed size limit of each later probe file, on its own. */
+export const PROBE_FILE_MAX_BYTES = 512 * 1024
+
+/** One probe: a program of its own that writes one file into each set. */
+export interface ProbeEntry {
+  /** The name --only takes: the program is sketch-orca-probe-<name>, its source <name>.cpp. */
+  readonly name: string
+  /** The file it writes into each set. */
+  readonly file: string
+  /** Its committed budget: shared with the other foundation files, or a limit of its own in bytes. */
+  readonly budget: 'foundations' | number
+  /** Whether it takes the oracle map's CRT maths functions (--crt-symbols). */
+  readonly crtSymbols: boolean
+  /** The task that records into it: O1 for the foundations; an O2 task's file is a stub until it runs. */
+  readonly owner: string
+}
+
+const probe = (name: string, owner: string, o: Partial<Pick<ProbeEntry, 'file' | 'budget' | 'crtSymbols'>> = {}): ProbeEntry => ({
+  name,
+  file: o.file ?? `${name}.sop1`,
+  budget: o.budget ?? PROBE_FILE_MAX_BYTES,
+  crtSymbols: o.crtSymbols ?? false,
+  owner,
+})
+
+/**
+ * The probes, in the order a full run builds and runs them. parity/oracle/probe/CMakeLists.txt's
+ * PROBE_NAMES lists the same names in the same order (test/parity-probe.test.ts holds it).
+ */
+export const PROBE_REGISTRY: readonly ProbeEntry[] = [
+  probe('crt', 'O1', { budget: 'foundations', crtSymbols: true }),
+  probe('fmt', 'O1', { budget: 'foundations' }),
+  probe('stl', 'O1', { budget: 'foundations' }),
+  probe('tbb', 'O1', { budget: 'foundations' }),
+  probe('configdef', 'O1', { file: 'configdef.json', budget: 'foundations' }),
+  probe('geom', 'o2-geom'),
+  probe('qhull', 'o2-mesh'),
+  probe('mesh', 'o2-mesh'),
+  probe('cstdio', 'o2-mesh'),
+  probe('zip', 'o2-model'),
+  probe('xml', 'o2-model'),
+  probe('model', 'o2-model'),
+  probe('arrange', 'o2-arrange'),
+  probe('placeholder', 'o2-front'),
+]
+
+/** Every file a full probe run writes into each set, in the order it writes them. */
+export const PROBE_FILES: readonly string[] = PROBE_REGISTRY.map((e) => e.file)
+
+/** The probes a run takes: all of them, or the one --only names (a usage error for a name the registry lacks). */
+export function probeSelection(only?: string): ProbeEntry[] {
+  if (only === undefined) return [...PROBE_REGISTRY]
+  const e = PROBE_REGISTRY.find((x) => x.name === only)
+  if (!e) throw new UsageError(`parity probe --only ${only}: no such probe (${PROBE_REGISTRY.map((x) => x.name).join(', ')})`)
+  return [e]
+}
+
+/** A probe's CMake target and program name. */
+export function probeTarget(name: string): string {
+  return `sketch-orca-probe-${name}`
+}
+
+/** A probe's program, as the build writes it. */
+export function probeExe(name: string): string {
+  return `${probeTarget(name)}.exe`
+}
 
 /** How long one probe run may take before it is ended. */
 export const PROBE_TIMEOUT_MS = 30 * 60 * 1000
@@ -214,16 +281,26 @@ export function probeConfigureArgs(o: { ninja: string; sourceDir: string; buildD
 // ---------------------------------------------------------------- building and running
 
 export interface ProbeBuild {
-  exe: string
+  /** Each built probe's program, by name. */
+  exes: Record<string, string>
   crtSymbols: string[]
   configure: string[]
 }
 
+/** The build line for some probes: every target for a full run, else only theirs. */
+export function probeBuildArgs(build: string, entries: readonly ProbeEntry[]): string[] {
+  const all = entries.length === PROBE_REGISTRY.length && PROBE_REGISTRY.every((e) => entries.includes(e))
+  const targets = all ? [] : ['--target', ...entries.map((e) => probeTarget(e.name))]
+  return ['--build', build.replace(/\\/g, '/'), ...targets, '--', '-j', '2']
+}
+
 /**
- * Builds the probe against the oracle's build tree: reads the compile and link lines from its
- * build.ninja, writes them as response files, configures when they changed and builds with Ninja.
+ * Builds probes against the oracle's build tree: reads the compile and link lines from its
+ * build.ninja, writes them as response files, configures when they changed and builds the
+ * entries' targets (all of them by default) with Ninja.
  */
-export async function buildProbe(o: { t: Toolchain; work: WorkPaths; paths: ParityPaths; engineDir: string; log: Log }): Promise<ProbeBuild> {
+export async function buildProbe(o: { t: Toolchain; work: WorkPaths; paths: ParityPaths; engineDir: string; log: Log; entries?: readonly ProbeEntry[] }): Promise<ProbeBuild> {
+  const entries = o.entries ?? PROBE_REGISTRY
   const say = (m: string) => o.log.line(`parity probe: ${m}`)
   if (o.t.platform !== 'win32') throw new StepError('parity probe records the Windows engine (the static UCRT and MSVC 14.42); run it on Windows')
   const oracleBuild = o.paths.oracleBuild
@@ -262,15 +339,19 @@ export async function buildProbe(o: { t: Toolchain; work: WorkPaths; paths: Pari
     writeStamp(state, 'probe-configure', configureKey)
   }
   assertNoIdeProjects([build], 'parity probe')
-  const buildArgs = ['--build', build.replace(/\\/g, '/'), '--', '-j', '2']
+  const buildArgs = probeBuildArgs(build, entries)
   say(`building: ${formatCommand(o.t.cmake, buildArgs)}`)
   await runLogged(o.t.cmake, buildArgs, { env, log: o.log, cwd: build })
   // Ninja and CXX only, so no step can run devenv.exe; held to it all the same.
   assertNoIdeProjects([build], 'parity probe')
   say('no CompilerIdFortran folder or .vfproj file in the build folder')
-  const exe = join(build, PROBE_EXE)
-  if (!existsSync(exe)) throw new StepError(`the build finished but ${exe} is missing`)
-  return { exe, crtSymbols, configure }
+  const exes: Record<string, string> = {}
+  for (const e of entries) {
+    const exe = join(build, probeExe(e.name))
+    if (!existsSync(exe)) throw new StepError(`the build finished but ${exe} is missing`)
+    exes[e.name] = exe
+  }
+  return { exes, crtSymbols, configure }
 }
 
 function writeIfChanged(path: string, text: string): void {
@@ -278,9 +359,14 @@ function writeIfChanged(path: string, text: string): void {
   writeFileSync(path, text)
 }
 
-/** Runs the probe hidden into two empty folders, with the oracle's libraries on its path. */
+/**
+ * Runs probes hidden, one after the other in the registry's order, with the oracle's libraries on
+ * their path. A full run (every entry) starts from two emptied folders, so they hold exactly the
+ * registry's files; a run of some entries removes only their files first and leaves the rest.
+ */
 export async function runProbe(o: {
-  exe: string
+  entries: readonly ProbeEntry[]
+  exes: Record<string, string>
   crtSymbolsFile: string
   committed: string
   full: string
@@ -288,18 +374,25 @@ export async function runProbe(o: {
   run?: RunProcess
   timeoutMs?: number
 }): Promise<void> {
+  const all = o.entries.length === PROBE_REGISTRY.length && PROBE_REGISTRY.every((e) => o.entries.includes(e))
   for (const d of [o.committed, o.full]) {
-    rmSync(d, { recursive: true, force: true })
+    if (all) rmSync(d, { recursive: true, force: true })
     mkdirSync(d, { recursive: true })
+    if (!all) for (const e of o.entries) rmSync(join(d, e.file), { force: true })
   }
   const env = { ...(process.env as Record<string, string>) }
   const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
   env[pathKey] = [...o.libraryDirs, env[pathKey] ?? ''].join(';')
-  const args = ['--committed', o.committed, '--full', o.full, '--crt-symbols', o.crtSymbolsFile]
-  const r = await (o.run ?? runHidden)(o.exe, args, { cwd: o.full, env: env as never, timeoutMs: o.timeoutMs ?? PROBE_TIMEOUT_MS })
-  if (r.timedOut) throw new StepError(`${o.exe} did not finish within ${(o.timeoutMs ?? PROBE_TIMEOUT_MS) / 60000} minutes`)
-  if (r.code !== 0) throw new StepError(`${formatCommand(o.exe, args)} exited with ${r.code}: ${r.stderr.toString('utf8').trim()}`)
-  for (const d of [o.committed, o.full]) for (const f of PROBE_FILES) if (!existsSync(join(d, f))) throw new StepError(`the probe exited 0 but wrote no ${join(d, f)}`)
+  const timeoutMs = o.timeoutMs ?? PROBE_TIMEOUT_MS
+  for (const e of o.entries) {
+    const exe = o.exes[e.name]
+    if (exe === undefined) throw new StepError(`no program for the probe ${e.name}`)
+    const args = ['--committed', o.committed, '--full', o.full, ...(e.crtSymbols ? ['--crt-symbols', o.crtSymbolsFile] : [])]
+    const r = await (o.run ?? runHidden)(exe, args, { cwd: o.full, env: env as never, timeoutMs })
+    if (r.timedOut) throw new StepError(`${exe} did not finish within ${timeoutMs / 60000} minutes`)
+    if (r.code !== 0) throw new StepError(`${formatCommand(exe, args)} exited with ${r.code}: ${r.stderr.toString('utf8').trim()}`)
+    for (const d of [o.committed, o.full]) if (!existsSync(join(d, e.file))) throw new StepError(`the probe ${e.name} exited 0 but wrote no ${join(d, e.file)}`)
+  }
 }
 
 /** The probe's library folders: the staged oracle's bin (its DLLs) and the dependency build's. */
@@ -307,20 +400,40 @@ export function probeLibraryDirs(work: WorkPaths, paths: Pick<ParityPaths, 'orac
   return engineLibraryDirs(work, join(paths.oracleDist, 'bin', ORACLE_EXE), 'win32')
 }
 
-/** The committed set's size, the files together, and a problem when it is over the limit. */
-export function committedSizeProblem(dir: string, max = PROBE_COMMITTED_MAX_BYTES): string | undefined {
-  const total = PROBE_FILES.reduce((n, f) => n + (existsSync(join(dir, f)) ? statSync(join(dir, f)).size : 0), 0)
-  return total < max ? undefined : `the committed probe files in ${dir} take ${total} bytes, over ${max}`
+/**
+ * The committed files' budgets, for the entries a run wrote: the foundation files (when any of them
+ * ran) under `limits.foundations` together, every other file at most its own budget. One problem
+ * per file or group over its limit; none when all fit.
+ */
+export function committedSizeProblems(
+  dir: string,
+  entries: readonly ProbeEntry[] = PROBE_REGISTRY,
+  limits: { foundations: number } = { foundations: PROBE_COMMITTED_MAX_BYTES },
+): string[] {
+  const size = (f: string) => (existsSync(join(dir, f)) ? statSync(join(dir, f)).size : 0)
+  const problems: string[] = []
+  if (entries.some((e) => e.budget === 'foundations')) {
+    const group = PROBE_REGISTRY.filter((e) => e.budget === 'foundations')
+    const total = group.reduce((n, e) => n + size(e.file), 0)
+    if (total >= limits.foundations) problems.push(`the committed foundation probe files (${group.map((e) => e.file).join(', ')}) in ${dir} take ${total} bytes together, over ${limits.foundations}`)
+  }
+  for (const e of entries) {
+    if (e.budget === 'foundations') continue
+    const n = size(e.file)
+    if (n > e.budget) problems.push(`the committed ${e.file} in ${dir} takes ${n} bytes, over its ${e.budget}`)
+  }
+  return problems
 }
 
-/** Files that differ between two probe folders (missing, extra or other bytes), by name. */
-export function probeDifferences(a: string, b: string): string[] {
+/** Files that differ between two probe folders (missing, extra or other bytes), by name; only `files` when given. */
+export function probeDifferences(a: string, b: string, files?: readonly string[]): string[] {
   const out: string[] = []
-  const names = new Set<string>([...(existsSync(a) ? readdirSync(a) : []), ...(existsSync(b) ? readdirSync(b) : [])])
+  const names = new Set<string>(files ?? [...(existsSync(a) ? readdirSync(a) : []), ...(existsSync(b) ? readdirSync(b) : [])])
   for (const n of [...names].sort()) {
     const pa = join(a, n)
     const pb = join(b, n)
-    if (!existsSync(pa)) out.push(`${n}: only in ${b}`)
+    if (!existsSync(pa) && !existsSync(pb)) out.push(`${n}: in neither ${a} nor ${b}`)
+    else if (!existsSync(pa)) out.push(`${n}: only in ${b}`)
     else if (!existsSync(pb)) out.push(`${n}: only in ${a}`)
     else if (sha256File(pa) !== sha256File(pb)) out.push(`${n}: differs`)
   }

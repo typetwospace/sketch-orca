@@ -8,7 +8,7 @@ The dependency build pins Eigen 5.0.1 (`<work>/deps/dep_Eigen-prefix/src/dep_Eig
 
 ## Probe gate
 
-`tests/probes.rs` replays the records of `geom.sop1` (`parity/SOP1.md`, "Probe files"), which `bun run engine parity probe --only <name>` writes from the C++ engine's own build: the committed subset in `parity/probes/` by default, the full set with `SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes`. While a file is a stub (HEAD and PRUN only) the test passes trivially; a file with records and no replay fails it.
+`tests/probes.rs` replays the records of `geom.sop1` (`parity/SOP1.md`, "Probe files"), which `bun run engine parity probe --only geom` writes from the C++ engine's own build: the committed subset in `parity/probes/` by default, the full set with `SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes`. While a file is a stub (HEAD and PRUN only) the test passes trivially; a file with records and no replay fails it.
 
 Part of the Rust translation of sketch-orca (the workspace in the repository root; see the
 repository's `README.md`, `BUILDING.md` and `CONTRIBUTING.md`). Licence: AGPL-3.0-only; the code

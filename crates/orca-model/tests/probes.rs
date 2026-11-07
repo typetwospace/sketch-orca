@@ -8,12 +8,24 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
 // (LICENSE) for more details.
 
-//! The probe gate for orca-model: the records of `model.sop1` (`parity/SOP1.md`, "Probe files").
+//! The probe gate for orca-model: the records of `model.sop1` (`parity/SOP1.md`, "Probe files"),
+//! from the committed subset (`parity/probes/`), or from the full set when
+//! `SKETCH_ORCA_PROBES_DEEP` names its folder (`<work>/parity/probes`).
 //!
-//! The probe registry (`bun run engine parity probe --only <name>`) writes the file; until the
-//! o2-model task records there, it is a stub and this test has nothing to replay.
+//! The o2-model task records there and replays the records here. Until then the file is a stub
+//! (HEAD and PRUN only), and this test fails as soon as it holds a record nothing replays (added
+//! 2026-11-07).
+
+use orca_probe::load_probe;
 
 #[test]
-fn model_probe_has_nothing_to_replay_yet() {
+fn model_probe_holds_no_record_without_a_replay() {
     assert_eq!(orca_model::NAME, "orca-model");
+    let file = load_probe("model").unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        file.records.is_empty(),
+        "{}: {} records, and orca-model replays none yet: replay them in tests/probes.rs",
+        file.path.display(),
+        file.records.len()
+    );
 }

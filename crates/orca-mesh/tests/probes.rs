@@ -9,12 +9,35 @@
 // (LICENSE) for more details.
 
 //! The probe gate for orca-mesh: the records of `mesh.sop1` and `cstdio.sop1` (`parity/SOP1.md`,
-//! "Probe files").
+//! "Probe files"), from the committed subset (`parity/probes/`), or from the full set when
+//! `SKETCH_ORCA_PROBES_DEEP` names its folder (`<work>/parity/probes`).
 //!
-//! The probe registry (`bun run engine parity probe --only <name>`) writes the file; until the
-//! o2-mesh task records there, it is a stub and this test has nothing to replay.
+//! The o2-mesh task records there and replays the records here. Until then the files are stubs
+//! (HEAD and PRUN only), and this test fails as soon as one holds a record nothing replays (added
+//! 2026-11-07).
+
+use orca_probe::load_probe;
 
 #[test]
-fn mesh_probe_has_nothing_to_replay_yet() {
+fn mesh_probe_holds_no_record_without_a_replay() {
     assert_eq!(orca_mesh::NAME, "orca-mesh");
+    let file = load_probe("mesh").unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        file.records.is_empty(),
+        "{}: {} records, and orca-mesh replays none yet: replay them in tests/probes.rs",
+        file.path.display(),
+        file.records.len()
+    );
+}
+
+#[test]
+fn cstdio_probe_holds_no_record_without_a_replay() {
+    assert_eq!(orca_mesh::NAME, "orca-mesh");
+    let file = load_probe("cstdio").unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        file.records.is_empty(),
+        "{}: {} records, and orca-mesh replays none yet: replay them in tests/probes.rs",
+        file.path.display(),
+        file.records.len()
+    );
 }

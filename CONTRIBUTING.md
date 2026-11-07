@@ -31,9 +31,17 @@ The maintainers follow these rules for their own changes:
 - Rust code (`crates/`, the translation described in `README.md`) follows these rules as well:
   - Run `bun run rs:build`, `bun run rs:test`, `bun run rs:clippy -- -D warnings` and
     `bun run rs:fmt:check` besides the two above, and format with `bun scripts/rust.ts fmt`.
-    A change to a foundation crate (`orca-crt`, `orca-fmt`, `orca-stl`, `orca-tbb`) also runs
-    the probe gate in the release profile, `bun run rs:test:release -p <crate> --test probes`
-    (`crates/orca-probe/README.md`).
+    A change to a foundation crate (`orca-crt`, `orca-fmt`, `orca-stl`, `orca-tbb`) or to one
+    of phase O2's crates also runs the probe gate in the release profile, `bun run
+    rs:test:release -p <crate> --test probes`, on the committed set and with
+    `SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes` on the full set
+    (`crates/orca-probe/README.md`). A change to a probe program (`parity/oracle/probe/<name>.cpp`)
+    runs `bun run engine parity probe --only <name>` and then the same with `--check`, which must
+    write the same bytes again, and commits the probe's file in `parity/probes/` within its budget:
+    512 KB for each file after the first five, which share 8 MB (`scripts/lib/parity/probe.ts`,
+    `PROBE_REGISTRY`). A new probe is a new entry there, a name in
+    `parity/oracle/probe/CMakeLists.txt`'s `PROBE_NAMES` and a row of `parity/SOP1.md`'s "Probe
+    files"; every record kind it writes is described there.
     Builds are `--locked`: the scripts add it, and `Cargo.lock` is committed. A new crate
     dependency also needs its entry in `NOTICE` (its licence and holders): `stage` ships the
     program, and `source` vendors every crate `Cargo.lock` names, refusing one with no licence

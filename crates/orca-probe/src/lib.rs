@@ -557,11 +557,29 @@ mod tests {
         assert!(parse(&h[..14]).is_err());
     }
 
+    /// The SOP1 files of the probe registry (`scripts/lib/parity/probe.ts`, `PROBE_REGISTRY`): the
+    /// foundations', which hold records, and phase O2's (2026-11-07), stubs until their tasks fill them.
+    const FOUNDATION_PROBES: [&str; 4] = ["crt", "fmt", "stl", "tbb"];
+    const O2_PROBES: [&str; 9] = [
+        "geom",
+        "qhull",
+        "mesh",
+        "cstdio",
+        "zip",
+        "xml",
+        "model",
+        "arrange",
+        "placeholder",
+    ];
+
     #[test]
     fn the_committed_probe_files_carry_their_head_and_prun() {
-        for name in ["crt", "fmt", "stl", "tbb"] {
+        for name in FOUNDATION_PROBES.into_iter().chain(O2_PROBES) {
             let f = load_probe_from(&committed_dir(), ProbeSet::Committed, name).unwrap();
-            assert!(!f.records.is_empty(), "{name}");
+            assert!(
+                !FOUNDATION_PROBES.contains(&name) || !f.records.is_empty(),
+                "{name}"
+            );
             assert!(
                 (194_200_000..194_300_000).contains(&f.prun.msc_full_ver),
                 "{name}: {:?}",

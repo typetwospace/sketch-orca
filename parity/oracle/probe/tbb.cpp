@@ -347,4 +347,21 @@ void record_tbb(Sets &sets)
         run_in_arena(sets, P);
 }
 
+namespace {
+
+bool run_tbb(const Options &options, std::string &error)
+{
+    Sets sets;
+    record_tbb(sets);
+    return save(sets, options, "tbb.sop1", error);
+}
+
+} // namespace
+
+const Target &target()
+{
+    static const Target t{"tbb", false, run_tbb};
+    return t;
+}
+
 } // namespace probe

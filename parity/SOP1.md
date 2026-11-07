@@ -207,21 +207,37 @@ second object's name, `f64` height, `i32` layer.
 
 ## Probe files
 
-The probe program (`parity/oracle/probe/`, built and run by `bun scripts/orca.ts parity probe`,
-`scripts/lib/parity/probe.ts`) writes SOP1 files too, in the same container and values, with
-record kinds of their own. They record what the C++ engine's foundations do, as the engine is
-compiled and linked, for the Rust crates' probe tests. Each run writes two sets from the same
-cases: the full set into `<work>/parity/probes/` and the committed subset into `parity/probes/`
-(the first cases of each record, or the records of fewer sizes, thread counts and formats; under
-8 MB with `configdef.json`). A file is HEAD, PRUN, the records below, END.
+The probe programs (`parity/oracle/probe/`, built and run by `bun scripts/orca.ts parity probe`,
+`scripts/lib/parity/probe.ts`) write SOP1 files too, in the same container and values, with
+record kinds of their own. They record what the C++ engine's foundations and libraries do, as the
+engine is compiled and linked, for the Rust crates' probe tests. Each probe of the registry
+(`PROBE_REGISTRY`, from 2026-11-07) is a program of its own, `sketch-orca-probe-<name>`, that
+writes one file; `parity probe --only <name>` builds and runs one and writes only its file. Each
+run writes two sets from the same cases: the full set into `<work>/parity/probes/` and the
+committed subset into `parity/probes/` (the first cases of each record, or the records of fewer
+sizes, thread counts and formats). The committed files keep to their budgets: the five
+foundation files under 8 MB together, every other file 512 KB at most. A file is HEAD, PRUN, the
+records below, END.
 
-| File | Records |
-| --- | --- |
-| `crt.sop1` | MATH, MATS, CAST, RAND |
-| `fmt.sop1` | PRTF, TOCH, OSTR, TOST, PARS |
-| `stl.sop1` | SORT, VALS, HASH, UMAP, USET, RNGS, SSEQ, SHUF |
-| `tbb.sop1` | TBBA, TBBF, TBBR, TBBO |
-| `configdef.json` | not SOP1: `print_config_def` with every field of each option, the preset sections' keys, and `handle_legacy` on the legacy and defined keys (`configdef.cpp` says what it holds) |
+| File | Program's task | Records |
+| --- | --- | --- |
+| `crt.sop1` | O1 | MATH, MATS, CAST, RAND |
+| `fmt.sop1` | O1 | PRTF, TOCH, OSTR, TOST, PARS |
+| `stl.sop1` | O1 | SORT, VALS, HASH, UMAP, USET, RNGS, SSEQ, SHUF |
+| `tbb.sop1` | O1 | TBBA, TBBF, TBBR, TBBO |
+| `configdef.json` | O1 | not SOP1: `print_config_def` with every field of each option, the preset sections' keys, and `handle_legacy` on the legacy and defined keys (`configdef.cpp` says what it holds) |
+| `geom.sop1` | o2-geom | none yet: a stub (`orca-geom`, `orca-eigen`) |
+| `qhull.sop1` | o2-mesh | none yet: a stub (`orca-qhull`) |
+| `mesh.sop1` | o2-mesh | none yet: a stub (`orca-mesh`) |
+| `cstdio.sop1` | o2-mesh | none yet: a stub (`orca-fmt`'s `stdio` and `scanf`) |
+| `zip.sop1` | o2-model | none yet: a stub (`orca-zip`) |
+| `xml.sop1` | o2-model | none yet: a stub (`orca-xml`) |
+| `model.sop1` | o2-model | none yet: a stub (`orca-model`) |
+| `arrange.sop1` | o2-arrange | none yet: a stub (`orca-arrange`, `orca-exact`) |
+| `placeholder.sop1` | o2-front | none yet: a stub (`orca-placeholder`) |
+
+A stub is HEAD, PRUN and END: the task that fills it adds its records here, and the crate's probe
+test fails as soon as the file holds a record it does not replay.
 
 Inputs come from splitmix64 generators with fixed seeds (`probe.hpp`), so two runs write the same
 bytes (`parity probe --check`). An argument or a result that is a `double` or `float` is its bit
@@ -229,7 +245,8 @@ pattern as a `u64`, a `float`'s zero-extended; an integer result is sign-extende
 
 ### HEAD in a probe file
 
-`str` `probe`, `str` the file (`crt`, `fmt`, `stl`, `tbb`), `i64` -1, `u32` 1.
+`str` `probe`, `str` the probe's name (`crt`, `fmt`, `stl`, `tbb`, `geom` and the rest of the
+table), `i64` -1, `u32` 1.
 
 ### PRUN
 
