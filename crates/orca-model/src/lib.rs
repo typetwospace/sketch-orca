@@ -10,15 +10,30 @@
 
 //! The model and its readers: STL, OBJ and 3MF, Model, BuildVolume and ModelArrange.
 //!
-//! The model as the C++ engine loads and places it: the readers (`Format/STL.cpp`, `OBJ.cpp`,
-//! `objparser.cpp` and `bbs_3mf.cpp` with `miniz_extension.cpp`, on `orca-zip` and `orca-xml`),
-//! `Model.cpp`, `BuildVolume.cpp` and `ModelArrange.cpp`.
+//! The model as the C++ engine loads and places it before slicing:
 //!
-//! The o2-model task of phase O2 fills this crate; its records are in the probe file `model.sop1`,
-//! which `tests/probes.rs` replays.
+//! - [`read`]: `Model::read_from_file` and the STL reader (`Format/STL.cpp`, on `orca-mesh`);
+//! - [`model`]: `Model`, `ModelObject`, `ModelVolume` and `ModelInstance` with their bounding
+//!   boxes, hulls, `ensure_on_bed` and `center_around_origin`;
+//! - [`transformation`]: `Geometry::Transformation`, an instance's or a part's placement;
+//! - [`config`]: `ModelConfig`, an object's or a part's own settings;
+//! - [`facets`]: a part's painting as the 3MF reader loads it;
+//! - [`build_volume`] and [`circle`]: the print volume and whether an instance fits in it;
+//! - [`arrange`]: the arrange polygons, the bed and items' inflation, and the result written back.
 //!
-//! Until that task runs, the crate holds only its name, and `tests/probes.rs` passes trivially
-//! while its probe file is a stub (HEAD and PRUN only).
+//! Every record of the probe file `model.sop1` is rebuilt by `tests/probes.rs` from what this
+//! crate computes. The OBJ and 3MF readers (`OBJ.cpp`, `objparser.cpp`, `bbs_3mf.cpp`, on
+//! `orca-zip` and `orca-xml`) are not translated yet: [`read::read_from_file`] answers them with
+//! [`read::ReadError::NotPorted`].
+
+pub mod arrange;
+pub mod build_volume;
+pub mod circle;
+pub mod config;
+pub mod facets;
+pub mod model;
+pub mod read;
+pub mod transformation;
 
 /// The crate's name, as Cargo has it.
 pub const NAME: &str = "orca-model";

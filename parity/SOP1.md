@@ -273,7 +273,7 @@ records below, END.
 | `cstdio.sop1` | o2-mesh | CSCN, CFIL (`orca-fmt`'s `stdio` and `scanf`) |
 | `zip.sop1` | o2-model | none yet: a stub (`orca-zip`) |
 | `xml.sop1` | o2-model | none yet: a stub (`orca-xml`) |
-| `model.sop1` | o2-model | none yet: a stub (`orca-model`) |
+| `model.sop1` | o2-model | MXFM, MFAC, MCFG, MCIR, MBVL, MLOD, MARP, MTMP (`orca-model`) |
 | `arrange.sop1` | o2-arrange | XI28, XRAT (`orca-exact`); NLOP, NOPT, RTRE, NFPC, NGEO, ARNG (`orca-arrange`) |
 | `placeholder.sop1` | o2-front | PHCF, PHEV (`orca-placeholder`) |
 
@@ -989,6 +989,134 @@ on boxes the CLI's excluded area and prime tower, fixed parts, and excluded and 
 regions. The seeded runs keep to inputs where the C++ is defined and ends (`parity/HAZARDS.md`,
 orca-arrange). The committed set: the 13 and the first 16 seeded of at most five items, an
 accuracy of 0.65 or less and at most 6144 bytes.
+
+### model.sop1's values
+
+The records of `model.sop1` (`parity/oracle/probe/model.cpp`, added 2026-11-07) run under the
+oracle's threading (one thread in an arena of 8) and write each value in its own width. In them a
+matrix is 16 `f64` row by row; a box (`BoundingBoxf3`) is `bool` defined, three `f64` min and three
+max; a scaled box (`BoundingBox`) is `bool` defined and `i64` min x, min y, max x and max y; a
+polygon is a `u64` count and each point's `i64` x and y; a list of points is a `u64` count and each
+point's `f64` x and y; a circle is `f64` centre x, centre y and radius; a configuration dump is a
+`str` of `key=value` and a line feed for each option in key order, each value as `opt_serialize`
+writes it; settings are a `u64` count and each option's `str` key and `str` value
+(`opt_serialize`), which the C++ sets with `set_deserialize_strict`. A bed is the list of points of
+its outline, `f64` height, `u64` the number of extruder areas and each area's list of points and
+`f64` height. `orca-model`'s `tests/probes.rs` rebuilds every record from the Rust and compares it
+whole.
+
+### MXFM
+
+One `Geometry::Transformation`: three `f64` each of an offset, a rotation, a scale and a mirror,
+the matrix a 3MF file could give (a rotation, a scale, sometimes mirrored or sheared, and an
+offset), `str` a text; then of the transformation set from the four with `set_offset`,
+`set_rotation`, `set_scaling_factor` and `set_mirror`: the matrix `get_matrix()`,
+`get_matrix_no_offset()`, three `f64` each of `get_offset()`, `get_rotation()`,
+`get_scaling_factor()` and `get_mirror()`, `bool` `is_left_handed()`; of `Transformation(matrix)`:
+three `f64` each of `get_offset()`, `get_rotation()`, `get_scaling_factor()` and `get_mirror()`,
+`bool` `is_left_handed()`, `get_matrix_no_offset()`; and `transform3d_from_string(text)`. 160
+cases (11 texts, 6 matrices by hand), the committed set the first 40.
+
+### MFAC
+
+One painting through a fresh part's `FacetsAnnotation`: `u64` the number of triangles, each `i32`
+its id and `str` its string (hexadecimal digits, now and then another character), `i32` an id not
+in the list; then the data `set_triangle_from_string` of each leaves (`u64` the number of
+triangles to split and each `i32` triangle and `i32` start in the bit stream, `u64` the number of
+bits and each as `u8`, `u64` the number of used states and each as `u8`), `str`
+`get_triangle_as_string` of each triangle and of the absent one, then the data after `reset()`
+and the last triangle set again. A string that would make `update_used_states` read past the
+stream's last 32-bit word is not recorded (`parity/HAZARDS.md`, orca-model). 60 cases, the
+committed set the first 30.
+
+### MCFG
+
+`ModelConfig::set_deserialize` under `EnableSilent`: `str` key, `str` value, then `u8` 0 and the
+configuration dump, or `u8` 1 and `str` the exception's `what()`. 34 cases (integers, floats,
+percents, booleans, enums, lists, nil, an unknown key, legacy keys), all in the committed set.
+
+### MCIR
+
+The list of points, then `circle_ransac(points, 20, &error)`: the circle and `f64` the error (-1,
+as passed, when there are fewer than three points); when there are points,
+`smallest_enclosing_circle_welzl` of them scaled (`Polygon::new_scale`): the circle. 80 cases
+(random points, round beds of 4 to 153 points rounded to 0.01 or 0.1 or not, ellipses; none, one
+and two points), the committed set the first 24.
+
+### MBVL
+
+One `BuildVolume`: the bed; then `i32` `type()`, `str` `type_name()`, the scaled box
+`bounding_box()`, the box `bounding_volume()`, the polygons `convex_hull()` and `polygon()`, the
+circle `circle()`, the lists of points of the top and bottom chains of the scene's and then the
+bed's decomposition, `u64` `get_extruder_area_count()` and for each extruder volume `bool`
+`same_with_bed`, `i32` type, the scaled box, the box and the circle. Then 24 cases, each the
+matrix, `bool` `may_be_below_bed` and `ignore_bottom`, `u8` `object_state` of a unit cube through
+the matrix cast to floats, and for a rectangle `u8` `volume_state_bbox` of the cube's
+`transformed_bounding_box`. 33 beds (rectangles, circles, convex and L-shaped outlines, extruder
+areas the same as the bed's or not, height 0), the committed set the first 10.
+
+### MLOD
+
+One model file as the command line loads it (`cli/run.cpp`, `load_model`): `str` label, `str` the
+file's name, `str` its bytes; the inputs of the steps after loading: two instances of twelve `f64`
+(offset, scale, rotation, mirror), `bool` `allow_negative_z`, `u64` the number of beds and each
+bed, the settings, three arrange results of `i32` bed, `i64` x and y, `f64` rotation and `i32` item
+id. The file is written under its name to a temporary folder and read with
+`Model::read_from_file(path, ..., LoadModel | AddDefaultInstances)`: `u8` 1 and `str` the
+exception's `what()`, or `u8` 0, each configuration cut to `extruder`, the layer ranges and
+profile cleared, `ensure_on_bed()`, and the model: `u64` the number of objects, each `str` name,
+`bool` `printable`, three `f64` `origin_translation`, the configuration dump, `u64` the number of
+instances and each one's matrix, `u8` `print_volume_state`, `bool` `printable` and `auto_drop` and
+`i32` `arrange_order`, `u64` the number of parts and each one's `str` name, `i32` type, matrix,
+`u64` vertex and face counts and `u64` the hash of its mesh, `bool` it has a hull and then the
+hull's counts and hash, `i32` source object and part, three `f64` source offset, the configuration
+dump and `i32` `get_repaired_errors_count()`. A hash is FNV-1a (64 bits) of `u64` the vertex
+count, each vertex's three `f32`, `u64` the face count and each face's three `i32`. Then `bool`
+every part of the first object has a hull (the command line refuses one without, so the record
+ends there), and of that object: the boxes `bounding_box_approx()` and `bounding_box_exact()`,
+`f64` `min_z()` and `max_z()`, the boxes `instance_bounding_box(0, false)` and `(0, true)`,
+`instance_convex_hull_bounding_box(0, false)` and `(0, true)`, `raw_bounding_box()`,
+`raw_mesh_bounding_box()` and `full_raw_mesh_bounding_box()`, `u64` `facets_count()` and
+`parts_count()`, `f64` `get_instance_min_z(0)` and `get_instance_max_z(0)`, the polygon of the
+instance's `convex_hull_2d()`; the two instances added with `add_instance(offset, scale, rotation,
+mirror)`, and for each of the three its matrix, `instance_bounding_box(i, false)`, `f64` its min and
+max z and its `convex_hull_2d()`; `bounding_box_exact()`; after `ensure_on_bed(allow_negative_z)`
+each instance's three `f64` offset and `f64` `min_z()`; for each bed `u32`
+`Model::update_print_volume_state` and each instance's `u8` state; for each instance the polygon
+of `get_instance_arrange_poly(instance, settings)` (the contour, `i64` translation x and y, `f64`
+rotation, `i32` bed, `u64` the number of filaments and each `i32`, `i32` bed, first-layer bed,
+print, first-layer print and vitrification temperatures and the temperature class, `f64` brim,
+`bool` tree supports, `f64` height, `str` name, `i64` inflation), then the arrange result set and
+`apply()` twice: the matrix, `i32` `arrange_order` and `i32` `is_applied`; `bounding_box_exact()`;
+after `center_around_origin(false)` three `f64` `origin_translation`, each part's three `f64`
+offset and `bounding_box_exact()`. The files: 18 made by hand (boxes on, off, below, longer and
+taller than the bed, two in a file, a triangle, a flat square, a tetrahedron, ASCII with LF and
+CRLF, an `.oltp` file, an upper-case extension, empty, no triangles, cut short, `.step`, no
+extension), 30 seeded boxes (rotated, some with a second), OrcaSlicer's test STL files but
+`20mmbox-CR.stl` and its 21 OBJ meshes as binary STL as Sketch writes `model.stl`
+(`parity/CORPUS.md`). The committed set: the files of 4000 bytes or fewer, of the seeded boxes the
+first 8.
+
+### MARP
+
+The bed and inflation steps of arrangement: the settings (the bed outline, sometimes extruder
+areas, the skirt's loops, height and distance, the draft shield, the line widths and the nozzle
+diameters), the parameters `bool` `is_seq_print`, `f32` `bed_shrink_x`, `bed_shrink_y` and
+`clearance_radius`, `i64` `min_obj_distance`, `f32` `nozzle_height` and `object_skirt_offset`; `u64`
+the number of selected items and each one's polygon, `f64` height, `f64` brim and `bool` tree
+supports; `u64` the number of other items and each one's polygon, `f64` brim, `bool`
+`is_virt_object` and `bool` `is_extrusion_cali_object`. Then the polygons `get_bed_shape(config)`
+and `get_bed_shape(config, false)`; after `update_arrange_params` `f32` `brim_skirt_distance`,
+`bed_shrink_x` and `bed_shrink_y`; the polygon `get_shrink_bedpts`; after
+`update_selected_items_inflation` `i64` `min_obj_distance` and each selected item's `i64`
+inflation; after `update_unselected_items_inflation` each other item's `i64` inflation and its
+polygon. 60 cases, the committed set the first 20.
+
+### MTMP
+
+One record: `u64` the number of filament types and each `str` type and `i32`
+`Print::get_filament_temp_type`; `u64` the number of sets and each set's `u64` count and `i32`
+classes and `i32` `Print::get_compatible_filament_type`.
 
 ## Versions
 

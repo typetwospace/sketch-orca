@@ -110,7 +110,9 @@ translated into Rust. Each file that carries it says what it carries, from which
         unique, the heaps and priority_queue, min and max, the unordered containers and std::hash,
         mersenne_twister_engine, seed_seq, the distributions and shuffle: stl/inc/algorithm,
         xutility, utility, __msvc_heap_algorithms.hpp, queue, xhash, unordered_map, unordered_set,
-        type_traits, xstring and random, and stl/src/vector_algorithms.cpp).
+        type_traits, xstring and random, and stl/src/vector_algorithms.cpp);
+      crates/orca-model/src/circle.rs (std::sample's selection sampling and _Rng_from_urng, as
+        circle_ransac draws its points: stl/inc/algorithm).
     As section 4(d) of the Apache License asks, these are the attribution notices of the
     library's NOTICE.txt that pertain to the code carried here:
 
@@ -317,9 +319,18 @@ orca-arrange (filled by the o2-arrange task, 2026-11-07)
   - OrcaSlicer's src/libslic3r/Arrange.cpp, with its header (src/arrange.rs, and its NfpImpl in
     src/nfp.rs), and Print::is_filaments_compatible of src/libslic3r/Print.cpp (src/arrange.rs).
 
-orca-model (filled by the o2-model task)
-  - OrcaSlicer's src/libslic3r/Model.cpp, BuildVolume.cpp, ModelArrange.cpp, Format/STL.cpp,
-    Format/OBJ.cpp, Format/objparser.cpp and Format/bbs_3mf.cpp, with their headers.
+orca-model (filled by the o2-model task, 2026-11-07)
+  - OrcaSlicer's src/libslic3r/Model.cpp (Model, ModelObject, ModelVolume, ModelInstance and
+    FacetsAnnotation: src/model.rs, facets.rs, read.rs, arrange.rs), BuildVolume.cpp
+    (src/build_volume.rs), ModelArrange.cpp (src/arrange.rs), Format/STL.cpp (src/read.rs),
+    Geometry.cpp's Transformation and transform3d_from_string (src/transformation.rs),
+    Geometry/Circle.cpp (src/circle.rs), TriangleSelector.cpp's TriangleSplittingData
+    (src/facets.rs), Config.cpp's set_deserialize and PrintConfig.cpp's ModelConfig
+    (src/config.rs), and Arrange.cpp's bed and inflation updates, PrintConfig.cpp's get_bed_shape
+    and skirt distance, Print.cpp's filament temperature classes and MaterialType.cpp's table
+    (src/arrange.rs), with their headers. The OBJ and 3MF readers (Format/OBJ.cpp,
+    Format/objparser.cpp and Format/bbs_3mf.cpp) are not carried yet.
+  - The Microsoft C++ Standard Library, as its entry above names it (src/circle.rs).
 
 The staged engine does not carry these crates yet. Of them, sketch-orca-rs links only
 orca-placeholder until the o2-info task links the rest; the licence texts above join its

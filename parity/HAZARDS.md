@@ -640,8 +640,29 @@ convex polygon beds when printing by object, fixed items on the bed, and every t
 
 ### orca-model
 
-The STL, OBJ and 3MF readers, `Model`, `BuildVolume` and `ModelArrange`. Probe file `model.sop1`.
-Filled by o2-model.
+`Model::read_from_file` with the STL reader, `Model` and its objects, parts and instances,
+`Geometry::Transformation`, a part's painting (`FacetsAnnotation`), `ModelConfig`, `BuildVolume`
+with the circle fits, and what the command line does around arrangement (`ModelArrange.cpp`,
+`Arrange.cpp`'s bed and inflation updates). Probe file `model.sop1`: MXFM, MFAC, MCFG, MCIR,
+MBVL, MLOD, MARP and MTMP (`parity/oracle/probe/model.cpp`), which `crates/orca-model/tests/probes.rs`
+replays; every record of both sets matched on 2026-11-07. The OBJ and 3MF readers are not
+translated yet (`read_from_file` answers them with `ReadError::NotPorted`). Filled by o2-model on
+2026-11-07. The hazards it owns:
+
+| What | Where (`src/libslic3r/`) | What the translation does |
+| --- | --- | --- |
+| The CR box (orca-mesh's section): an ASCII STL whose `solid` line passes 255 bytes kills the engine inside `load_stl` | `Format/STL.cpp`, admesh `stlinit.cpp:164-165` | `ReadError::OverlongSolidLine`, which the caller answers as a fault; the probe records no such file |
+| A part of fewer than two triangles gets no convex hull (`ModelVolume`'s constructor computes it from two up), and the C++ dereferences the null hull wherever it reads it (an instance's hull box, the print volume state, the arrange polygon) | `Model.hpp:1074`, `:1152`, `Model.cpp` | `ModelVolume::get_convex_hull` panics. The command line refuses parts of fewer than four facets or a flat box first (`check_solid_objects`), so it never gets there; MLOD records such a file (a single triangle) only up to the loaded model |
+| `TriangleSplittingData::update_used_states` reads the nibble after a `C` (`0b1100`) code with no check: for the stream's last nibble that is past the `vector<bool>`'s size. MSVC keeps the bits past the size zero in the last word (`_Trim`), so there it reads 0; when the stream ends on a 32-bit word it reads the word past the vector's storage (heap memory, undefined) | `TriangleSelector.cpp`, `update_used_states`; the MSVC STL's `vector<bool>` | 0 everywhere. Only a corrupt painting string (its first character `C`) reaches it; MFAC records the in-word case and leaves out a string that would end on a word |
+| `FacetsAnnotation::reset()` clears the triangles and the bit stream but not `used_states` | `Model.cpp:3535-3540` | kept (MFAC: reset, then a triangle set again) |
+| `get_extruders` builds a `TriangleSelector` from the painting and lists each state whose triangles are not empty | `Model.cpp`, `ModelVolume::get_extruders` | the states from 1 up that `used_states` holds, which are the states the bit stream sets on a leaf; the same list for every painting the 3MF reader loads. Not probed with painting (no 3MF reader yet) |
+| `.front()` of an empty result: the hull's expansion for the bed's decompositions (a hull of fewer than three points) and `get_shared_poly`'s intersection of extruder areas that do not overlap | `BuildVolume.cpp`, `PrintConfig.cpp`, `get_shared_poly` | an empty polygon; not probed (no bed of fewer than three points, overlapping extruder areas only) |
+| `smallest_enclosing_circle_welzl` of no points leaves the squared radius unset | `Geometry/Circle.hpp:142-150` | a default circle (radius 0); MCIR records no empty input |
+| `BuildVolume` reads `extruder_printable_heights[index]` for each extruder area, past the heights' end when there are fewer | `BuildVolume.cpp` | panics; the configuration gives one height per area |
+| `circle_ransac` samples with a default-seeded `std::mt19937` and `std::sample` (selection sampling through `_Rng_from_urng`), whose draws the standard leaves to the library | `Geometry/Circle.cpp:111-138`; the MSVC STL's `algorithm` | MSVC's algorithm (`circle.rs`, which carries it); probed (MCIR, MBVL round beds) |
+| `opt_float`, `opt_int` and `get_config_value<...>(...)->value` on a missing option dereference a null pointer (`get_real_skirt_dist`, `get_instance_arrange_poly`'s `enable_support` and `support_type`) | `PrintConfig.cpp`, `ModelArrange.cpp` | panics naming the option; the command line's configuration holds every option |
+| A matrix whose linear part is not finite has no SVD (`computeRotationScaling`), where Eigen computes with an unset one | `Geometry.cpp:420-440` | NaN matrices; no reader gives such a matrix to the front end |
+| Object ids and timestamps (`ObjectBase`, `ObjectWithTimestamp`) | `ObjectID.hpp` | not kept: the command line's loading never reads them. Open for phase O4 (the 3MF writer and the plate data use them) |
 
 ## What the probe gate and the first record found (2026-11-06)
 
