@@ -241,7 +241,10 @@ orca-qhull (filled by the o2-mesh task)
     the Qhull licence (licenses/Qhull.txt). As that licence asks: this is a modified version of
     Qhull, translated into Rust by the sketch-orca authors from 2026-11-07 so that sketch-orca-rs
     computes the same hulls without the C code, and the original source code may be obtained from
-    http://www.qhull.org.
+    http://www.qhull.org. The translation (src/) keeps only what its_convex_hull's run reaches:
+    the "Qt" option with Qhull's default merging, a 3-d hull and no output but the facets.
+  - OrcaSlicer's src/libslic3r/TriangleMesh.cpp: the walk of Qhull's facets in its_convex_hull,
+    repeated in tests/probes.rs.
 
 orca-mesh (filled by the o2-mesh task)
   - ADMesh, Copyright (C) 1995, 1996 Anthony D. Martin and Copyright (C) 2013, 2014 several

@@ -8,14 +8,22 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
 // (LICENSE) for more details.
 
-//! The records admesh and `TriangleMesh` log through `BOOST_LOG_TRIVIAL(severity) << ...`.
+//! The records admesh and `TriangleMesh` log through `BOOST_LOG_TRIVIAL(severity) << ...`, and
+//! the text the C++ writes straight to `std::cerr`.
 //!
-//! The C++ engine sends them to Boost.Log, whose one sink (`cli/main.cpp`, `log_to_stderr`) prints
-//! `[<severity>] <message>` on stderr for the records at or above the command line's level
-//! (`SKETCH_ORCA_LOG_LEVEL`, 1 by default: error and fatal). Here a record goes to the sink set
-//! with [`set_sink`], and nowhere until one is set: the program that runs the crate sets one that
-//! prints as the engine prints. The messages are the C++ engine's, word for word.
+//! The C++ engine sends the records to Boost.Log, whose one sink (`cli/main.cpp`,
+//! `log_to_stderr`) prints `[<severity>] <message>` on stderr for the records at or above the
+//! command line's level (`SKETCH_ORCA_LOG_LEVEL`, 1 by default: error and fatal). Here a record
+//! goes to the sink set with [`set_sink`], and nowhere until one is set: the program that runs the
+//! crate sets one that prints as the engine prints. The messages are the C++ engine's, word for
+//! word.
+//!
+//! `std::cerr` takes no level: `~Qhull` writes Qhull's messages there after a hull that succeeded
+//! (`its_convex_hull`). [`write_stderr`] sends that text to the sink set with [`set_stderr_sink`],
+//! or else to the process's stderr as the C++ program's text-mode stream writes it, each line
+//! feed as a carriage return and a line feed on Windows.
 
+use std::io::Write;
 use std::sync::Mutex;
 
 /// `boost::log::trivial::severity_level`.
@@ -70,5 +78,41 @@ pub fn log(severity: Severity, message: &str) {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(sink) = guard.as_mut() {
         sink(severity, message);
+    }
+}
+
+/// Where the text written to `std::cerr` goes, as the C++ writes it (line feeds untranslated).
+pub type StderrSink = Box<dyn FnMut(&str) + Send>;
+
+static STDERR_SINK: Mutex<Option<StderrSink>> = Mutex::new(None);
+
+/// Sets where [`write_stderr`] sends its text (`None`: the process's stderr, as at the start) and
+/// returns the sink set before.
+pub fn set_stderr_sink(sink: Option<StderrSink>) -> Option<StderrSink> {
+    let mut guard = STDERR_SINK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    std::mem::replace(&mut *guard, sink)
+}
+
+/// `std::cerr << text`: to the sink if one is set, or else to the process's stderr, each line
+/// feed as a carriage return and a line feed on Windows (`std::cerr` writes through the C
+/// runtime's `stderr`, a text-mode stream). A failed write is not reported, as `std::cerr` sets
+/// only its own state.
+pub fn write_stderr(text: &str) {
+    let mut guard = STDERR_SINK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(sink) = guard.as_mut() {
+        sink(text);
+    } else {
+        let bytes = if cfg!(windows) {
+            text.replace('\n', "\r\n")
+        } else {
+            text.to_string()
+        };
+        let mut err = std::io::stderr().lock();
+        let _ = err.write_all(bytes.as_bytes());
+        let _ = err.flush();
     }
 }

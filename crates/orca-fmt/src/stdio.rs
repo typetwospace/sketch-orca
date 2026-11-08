@@ -32,6 +32,8 @@
 //!
 //! C's `stdout` is here too: [`stdout_write`] is where the engine's `printf` output goes (admesh's
 //! `stl_write_facet`), the process's standard output unless a sink is set ([`set_stdout_sink`]).
+//! `stdout` is a text-mode stream, so on Windows each line feed reaches the process's output as a
+//! carriage return and a line feed; a sink gets the bytes as `printf` writes them.
 
 use std::io::Write;
 use std::path::Path;
@@ -326,9 +328,16 @@ pub fn stdout_write(bytes: &[u8]) {
     if let Some(sink) = guard.as_mut() {
         sink(bytes);
     } else {
+        let mut text = Vec::with_capacity(bytes.len());
+        for &b in bytes {
+            if b == b'\n' && cfg!(windows) {
+                text.push(b'\r');
+            }
+            text.push(b);
+        }
         let mut out = std::io::stdout().lock();
         // C's printf ignores a failed write too: admesh does not check what printf returns.
-        let _ = out.write_all(bytes);
+        let _ = out.write_all(&text);
         let _ = out.flush();
     }
 }

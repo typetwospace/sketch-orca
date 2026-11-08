@@ -17,7 +17,9 @@
 //! header length, each operation's parameters), and the two are compared whole; a difference is
 //! named by the field it falls in. MCAS holds a hash of admesh's state after each repair step;
 //! MSTD (the full set only, meshes of 24 facets or fewer) holds the states themselves, so there a
-//! difference is named down to the facet or the neighbour entry. Filled by o2-mesh (2026-11-07).
+//! difference is named down to the facet or the neighbour entry. The 3D convex hulls of
+//! `qhull.sop1` (QHUL) are replayed here as well, through `its_convex_hull` and
+//! `TriangleMesh::convex_hull_3d`. Filled by o2-mesh (2026-11-07).
 
 use orca_eigen::{Mat3, Mat4, Matrix3d, Transform3d, Vec3d, Vec3f};
 use orca_geom::bounding_box::BoundingBoxf3;
@@ -757,4 +759,91 @@ fn repair_steps_leave_admesh_as_the_engine_leaves_it() {
         return;
     }
     m.assert_none("MSTD");
+}
+
+/// The 3D convex hulls of `qhull.sop1` (`parity/SOP1.md`, QHUL) through this crate's
+/// `its_convex_hull` and `TriangleMesh::convex_hull_3d`: the vertices, the triangles and the
+/// count of face properties as recorded, and the text `~Qhull` wrote to `std::cerr`, here caught
+/// by the stderr sink. `orca-qhull`'s own probe test replays the same records with the walk
+/// written out; this one proves the walk `orca-mesh` runs.
+#[test]
+fn convex_hulls_through_its_convex_hull_are_the_engines() {
+    use std::sync::{Arc, Mutex};
+    let file = load_probe("qhull").unwrap_or_else(|e| panic!("{e}"));
+    let caught = Arc::new(Mutex::new(String::new()));
+    let sink = Arc::clone(&caught);
+    let old = orca_mesh::log::set_stderr_sink(Some(Box::new(move |text| {
+        sink.lock().expect("the sink's text").push_str(text);
+    })));
+    orca_mesh::log::set_sink(None);
+    let mut m = Mismatches::default();
+    for rec in file.of_kind("QHUL") {
+        let mut r = rec.reader();
+        let label = r.str().unwrap_or_else(|e| panic!("{e}"));
+        let pts: Vec<Vec3f> = r
+            .vec(|r| Ok(Vec3f::new(r.f32()?, r.f32()?, r.f32()?)))
+            .unwrap_or_else(|e| panic!("{label}: {e}"));
+        let want_vertices: Vec<Vec3f> = r
+            .vec(|r| Ok(Vec3f::new(r.f32()?, r.f32()?, r.f32()?)))
+            .unwrap_or_else(|e| panic!("{label}: {e}"));
+        let want_indices = r
+            .vec(|r| Ok([r.i32()?, r.i32()?, r.i32()?]))
+            .unwrap_or_else(|e| panic!("{label}: {e}"));
+        let want_properties = r.u64().unwrap_or_else(|e| panic!("{label}: {e}"));
+        let want_cerr = r
+            .bytes()
+            .unwrap_or_else(|e| panic!("{label}: {e}"))
+            .to_vec();
+        r.finish(&label).unwrap_or_else(|e| panic!("{e}"));
+
+        caught.lock().expect("the sink's text").clear();
+        let its = orca_mesh::its::its_convex_hull(&pts);
+        let cerr = std::mem::take(&mut *caught.lock().expect("the sink's text"));
+        let bits = |v: &[Vec3f]| -> Vec<[u32; 3]> {
+            v.iter()
+                .map(|p| [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()])
+                .collect()
+        };
+        let indices: Vec<[i32; 3]> = its.indices.iter().map(|f| [f[0], f[1], f[2]]).collect();
+        m.check(bits(&its.vertices) == bits(&want_vertices), || {
+            format!(
+                "{label}: {} vertices here, {} recorded, or another vertex",
+                its.vertices.len(),
+                want_vertices.len()
+            )
+        });
+        m.check(indices == want_indices, || {
+            format!(
+                "{label}: {} triangles here, {} recorded, or another triangle",
+                indices.len(),
+                want_indices.len()
+            )
+        });
+        m.check(its.properties.len() as u64 == want_properties, || {
+            format!(
+                "{label}: {} face properties here, {want_properties} recorded",
+                its.properties.len()
+            )
+        });
+        m.check(cerr.as_bytes() == want_cerr.as_slice(), || {
+            format!(
+                "{label}: std::cerr {cerr:?} here, {:?} recorded",
+                String::from_utf8_lossy(&want_cerr)
+            )
+        });
+
+        // convex_hull_3d is TriangleMesh(its_convex_hull(its)): the same set, with its
+        // statistics taken from it.
+        let mesh = TriangleMesh::from_its(IndexedTriangleSet::new(Vec::new(), pts.clone()));
+        let hull = mesh.convex_hull_3d();
+        caught.lock().expect("the sink's text").clear();
+        m.check(
+            bits(&hull.its.vertices) == bits(&want_vertices)
+                && hull.its.indices == its.indices
+                && hull.stats().number_of_facets as usize == want_indices.len(),
+            || format!("{label}: convex_hull_3d is not its_convex_hull's mesh"),
+        );
+    }
+    orca_mesh::log::set_stderr_sink(old);
+    m.assert_none("QHUL through its_convex_hull");
 }

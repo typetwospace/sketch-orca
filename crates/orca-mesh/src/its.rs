@@ -11,7 +11,7 @@
 // Carries OrcaSlicer code: the indexed_triangle_set helpers of src/libslic3r/TriangleMesh.cpp and
 // TriangleMesh.hpp (its_volume, its_flip_triangles, its_reverse_all_facets, its_merge,
 // bounding_box, VertexFaceIndex, its_face_neighbors, its_num_open_edges, the face normals,
-// its_collect_mesh_projection_points_above), src/libslic3r/MeshSplitImpl.hpp
+// its_collect_mesh_projection_points_above, its_convex_hull), src/libslic3r/MeshSplitImpl.hpp
 // (create_face_neighbors_index, NeighborVisitor, its_split, its_is_splittable,
 // its_number_of_patches) and the its_transform templates of deps_src/admesh/stl.h, of OrcaSlicer
 // v2.4.2, translated on 2026-11-07. Copyright the OrcaSlicer authors, the BambuStudio authors
@@ -29,6 +29,10 @@
 //! serial arena, as the parity oracle runs the engine, the leaves run left to right and give the
 //! same index; in a parallel arena faces race to claim a neighbour's edge as they race in the C++
 //! engine, here through atomics (`parity/HAZARDS.md`, orca-mesh).
+//!
+//! The 3D convex hull ([`its_convex_hull`]) is Qhull's (`orca-qhull`, `runQhull` with `Qt`): the
+//! triangles in the order Qhull lists its facets, each turned to face the way Qhull's normal does,
+//! and the vertices numbered as the triangles first use them.
 
 use std::sync::atomic::{AtomicI32, Ordering};
 
@@ -39,6 +43,7 @@ use orca_geom::polygon::Polygon;
 use orca_tbb::{BlockedRange, Partitioner};
 
 use crate::admesh::{IndexedTriangleSet, StlTriangleVertexIndices, StlVertex};
+use crate::log::{Severity, log, write_stderr};
 
 /// `its_triangle`: a face's three vertices.
 pub type ItsTriangle = [StlVertex; 3];
@@ -643,4 +648,87 @@ pub fn its_convex_hull_2d_above_matrix(its: &IndexedTriangleSet, m: &Mat3<f32>, 
     let mut all_pts = Points::new();
     its_collect_mesh_projection_points_above(its, |p| m.mul_vec(p), z, &mut all_pts);
     orca_geom::convex_hull::convex_hull(all_pts)
+}
+
+/// `its_convex_hull(pts)`: the 3D convex hull of the points, by Qhull
+/// (`runQhull("", 3, n, points, "Qt")`, the points as `double`s). For each of Qhull's facets in
+/// its list order, the vertices take indices in the order they first appear (each the point as a
+/// `float` again), and a facet of three becomes a triangle, whose vertex order is swapped when
+/// its normal, `(v1 - v0) x (v2 - v1)` in `float`, points against Qhull's (the dot product in
+/// `double`). When Qhull throws (fewer than 4 points, coplanar points, points that are not
+/// finite), the error is logged and the set is empty; when it succeeds with a message (the
+/// narrow-hull warning), `~Qhull` writes it to `std::cerr` ([`write_stderr`]) after the walk.
+#[must_use]
+pub fn its_convex_hull(pts: &[Vec3f]) -> IndexedTriangleSet {
+    let mut dst_vertices: Vec<Vec3f> = Vec::new();
+    let mut dst_facets: Vec<Vec3i32> = Vec::new();
+    if !pts.is_empty() {
+        // REALfloat is 0: the points are copied into doubles.
+        let src_vertices: Vec<[f64; 3]> = pts
+            .iter()
+            .map(|v| [f64::from(v[0]), f64::from(v[1]), f64::from(v[2])])
+            .collect();
+        let Ok(hull) = orca_qhull::convex_hull(&src_vertices) else {
+            log(
+                Severity::Error,
+                "its_convex_hull: Unable to create convex hull",
+            );
+            // The thrown QhullError took Qhull's messages: ~Qhull prints nothing.
+            return IndexedTriangleSet::default();
+        };
+        // Map of Qhull's vertex id to the vertex's index in dst_vertices.
+        let mut map_dst_vertices: Vec<i32> = Vec::new();
+        for facet in &hull.facets {
+            let mut indices = [0i32; 3];
+            let mut cnt = 0usize;
+            for vertex in &facet.vertices {
+                let id = vertex.id as usize;
+                if id >= map_dst_vertices.len() {
+                    map_dst_vertices.resize((id + 1).next_power_of_two(), -1);
+                }
+                let mut i = map_dst_vertices[id];
+                if i == -1 {
+                    i = i32::try_from(dst_vertices.len()).expect("fewer than 2^31 vertices");
+                    map_dst_vertices[id] = i;
+                    let pt = src_vertices[vertex.point];
+                    #[allow(clippy::cast_possible_truncation)]
+                    dst_vertices.push(Vec3f::new(pt[0] as f32, pt[1] as f32, pt[2] as f32));
+                }
+                // A fourth vertex would be written past the end of the C++'s Vec3i32; after
+                // Qt every facet has three, so it never is.
+                if cnt < 3 {
+                    indices[cnt] = i;
+                }
+                let at = cnt;
+                cnt += 1;
+                if at == 3 {
+                    break;
+                }
+            }
+            if cnt == 3 {
+                // Qhull sorts a facet's vertices by id, not by the facet's normal.
+                let v = |k: usize| dst_vertices[indices[k] as usize];
+                let n = (v(1) - v(0)).cross(&(v(2) - v(1)));
+                let n2 = facet.normal;
+                let d =
+                    f64::from(n.x()) * n2[0] + f64::from(n.y()) * n2[1] + f64::from(n.z()) * n2[2];
+                if d < 0.0 {
+                    indices.swap(1, 2);
+                }
+                dst_facets.push(Vec3i32::new(indices[0], indices[1], indices[2]));
+            }
+        }
+        // ~Qhull.
+        if !hull.message.is_empty() {
+            write_stderr("\nQhull output at end\n");
+            write_stderr(&hull.message);
+        }
+    }
+    IndexedTriangleSet::new(dst_facets, dst_vertices)
+}
+
+/// `its_convex_hull(its)`: the 3D convex hull of the set's vertices.
+#[must_use]
+pub fn its_convex_hull_its(its: &IndexedTriangleSet) -> IndexedTriangleSet {
+    its_convex_hull(&its.vertices)
 }

@@ -51,9 +51,9 @@ use crate::admesh::util::{
 };
 use crate::admesh::{IndexedTriangleSet, StlFile, StlVertex, times_minus_one};
 use crate::its::{
-    bounding_box, its_face_neighbors, its_flip_triangles, its_is_splittable, its_merge,
-    its_num_open_edges, its_number_of_patches_with, its_split, its_transform, its_transform_matrix,
-    its_volume,
+    bounding_box, its_convex_hull, its_face_neighbors, its_flip_triangles, its_is_splittable,
+    its_merge, its_num_open_edges, its_number_of_patches_with, its_split, its_transform,
+    its_transform_matrix, its_volume,
 };
 use crate::log::{Severity, log};
 
@@ -559,6 +559,13 @@ impl TriangleMesh {
             .map(|v| Point::new_scale(f64::from(v[0]), f64::from(v[1])))
             .collect();
         orca_geom::convex_hull::convex_hull(pp)
+    }
+
+    /// `convex_hull_3d()`: the mesh of the vertices' 3D convex hull ([`its_convex_hull`]), with
+    /// its statistics. Qhull's hull is often not manifold; the C++ does not check it either.
+    #[must_use]
+    pub fn convex_hull_3d(&self) -> TriangleMesh {
+        TriangleMesh::from_its(its_convex_hull(&self.its.vertices))
     }
 
     /// `bounding_box()`: the stored box, always defined.

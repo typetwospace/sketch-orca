@@ -514,8 +514,25 @@ The hazards it owns:
 
 ### orca-qhull
 
-Qhull 2015.2 (`libqhull_r` 7.2.0 and `libqhullcpp`), with its `qsort` calls through `orca-crt`'s
-`qsort`, the static UCRT's own. Probe file `qhull.sop1`. Filled by o2-mesh.
+Qhull 2015.2 (`libqhull_r` 7.2.0 and `libqhullcpp`, built as `qhullstatic` from
+`deps_src/qhull`), the one run the engine makes: `its_convex_hull`'s `runQhull("", 3, n, points,
+"Qt")` (`TriangleMesh.cpp:1363`), with Qhull's default pre-merge (`C-0`) and the triangulation of
+`Qt` (`crates/orca-qhull/README.md`). Its `qsort` calls go through `orca-crt`'s `qsort`, the static
+UCRT's own, and its `sqrt`s through `orca-crt` ("O2 sources" above). Probe file `qhull.sop1`: QHUL
+(`parity/SOP1.md`), which `crates/orca-qhull/tests/probes.rs` replays through `convex_hull` and the
+walk of `its_convex_hull`, and `crates/orca-mesh/tests/probes.rs` through orca-mesh's
+`its_convex_hull` and `TriangleMesh::convex_hull_3d`; every record of both sets matched on
+2026-11-07 (199 committed, 3619 in the full set), debug and release. Filled by o2-mesh on
+2026-11-07. The hazards it owns:
+
+| What | Where (`deps_src/qhull/src/`, `src/libslic3r/`) | What the translation does |
+| --- | --- | --- |
+| `qh_gethash` adds the addresses of a ridge's vertices, which ASLR moves from run to run, so where a new facet sits in the hash table varies. A ridge of two new facets is matched by its vertices wherever they sit; a ridge that more than two new facets share (a duplicate ridge) is resolved in table order: `qh_matchneighbor` takes the first candidate on the chain, and `qh_matchduplicates` pairs the facets as the chain holds them, so the hull can differ between two runs of the engine | `libqhull_r/poly_r.c:405-463` (`qh_gethash`), `:724-807` (`qh_matchneighbor`), `:891-901`, `poly2_r.c:2088-2173` (`qh_matchduplicates`); `merge_r.c:1275-1340` (`qh_hashridge`, `qh_hashridge_find`), where `qh_find_newvertex` (`:818-831`) asks only whether a match exists, so the order does not count | open: the vertex ids stand in for the addresses (`poly.rs`); the probe's sets never reach a duplicate ridge (`qh_matchduplicates` is never called on the full set) |
+| `qh_triangulate` deletes a non-simplicial facet none of whose triangles takes its hyperplane over (all of them degenerate) with its normal, which the triangles still point to. `its_convex_hull` reads that freed normal (`getBaseT()->normal`), whose first coordinate Qhull's memory pool has overwritten with the next free block's address (a positive subnormal number, or 0); nothing in the run allocates after it | `libqhull_r/poly2_r.c:2871-2876`, `:2905-2909`, `poly_r.c:257` (`qh_delfacet`); `TriangleMesh.cpp:1407` | open: the translation writes +0.0 in that coordinate and keeps the other two, so the sign of the dot product differs only where the other two terms sum to exactly 0 and the free list was not empty; not reached by the probe's sets |
+| `qh_normalize2`, for a normal it cannot divide (`qh_divzero`), takes the largest coordinate from `qh_maxabsval`, which returns NULL when all three are NaN; the engine dereferences it and dies | `libqhull_r/geom_r.c:864-865`, `geom2_r.c:938-951` | open: `Error::Unported`, which `its_convex_hull` takes as a failed run (an empty mesh and the error logged); never reached (`qh_maxabsval` is never called on the full set) |
+| Messages: libqhullcpp's `qh_fprintf` appends each message to the run's text (`vsnprintf` into 3000 bytes), a thrown `QhullError` takes the text away, and `~Qhull` writes what is left to `std::cerr` after `"\nQhull output at end\n"`: after a hull that succeeded, only the narrow-hull warning (9375, its cosine `%.16f`) | `libqhullcpp/QhullQh.cpp:201-237`, `Qhull.cpp:95-105`; `libqhull_r/user_r.c:415`, `poly2_r.c:1859` | probed (QHUL `cerr`, 11 records of the full set): `orca-fmt`'s `printf`; orca-mesh writes it with `log::write_stderr`, whose stream turns `\n` into CRLF as the C runtime's text-mode `stderr` does |
+| `its_convex_hull` writes `indices[cnt]` before it tests `cnt ++ == 3`, so a facet of four vertices or more writes past its `Vec3i32` | `TriangleMesh.cpp:1394`, `:1397`, `:1399` | never reached: after `Qt` every facet has three vertices; the translation stores only the first three |
+| Qhull's memory pool (`qh_memalloc`, `qh_memfree`, the `qsort` of its sizes) decides only what a freed block holds (the second row); `run_id`, drawn from a generator seeded with `time()`, only `FO` prints | `libqhull_r/mem_r.c` (`:362`), `global_r.c:1864-1866` | left out, with the statistics and the trace output: none of them changes a result. So the `mem_r.c:362` and `global_r.c:1864-1866` rows of "O2 sources" need nothing |
 
 ### orca-mesh
 
@@ -525,8 +542,9 @@ the transforms, the bounding boxes, the split and the 2D hull. Probe files `mesh
 MSTD (`parity/SOP1.md`), which `crates/orca-mesh/tests/probes.rs` replays; and, for the C
 runtime's stdio that admesh reads with (`orca-fmt`'s `stdio` and `scanf`), `cstdio.sop1`: CSCN
 and CFIL, which `crates/orca-fmt/tests/probes.rs` replays. Every record of both sets of both files
-matched on 2026-11-07. Filled by o2-mesh on 2026-11-07; `TriangleMesh::convex_hull_3d` and
-`its_convex_hull` come with orca-qhull. The hazards it owns:
+matched on 2026-11-07. Filled by o2-mesh on 2026-11-07. `its_convex_hull` and
+`TriangleMesh::convex_hull_3d` run orca-qhull: the probe test replays `qhull.sop1`'s QHUL records
+through them too, and orca-qhull's section above has their hazards. The hazards it owns:
 
 | What | Where (`deps_src/admesh/`, `src/libslic3r/`) | What the translation does |
 | --- | --- | --- |

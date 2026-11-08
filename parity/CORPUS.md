@@ -69,7 +69,8 @@ answer: `orca-mesh`'s `stl_open` refuses any ASCII file whose `solid` line is lo
 bytes with `StlError::OverlongSolidLine`, before it reads a facet, and leaves the mesh empty
 (`crates/orca-mesh/tests/stl_open.rs`: a CR copy of a 20 mm cube is refused, its LF and CR LF
 copies read, a 255-byte line reads and a 256-byte one is refused). The `model-load` work maps
-that error to the job's answer.
+that error to the job's answer. The mesh and qhull probes, which read OrcaSlicer's test STL
+files through the engine's own reader, leave this one out (`parity/SOP1.md`, MCAS and QHUL).
 
 ### model.stl as Sketch writes it
 

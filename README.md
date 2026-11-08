@@ -218,8 +218,8 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | `orca-eigen` | Phase O2: the Eigen 5.0.1 operations libslic3r's geometry reaches, evaluated as MSVC compiles them (o2-geom). |
 | `orca-geom` | Phase O2: Clipper 6.4.2, `ClipperUtils` and libslic3r's points, lines, polygons, ExPolygons, boxes, convex hulls and the `Geometry` predicates and transform builders (o2-geom; `Geometry::Transformation` comes with the task that first needs it). |
 | `orca-exact` | Phase O2: Boost's signed-magnitude `int128_t` and `rational`, which arrangement computes with, down to the exceptions of the wrapped Lehmer gcd, proven by `arrange.sop1`'s XI28 and XRAT records (o2-arrange). |
-| `orca-qhull` | Phase O2: Qhull 2015.2, the convex hulls of meshes (o2-mesh). |
-| `orca-mesh` | Phase O2: admesh's STL reading and repair and libslic3r's `TriangleMesh` with its statistics, transforms, bounding boxes, split and 2D hull, proven by `mesh.sop1`'s MCAS and MSTD records (o2-mesh; the 3D hull comes with `orca-qhull`). |
+| `orca-qhull` | Phase O2: Qhull 2015.2 as `its_convex_hull` runs it (`Qt`, with Qhull's default merging), the 3D convex hulls of meshes, proven by `qhull.sop1`'s QHUL records (o2-mesh). |
+| `orca-mesh` | Phase O2: admesh's STL reading and repair and libslic3r's `TriangleMesh` with its statistics, transforms, bounding boxes, split, 2D hull and 3D hull (`its_convex_hull`, on `orca-qhull`), proven by `mesh.sop1`'s MCAS and MSTD records and `qhull.sop1`'s QHUL records (o2-mesh). |
 | `orca-zip` | Phase O2: ZIP archives as miniz reads and writes them, for 3MF files (o2-model). |
 | `orca-xml` | Phase O2: XML as expat 2.5.0 parses it, for 3MF files (o2-model). |
 | `orca-placeholder` | Phase O2: Orca's placeholder parser's boolean expressions, for the presets' compatibility conditions, with `boost::regex` as an MSVC build reads it; `placeholder.sop1` holds every condition of the vendor profiles (o2-front). |

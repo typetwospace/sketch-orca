@@ -268,7 +268,7 @@ records below, END.
 | `tbb.sop1` | O1 | TBBA, TBBF, TBBR, TBBO |
 | `configdef.json` | O1 | not SOP1: `print_config_def` with every field of each option, the preset sections' keys, and `handle_legacy` on the legacy and defined keys (`configdef.cpp` says what it holds) |
 | `geom.sop1` | o2-geom | EVEC, EMAT, ETRF, EROT, ESVD (`orca-eigen`); CCLP, COFF, CARE, CCLN, CSIM, CMNK, CINT, GPNT, GPLY, GCLU, GXFM (`orca-geom`) |
-| `qhull.sop1` | o2-mesh | none yet: a stub (`orca-qhull`) |
+| `qhull.sop1` | o2-mesh | QHUL (`orca-qhull`; `orca-mesh` replays it too) |
 | `mesh.sop1` | o2-mesh | MCAS, MSTD (`orca-mesh`) |
 | `cstdio.sop1` | o2-mesh | CSCN, CFIL (`orca-fmt`'s `stdio` and `scanf`) |
 | `zip.sop1` | o2-model | none yet: a stub (`orca-zip`) |
@@ -779,6 +779,34 @@ set is `u64` the vertex count and each vertex's three `f32`, `u64` the face coun
 three `i32`, `u64` the property count and each property's `u8` type and `f64` area.
 `orca-mesh`'s `tests/probes.rs` compares every MSTD whole, so that a difference an MCAS hash only
 shows is named there down to the field, the facet or the neighbour entry.
+
+### QHUL
+
+One point set through libslic3r's `its_convex_hull`, which runs Qhull (`qhull.sop1`,
+`parity/oracle/probe/qhull.cpp`, added 2026-11-07), under the oracle's threading (one thread in an
+arena of 8): `str` label, `u64` the number of points and each point's three `f32`; then what
+`its_convex_hull` returned: `u64` the number of vertices and each vertex's three `f32`, `u64` the
+number of triangles and each triangle's three `i32` vertex indices, in the order its walk of
+Qhull's facets gives them (both empty when Qhull throws, as for fewer than four points or a flat
+set), `u64` the number of face properties (the two-argument `indexed_triangle_set` constructor
+sizes them as the faces); and `str` the text `~Qhull` wrote to `std::cerr`, caught from the
+stream, so with `\n` line ends (Qhull's narrow-hull warning, or nothing). The sets: 14 made by
+hand (no points, one, three, four flat, five collinear, one point five times, a tetrahedron, a
+flat one that warns of a narrow hull, a cube's corners, with a centre and face centres added, a
+5x5x5 grid, a cube's corners with an infinite point, with a NaN point last, a NaN point first);
+1200 seeded sets of 4 to 3003 points (one in 16 followed by a repeat of an earlier one) in a box,
+a ball, a thin slab, on a sphere, a small grid or a box's faces, scaled and now and then moved far
+off (seed 0x9A11F000); 400 of
+tiny (10^-30 to 10^-8) and huge (10^8 to 10^30) coordinates, needles and box faces moved off by up
+to 1e-6 (0x9A11F001); 800 lattice sets whose slanted faces hold exactly coplanar points
+(0x9A11F002); 600 clusters with 3 to 8 points 10^6 to 10^11 away, whose facets are flat to
+Qhull's precision (0x9A11F003); 600 prisms, cylinders, frustums and cones (0x9A11F004); then the
+shared vertices of OrcaSlicer's five test STL files but `20mmbox-CR.stl` (`parity/CORPUS.md`):
+3619 records. The committed set holds the hand-made sets, the STL files' and the first small
+seeded sets of each generator (60 of at most 160 points, then 20, 40, 30 and 30 of at most 120):
+199 records. `orca-qhull`'s `tests/probes.rs` replays every record through `convex_hull` and the
+walk, and `orca-mesh`'s through `its_convex_hull` and `TriangleMesh::convex_hull_3d`, field for
+field and bit for bit.
 
 ### PHCF
 
