@@ -272,7 +272,7 @@ records below, END.
 | `mesh.sop1` | o2-mesh | MCAS, MSTD (`orca-mesh`) |
 | `cstdio.sop1` | o2-mesh | CSCN, CFIL (`orca-fmt`'s `stdio` and `scanf`) |
 | `zip.sop1` | o2-model | ZCRC, ZINF, ZARC, ZERR (`orca-zip`) |
-| `xml.sop1` | o2-model | none yet: a stub (`orca-xml`) |
+| `xml.sop1` | o2-model | XPRS, XERR (`orca-xml`) |
 | `model.sop1` | o2-model | MXFM, MFAC, MCFG, MCIR, MBVL, MLOD, MARP, MTMP (`orca-model`) |
 | `arrange.sop1` | o2-arrange | XI28, XRAT (`orca-exact`); NLOP, NOPT, RTRE, NFPC, NGEO, ARNG (`orca-arrange`) |
 | `placeholder.sop1` | o2-front | PHCF, PHEV (`orca-placeholder`) |
@@ -1050,6 +1050,46 @@ the read function), and the missing path and the folder.
 
 `u64` 35, then for each code from -1 to 33 `i32` the code, `str` `mz_zip_get_error_string` and
 `str` `MZ_Archive::get_errorstr`.
+
+### xml.sop1's values
+
+The records of `xml.sop1` (`parity/oracle/probe/xml.cpp`, added 2026-11-08) come from expat
+2.5.0 as the dependency build compiles it (`expat.lib`), with a parser made as `bbs_3mf.cpp` makes
+one: `XML_ParserCreate(NULL)`, a start element, an end element and a character data handler, the
+entity declaration and external entity handlers `NULL`. They write each value in its own width.
+`orca-xml`'s `tests/probes.rs` rebuilds every record and compares it whole.
+
+### XPRS
+
+The inputs: `str` label, `u8` the feeding (0 `XML_Parse` chunk by chunk with the last final, as
+the model files are fed through miniz's extraction callback; 1 `XML_GetBuffer` and
+`XML_ParseBuffer` of the whole document, final, as the configuration files are; 2 `XML_Parse`
+chunk by chunk with none final; 3 the same, then `XML_Parse(NULL, 0, 1)`; 4 `XML_GetBuffer` and
+`XML_ParseBuffer` chunk by chunk with the last final), `str` the document, `u64` count and `u32`
+each size of the chunk pattern (repeated over the document, the last chunk cut; none: one chunk
+of it all), `i32` the callback a handler calls `XML_StopParser(parser, XML_FALSE)` at (-1 none),
+`bool` it calls it again at every later callback. The feeding stops at the first call that does
+not return `XML_STATUS_OK` or after a stop, as the reader's callback throws then.
+
+What expat did: `bool` `XML_GetBuffer` returned `NULL`; `u64` the number of calls and each `u32`
+length and `i32` status; `u64` the number of callbacks and each `u8` kind (`S`, `E` or `C`), `str`
+the name or the character data, for `S` `i32` `XML_GetSpecifiedAttributeCount` and `u64` count and
+`str` each attribute name and value in turn, then `i32` what the stop returned (-1: no stop there);
+then `i32` `XML_GetErrorCode`, `bool` and `str` `XML_ErrorString` of it, `u32`
+`XML_GetCurrentLineNumber`, `u32` `XML_GetCurrentColumnNumber`, `i32` the parsing status of
+`XML_GetParsingStatus` and `i32` `XML_GetSpecifiedAttributeCount`.
+
+The documents: 132 written by hand (the 3MF reader's files, every encoding expat knows,
+declared and detected, the internal subset, character references, CDATA sections, line ends, long
+names, values and text, deep nesting and the errors), each fed every way and with patterns of 1,
+2, 3, 7, 64 and seeded sizes; stops at the first, second, a third, half and last callback; 14
+seeded mutations of each; generated model and configuration files, the larger in miniz's 32 and
+64 KiB chunks. 7755 records; the committed set 1196 of the small ones.
+
+### XERR
+
+`u64` 46, then for each code from -1 to 44 `i32` the code, `bool` `XML_ErrorString` is not `NULL`
+and `str` it.
 
 ### model.sop1's values
 

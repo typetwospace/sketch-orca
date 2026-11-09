@@ -272,10 +272,14 @@ orca-zip (filled by the o2-model task, 2026-11-07/08)
   - OrcaSlicer's src/libslic3r/miniz_extension.cpp, with its header: open_zip_reader,
     close_zip_reader and MZ_Archive (src/extension.rs, src/error.rs).
 
-orca-xml (filled by the o2-model task)
+orca-xml (filled by the o2-model task, 2026-11-08)
   - Expat 2.5.0, Copyright (c) 1998-2000 Thai Open Source Software Center Ltd and Clark Cooper
     and Copyright (c) 2001-2022 Expat maintainers, as OrcaSlicer v2.4.2's dependency build
-    compiles it from deps/EXPAT/expat, under the MIT licence (licenses/MIT-expat.txt).
+    compiles it from deps/EXPAT/expat, under the MIT licence (licenses/MIT-expat.txt): the parser
+    of xmlparse.c (src/parse.rs), the prolog's state machine of xmlrole.c (src/role.rs), the
+    tokenizer and encodings of xmltok.c, xmltok_impl.inc and xmltok_ns.inc (src/tok.rs), the tables
+    of asciitab.h, iasciitab.h, latin1tab.h, utf8tab.h and nametab.h (src/tables.rs), and
+    enum XML_Error with XML_ErrorString (src/error.rs).
 
 orca-placeholder (filled by the o2-front task, 2026-11-07)
   - OrcaSlicer's src/libslic3r/PlaceholderParser.cpp, with its header: the boolean expressions of

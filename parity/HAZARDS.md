@@ -581,7 +581,20 @@ by o2-model. The hazards it owns (lines of `deps_src/miniz/miniz.c`):
 
 ### orca-xml
 
-expat 2.5.0, the dependency build's. Probe file `xml.sop1`. Filled by o2-model.
+expat 2.5.0, the dependency build's (`src/deps/EXPAT/expat`, without `XML_DTD`, `XML_NS`,
+`XML_CONTEXT_BYTES` and `XML_ATTR_INFO`), as `bbs_3mf.cpp` drives it. Probe file `xml.sop1`: XPRS
+and XERR (`parity/oracle/probe/xml.cpp`), which `crates/orca-xml/tests/probes.rs` replays; every
+record of both sets matched on 2026-11-08 (1196 committed, 7755 in the full set). Filled by
+o2-model. The hazards it owns (lines of `xmlparse.c`):
+
+| What | Where | What the translation does |
+| --- | --- | --- |
+| After an error, or after a final chunk that parsed, `XML_Parse` returns with its position and event pointers still in the caller's chunk; the reader's `XML_GetCurrentLineNumber` then counts the lines between them, in miniz's buffer, which still lives | `XML_Parse`, `:1896-1925`; `XML_GetCurrentLineNumber`, `:2290-2300` | the parser keeps a copy of the bytes from the one pointer to the other (`Buf::Saved` in `parse.rs`); XPRS's errors fed in chunks prove the lines and columns |
+| Without `XML_DTD` there is no amplification accounting: internal entities that refer to each other many times expand without limit, in time and memory | `accountingDiffTolerated`, `:7728` (compiled out) | kept: no limit, as in the C++ build. The probe keeps its expansions small |
+| The lookup tables (entities, element types, attribute names) are hash tables with a salt from `rand_s` (its row under "Random engines, thread-local generators, the time and the user") | `:832-847`, `:873` | ordered maps (`BTreeMap`): nothing the reader sees depends on a table's order, so no salt is needed |
+| A failed allocation gives `XML_ERROR_NO_MEMORY` at about 26 sites | `MALLOC` and `REALLOC` | not modelled: Rust stops on a failed allocation. The size checks that overflow an `int` or `XML_Size` do give `XML_ERROR_NO_MEMORY`, as the C's do |
+| Lengths are `int` and lines and columns `XML_Size`, an `unsigned long` of 32 bits | `XML_Parse`, `XML_GetBuffer`, `XML_GetCurrentLineNumber` | the same widths: a length is cast to `i32` as the reader's `(int)n` is, and a line or column wraps at 2^32 |
+| Not translated, as the reader never calls or reaches them: `XML_ResumeParser` and the resumption of a suspended internal entity (`internalEntityProcessor`, `:5775`), external entities (`externalEntityInitProcessor`, `:2628`), the handlers the reader leaves unset and `XML_SetUnknownEncodingHandler`, `XML_GetCurrentByteIndex`, `XML_GetCurrentByteCount`, `XML_GetInputContext`, `XML_GetIdAttributeIndex`, `XML_ParserReset` and `XML_SetEncoding` | | a resumable stop is translated in `Ctl::stop_parser`, and nothing resumes it. The three handlers are always called, where the C tests each for `NULL`: the reader sets all three |
 
 ### orca-placeholder
 
