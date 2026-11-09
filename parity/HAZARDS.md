@@ -670,9 +670,10 @@ convex polygon beds when printing by object, fixed items on the bed, and every t
 with the circle fits, and what the command line does around arrangement (`ModelArrange.cpp`,
 `Arrange.cpp`'s bed and inflation updates). Probe file `model.sop1`: MXFM, MFAC, MCFG, MCIR,
 MBVL, MLOD, MARP and MTMP (`parity/oracle/probe/model.cpp`), which `crates/orca-model/tests/probes.rs`
-replays; every record of both sets matched on 2026-11-07. The OBJ and 3MF readers are not
-translated yet (`read_from_file` answers them with `ReadError::NotPorted`). Filled by o2-model on
-2026-11-07. The hazards it owns:
+replays; every record of both sets matched on 2026-11-07. The OBJ reader followed on 2026-11-09
+(MLOD's OBJ files and fixtures, every record of both sets). The 3MF reader is not translated yet
+(`read_from_file` answers it with `ReadError::NotPorted`). Filled by o2-model on 2026-11-07. The
+hazards it owns:
 
 | What | Where (`src/libslic3r/`) | What the translation does |
 | --- | --- | --- |
@@ -688,6 +689,13 @@ translated yet (`read_from_file` answers them with `ReadError::NotPorted`). Fill
 | `opt_float`, `opt_int` and `get_config_value<...>(...)->value` on a missing option dereference a null pointer (`get_real_skirt_dist`, `get_instance_arrange_poly`'s `enable_support` and `support_type`) | `PrintConfig.cpp`, `ModelArrange.cpp` | panics naming the option; the command line's configuration holds every option |
 | A matrix whose linear part is not finite has no SVD (`computeRotationScaling`), where Eigen computes with an unset one | `Geometry.cpp:420-440` | NaN matrices; no reader gives such a matrix to the front end |
 | Object ids and timestamps (`ObjectBase`, `ObjectWithTimestamp`) | `ObjectID.hpp` | not kept: the command line's loading never reads them. Open for phase O4 (the 3MF writer and the plate data use them) |
+| The OBJ reader passes its material library's path to `mtlparse` and the log as `path.string().c_str()`: the `std::string` is a temporary that dies at the end of the statement, so the pointer is to freed memory (on the heap for a path of 16 bytes or more). In the oracle's build the freed block still holds the path when `mtlparse` opens it | `Format/OBJ.cpp:56-63` | the path itself; probed (MLOD: the cube fixture's library and the probe's libraries beside the file load in the C++ as in the translation) |
+| A material library's name is tried as a path from the process's working folder before the OBJ file's folder (`boost::filesystem::exists(mtl_name)`), so what a run reads depends on where it was started | `Format/OBJ.cpp:43-55` | the same, with `std::path::Path::exists`; the probes use names that are not in either working folder |
+| `set_face_color` reads a face's texture coordinates by index with no bound: a corner without a texture index (-1 after the adjustment) reads before the vector, one past the coordinates after it | `Format/OBJ.cpp:164-167` | such a coordinate reads as 0. Only `ObjInfo` (the GUI's colours) holds them, so the model does not change; the fixtures give the faces of a known material texture indices in range |
+| A negative texture index is made absolute with the number of texture coordinates taken as `size() / 3`, where the vector holds two floats per coordinate | `Format/objparser.cpp:247-248` | kept; only `ObjInfo` reads it |
+| An `o` line's name is copied after the parser has walked past it, so it is always empty | `Format/objparser.cpp:322-336` | kept; nothing reads the names |
+| `mtl_parseline` keeps the current material in a `static std::string`, shared by every load in the process (two OBJ files read at once would mix their materials) and reset at each `mtlparse` | `Format/objparser.cpp:376`, `:616` | a value passed through one `mtlparse`; the command line reads one file at a time |
+| The reader checks a line's length only after each 64 KiB read: an unfinished line of more than 65536 bytes fails the file ("load_obj: failed to parse"), so a line of up to about 128 KiB passes or fails by where it starts | `Format/objparser.cpp:568-600`, `:635` | kept; probed (MLOD: lines of 65536, 100000 and 140000 bytes in the file and its library) |
 
 ## What the probe gate and the first record found (2026-11-06)
 

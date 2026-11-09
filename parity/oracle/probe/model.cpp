@@ -27,22 +27,29 @@
 //   MLOD  Model::read_from_file of a model file as the command line loads it (cli/run.cpp,
 //         load_model: LoadModel | AddDefaultInstances, each config cut to "extruder",
 //         ensure_on_bed): the error, or the model; then the object's boxes, hulls and z, two
-//         instances added, ensure_on_bed, the print volume states against five beds, each
-//         instance's arrange polygon (get_instance_arrange_poly) and a result applied, and
-//         center_around_origin.
+//         instances added, ensure_on_bed, the print volume states against five beds (named by
+//         their index among MBVL's, which hold them), each instance's arrange polygon
+//         (get_instance_arrange_poly) and a result applied, and center_around_origin.
 //   MARP  get_bed_shape, update_arrange_params, get_shrink_bedpts and the items' inflation.
 //   MTMP  Print::get_filament_temp_type and get_compatible_filament_type.
 //
 // The model files: generated boxes (binary and ASCII STL, one with the .oltp header), files the
 // readers refuse, OrcaSlicer's test STL files but the CR box (from the oracle's source tree,
-// <exe>/../src/tests/data; the CR box kills the engine, parity/CORPUS.md) and its 21 OBJ meshes as
-// binary STL, made as Sketch makes model.stl (parity/CORPUS.md). A file is written to a temporary
-// folder under a plain ASCII name, which names the object; the committed set takes the files of
-// 4000 bytes or fewer (of the random boxes, the first eight). The tasks run under the oracle's
-// threading: global_control(max_allowed_parallelism, 1) inside a task_arena
-// (parity/oracle/README.md).
+// <exe>/../src/tests/data; the CR box kills the engine, parity/CORPUS.md), its 21 OBJ meshes as
+// binary STL, made as Sketch makes model.stl (parity/CORPUS.md), and as they are; the fixtures of
+// fixtures/model/ (a folder each: model.* and the files beside it, such as an OBJ's material
+// library); OBJ files made here (line ends, NULs and Ctrl-Z, lines past the reader's 64 KiB
+// pieces, numbers, refused faces); and, in the full set only, the corpus's model files
+// (<work>/parity/corpus/meshes) but the CR box. A file is written to a temporary folder under a
+// plain ASCII name, which names the object, with its files beside it; the committed set takes the
+// files of 4000 bytes or fewer (of the random boxes, the first eight; of OrcaSlicer's OBJ meshes,
+// each once). The 3MF reader keeps a backup folder under temporary_dir(), which the command line
+// sets to the system's temporary folder; here it is the probe's own temporary folder. The tasks
+// run under the oracle's threading: global_control(max_allowed_parallelism, 1) inside a
+// task_arena (parity/oracle/README.md).
 #include "probe.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -69,6 +76,7 @@
 #include <libslic3r/ModelArrange.hpp>
 #include <libslic3r/Print.hpp>
 #include <libslic3r/PrintConfig.hpp>
+#include <libslic3r/Utils.hpp>
 
 namespace probe {
 
@@ -603,7 +611,32 @@ struct ModelCase
     std::string label;
     std::string name;
     std::string bytes;
+    // Files written beside it, by name (an OBJ's material libraries).
+    std::vector<std::pair<std::string, std::string>> extra;
+    // Recorded in the full set only.
+    bool full_only = false;
 };
+
+bool read_bytes(const std::filesystem::path &file, std::string &bytes)
+{
+    std::ifstream in(file, std::ios::binary);
+    if (!in)
+        return false;
+    bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return true;
+}
+
+// The folder of the probe's own program (<work>/oracle/probe-build).
+bool program_dir(std::filesystem::path &dir, std::string &error)
+{
+    char *pgm = nullptr;
+    if (_get_pgmptr(&pgm) != 0 || pgm == nullptr) {
+        error = "cannot find the probe's own path";
+        return false;
+    }
+    dir = std::filesystem::path(pgm).parent_path();
+    return true;
+}
 
 std::vector<ModelCase> generated_files()
 {
@@ -679,21 +712,39 @@ std::vector<ModelCase> generated_files()
 // OrcaSlicer's test STL files (the CR box left out) and its OBJ meshes as binary STL (fan
 // triangles, the normal of each in doubles rounded to floats, the header "Sketch"), from the
 // oracle's source tree.
+const char *const orca_objs[] = {"20mm_cube",
+                                 "2x20x10",
+                                 "A",
+                                 "A_upsidedown",
+                                 "V",
+                                 "V_standing",
+                                 "bridge",
+                                 "cube_with_concave_hole",
+                                 "cube_with_concave_hole_enlarged",
+                                 "cube_with_concave_hole_enlarged_standing",
+                                 "cube_with_hole",
+                                 "extruder_idler",
+                                 "extruder_idler_quads",
+                                 "frog_legs",
+                                 "ipadstand",
+                                 "overhang",
+                                 "pyramid",
+                                 "simplification",
+                                 "sloping_hole",
+                                 "small_dorito",
+                                 "two_hollow_squares"};
+
 bool orca_files(std::vector<ModelCase> &out, std::string &error)
 {
-    char *pgm = nullptr;
-    if (_get_pgmptr(&pgm) != 0 || pgm == nullptr) {
-        error = "cannot find the probe's own path";
+    std::filesystem::path exe;
+    if (!program_dir(exe, error))
         return false;
-    }
-    const std::filesystem::path data = std::filesystem::path(pgm).parent_path().parent_path() / "src" / "tests" / "data";
+    const std::filesystem::path data = exe.parent_path() / "src" / "tests" / "data";
     auto                        read = [&](const std::filesystem::path &rel, std::string &bytes) {
-        std::ifstream in(data / rel, std::ios::binary);
-        if (!in) {
+        if (!read_bytes(data / rel, bytes)) {
             error = "cannot read " + rel.string() + " under " + data.string();
             return false;
         }
-        bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         return true;
     };
     const struct
@@ -714,28 +765,8 @@ bool orca_files(std::vector<ModelCase> &out, std::string &error)
             return false;
         out.push_back(c);
     }
-    const char *const objs[] = {"20mm_cube",
-                                "2x20x10",
-                                "A",
-                                "A_upsidedown",
-                                "V",
-                                "V_standing",
-                                "bridge",
-                                "cube_with_concave_hole",
-                                "cube_with_concave_hole_enlarged",
-                                "cube_with_concave_hole_enlarged_standing",
-                                "cube_with_hole",
-                                "extruder_idler",
-                                "extruder_idler_quads",
-                                "frog_legs",
-                                "ipadstand",
-                                "overhang",
-                                "pyramid",
-                                "simplification",
-                                "sloping_hole",
-                                "small_dorito",
-                                "two_hollow_squares"};
-    for (const char *o : objs) {
+    std::vector<bool> stl_committed;
+    for (const char *o : orca_objs) {
         std::string text;
         if (!read(std::string(o) + ".obj", text))
             return false;
@@ -785,6 +816,166 @@ bool orca_files(std::vector<ModelCase> &out, std::string &error)
             }
         }
         out.push_back({std::string("orca:") + o + ".obj as model.stl", std::string(o) + ".stl", binary_stl(tris, "Sketch")});
+        // The committed set takes each mesh once: as STL when that is 1500 bytes or fewer.
+        out.back().full_only = out.back().bytes.size() > 1500;
+        stl_committed.push_back(!out.back().full_only);
+    }
+    // The same OBJ meshes as they are, for the OBJ reader; committed (when of 4000 bytes or
+    // fewer) where the STL is not, and the pyramid.
+    for (size_t i = 0; i < std::size(orca_objs); ++i) {
+        const std::string o = orca_objs[i];
+        ModelCase         c{"orca:" + o + ".obj", o + ".obj", {}};
+        if (!read(o + ".obj", c.bytes))
+            return false;
+        c.full_only = stl_committed[i] && o != "pyramid";
+        out.push_back(c);
+    }
+    return true;
+}
+
+// The fixtures of parity/oracle/probe/fixtures/model/ (found from the committed set's folder,
+// parity/probes: the build trims __FILE__), a folder each, in name order: the file named model.*
+// is the model, written under the folder's name, and the others are written beside it under their
+// own names.
+bool fixture_files(const Options &options, std::vector<ModelCase> &out, std::string &error)
+{
+    const std::filesystem::path root = std::filesystem::path(options.committed).parent_path() / "oracle" / "probe" / "fixtures" / "model";
+    std::error_code                    ec;
+    std::vector<std::filesystem::path> dirs;
+    for (const auto &e : std::filesystem::directory_iterator(root, ec))
+        if (e.is_directory())
+            dirs.push_back(e.path());
+    if (ec || dirs.empty()) {
+        error = "cannot list the fixtures under " + root.string();
+        return false;
+    }
+    std::sort(dirs.begin(), dirs.end());
+    for (const std::filesystem::path &d : dirs) {
+        const std::string                  tag = d.filename().string();
+        ModelCase                          c{"fixture:" + tag, {}, {}};
+        std::vector<std::filesystem::path> files;
+        for (const auto &e : std::filesystem::directory_iterator(d, ec))
+            if (e.is_regular_file())
+                files.push_back(e.path());
+        std::sort(files.begin(), files.end());
+        for (const std::filesystem::path &f : files) {
+            std::string bytes;
+            if (!read_bytes(f, bytes)) {
+                error = "cannot read " + f.string();
+                return false;
+            }
+            if (f.stem() == "model") {
+                c.name  = tag + f.extension().string();
+                c.bytes = std::move(bytes);
+            } else
+                c.extra.emplace_back(f.filename().string(), std::move(bytes));
+        }
+        if (c.name.empty()) {
+            error = "no model.* in " + d.string();
+            return false;
+        }
+        out.push_back(std::move(c));
+    }
+    return true;
+}
+
+std::string replace_all(std::string s, const std::string &from, const std::string &to)
+{
+    for (size_t at = s.find(from); at != std::string::npos; at = s.find(from, at + to.size()))
+        s.replace(at, from.size(), to);
+    return s;
+}
+
+// OBJ files made here: the line ends and bytes a text-mode read handles, lines longer than the
+// reader's 64 KiB pieces, the numbers strtod and strtol read, and faces it refuses.
+std::vector<ModelCase> obj_variants()
+{
+    using namespace std::string_literals;
+    const std::string      tetra = "v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n";
+    std::vector<ModelCase> out;
+    auto                   push = [&](const std::string &label, const std::string &bytes, const char *ext = ".obj") {
+        out.push_back({"obj variant: " + label, "var-" + std::to_string(out.size()) + ext, bytes});
+    };
+    push("LF", tetra);
+    push("CRLF", replace_all(tetra, "\n", "\r\n"));
+    push("CR", replace_all(tetra, "\n", "\r"));
+    push("no line end after the last face", tetra.substr(0, tetra.size() - 1));
+    push("mixed line ends, blank lines and indents", "v 0 0 0\r\n\r\nv 10 0 0\n\rv 0 10 0\r\r\n  v 0 0 10\n f 1 3 2\n\tf 1 2 4\r\nf 1 4 3\nf 2 3 4\n");
+    push("NULs end lines early", "v 0 0 0\nv 10 0 0\nv 0 10 0\0 junk\nv 0 0 10\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4 \0 5\n"s);
+    push("Ctrl-Z ends the text-mode read", replace_all(tetra, "f 2 3 4\n", "\x1a" "f 2 3 4\n"));
+    push("Ctrl-Z inside a line", replace_all(tetra, "f 1 4 3\n", "f 1 4 3\x1a\nf 2 3 4\n"));
+    push("a line of 65536 bytes first", "#" + std::string(65535, 'x') + "\n" + tetra);
+    push("a line of 100000 bytes first", "#" + std::string(99999, 'x') + "\n" + tetra);
+    push("a line of 140000 bytes after the vertices", "v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\n#" + std::string(139999, 'y') + "\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 4\n");
+    push("a line of 140000 bytes last, unended", tetra + "#" + std::string(139999, 'z'));
+    {
+        std::string big;
+        for (int i = 0; i < 3000; ++i)
+            big += "v " + std::to_string(i % 17) + " " + std::to_string((i * 7) % 23) + " " + std::to_string(i / 50) + ".25\r\n";
+        for (int i = 0; i + 3 <= 3000; i += 3)
+            big += "f " + std::to_string(i + 1) + " " + std::to_string(i + 2) + " " + std::to_string(i + 3) + "\r\n";
+        push("CRLF lines over several 64 KiB pieces", big);
+    }
+    push("numbers strtod reads", "v 0x1p3 0 0\nv .5 -0 5.\nv 1e-320 +3 0X1P-2\nv 0 0 1E1\nv\t2\t2\t2\nf 1 2 3\nf 1 3 4\nf 1 4 2\nf 2 4 3\nf 5 2 3\n");
+    push("faces strtol reads and refuses", "v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf +1 3 2\nf 1/1/1/1 2 4\nf 0x1 4 3\nf 2 3 4 junk\nf 1 2 4\nf 2 3 4\n");
+    push("an index past a long", "v 0 0 0\nv 10 0 0\nv 0 10 0\nf 99999999999 1 2\n");
+    push("a negative index before the first vertex", "v 0 0 0\nv 10 0 0\nv 0 10 0\nf -9 1 2\n");
+    push("a face of two corners", "v 0 0 0\nv 10 0 0\nv 0 10 0\nf 1 2\n");
+    push("a lone f", "v 0 0 0\nv 10 0 0\nv 0 10 0\nf\nf \nf 1 2 3\n");
+    push("inside out", "v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf 1 2 3\nf 1 4 2\nf 1 3 4\nf 2 4 3\n");
+    push("an empty file", "");
+    push("only comments", "# nothing\n#\n");
+    push("materials without a library", "usemtl a\nv 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf 1 3 2\nusemtl b\nf 1 2 4 3\nf 1 4 3\nf 2 3 4\n");
+    push("an upper-case extension", tetra, ".OBJ");
+    {
+        ModelCase c{"obj variant: a material library with a line of 140000 bytes", "var-" + std::to_string(out.size()) + ".obj", "mtllib long.mtl\n" + tetra};
+        c.extra.emplace_back("long.mtl", "newmtl a\n#" + std::string(139999, 'm') + "\nKd 1 0 0\n");
+        out.push_back(c);
+    }
+    {
+        ModelCase c{"obj variant: a material library of CRLF lines and Ctrl-Z", "var-" + std::to_string(out.size()) + ".obj",
+                    "mtllib lib.mtl\nusemtl a\n" + tetra};
+        c.extra.emplace_back("lib.mtl", "newmtl a\r\nKd 0.2 0.4 0.6\r\nKa 0.1 0.1 0.1\r\n\x1a"
+                                        "newmtl b\r\n");
+        out.push_back(c);
+    }
+    return out;
+}
+
+// The corpus's model files (<work>/parity/corpus/meshes/<case>/) but the CR box (it ends the
+// engine, parity/CORPUS.md), each under its folder's name: the full set only.
+bool corpus_files(std::vector<ModelCase> &out, std::string &error)
+{
+    std::filesystem::path exe;
+    if (!program_dir(exe, error))
+        return false;
+    const std::filesystem::path        root = exe.parent_path().parent_path() / "parity" / "corpus" / "meshes";
+    std::error_code                    ec;
+    std::vector<std::filesystem::path> dirs;
+    for (const auto &e : std::filesystem::directory_iterator(root, ec))
+        if (e.is_directory() && e.path().filename() != "20mmbox-cr")
+            dirs.push_back(e.path());
+    if (ec || dirs.empty()) {
+        error = "cannot list the corpus under " + root.string();
+        return false;
+    }
+    std::sort(dirs.begin(), dirs.end());
+    for (const std::filesystem::path &d : dirs) {
+        std::vector<std::filesystem::path> files;
+        for (const auto &e : std::filesystem::directory_iterator(d, ec))
+            if (e.is_regular_file())
+                files.push_back(e.path());
+        std::sort(files.begin(), files.end());
+        for (const std::filesystem::path &f : files) {
+            const std::string tag = d.filename().string();
+            ModelCase         c{"corpus:" + tag, tag + f.extension().string(), {}};
+            c.full_only = true;
+            if (!read_bytes(f, c.bytes)) {
+                error = "cannot read a file under " + d.string();
+                return false;
+            }
+            out.push_back(c);
+        }
     }
     return true;
 }
@@ -863,6 +1054,11 @@ void put_model(Payload &p, const Model &model)
             put_vec3(p, v->source.mesh_offset);
             p.str(config_dump(v->config));
             p.i32(v->get_repaired_errors_count());
+            // Its painting: supports, seams, colours and fuzzy skin.
+            put_facets(p, v->supported_facets);
+            put_facets(p, v->seam_facets);
+            put_facets(p, v->mmu_segmentation_facets);
+            put_facets(p, v->fuzzy_skin_facets);
         }
     }
 }
@@ -871,6 +1067,9 @@ void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c
 {
     Payload p;
     p.str(c.label).str(c.name).str(c.bytes);
+    p.u64(c.extra.size());
+    for (const auto &x : c.extra)
+        p.str(x.first).str(x.second);
     // The inputs of the steps after loading: two instances (offset, scale, rotation, mirror),
     // allow_negative_z, the beds, the print settings and three arrange results.
     double inst[2][12];
@@ -888,11 +1087,12 @@ void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c
     }
     const bool allow_negative_z = g.below(2) != 0;
     p.boolean(allow_negative_z);
+    // The beds, by their index in beds(): MBVL's records hold them, in that order.
     const std::vector<Bed> all_beds  = beds();
     const size_t           bed_ids[] = {0, 1, 2, 3, 4};
     p.u64(std::size(bed_ids));
     for (size_t b : bed_ids)
-        put_bed(p, all_beds[b]);
+        p.u64(b);
     const std::vector<Pair> cfg = arrange_config(g);
     p.u64(cfg.size());
     for (const Pair &kv : cfg)
@@ -913,13 +1113,16 @@ void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c
         p.i32(pl.bed).i64(pl.x).i64(pl.y).f64(pl.rot).i32(pl.item);
     }
 
-    const std::filesystem::path file = dir / c.name;
-    {
-        std::ofstream out(file, std::ios::binary);
-        out.write(c.bytes.data(), std::streamsize(c.bytes.size()));
+    const std::filesystem::path file  = dir / c.name;
+    auto                        write = [](const std::filesystem::path &to, const std::string &bytes) {
+        std::ofstream out(to, std::ios::binary);
+        out.write(bytes.data(), std::streamsize(bytes.size()));
         if (!out)
             throw std::runtime_error("cannot write the temporary file");
-    }
+    };
+    write(file, c.bytes);
+    for (const auto &x : c.extra)
+        write(dir / x.first, x.second);
     Model       model;
     std::string error;
     try {
@@ -933,6 +1136,8 @@ void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c
     }
     std::error_code ec;
     std::filesystem::remove(file, ec);
+    for (const auto &x : c.extra)
+        std::filesystem::remove(dir / x.first, ec);
     if (!error.empty()) {
         p.u8(1).str(error);
         add(sets, "MLOD", p, committed);
@@ -1154,6 +1359,7 @@ bool run_model(const Options &options, std::string &error)
         error = "cannot make a temporary folder";
         return false;
     }
+    set_temporary_dir((dir / "backup").string());
     arena.execute([&]() {
         try {
             record_xfm(sets);
@@ -1162,17 +1368,24 @@ bool run_model(const Options &options, std::string &error)
             record_cir(sets);
             record_bvl(sets);
             std::vector<ModelCase> files = generated_files();
-            std::vector<ModelCase> orca;
-            if (!(ok = orca_files(orca, error)))
+            std::vector<ModelCase> more;
+            if (!(ok = orca_files(more, error) && fixture_files(options, more, error)))
                 return;
-            files.insert(files.end(), orca.begin(), orca.end());
+            for (ModelCase &c : obj_variants())
+                more.push_back(std::move(c));
+            if (!(ok = corpus_files(more, error)))
+                return;
+            files.insert(files.end(), more.begin(), more.end());
             SplitMix g(0x30DE8000u);
             int generated = 0;
             for (const ModelCase &c : files) {
-                // The committed set: the files of 4000 bytes or fewer, of the random boxes the
-                // first eight.
+                // The committed set: the files of 4000 bytes or fewer (with the files beside
+                // them), of the random boxes the first eight; the corpus's in the full set only.
                 const bool random = c.label.rfind("generated #", 0) == 0;
-                record_lod(sets, dir, c, g, c.bytes.size() <= 4000 && (!random || generated < 8));
+                size_t     size   = c.bytes.size();
+                for (const auto &x : c.extra)
+                    size += x.second.size();
+                record_lod(sets, dir, c, g, !c.full_only && size <= 4000 && (!random || generated < 8));
                 generated += random ? 1 : 0;
             }
             record_arp(sets);

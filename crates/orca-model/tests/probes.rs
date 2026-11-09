@@ -699,6 +699,11 @@ fn put_model(p: &mut Payload, model: &Model) {
                 .vec3(&v.source.mesh_offset)
                 .str(&config_dump(&v.config))
                 .i32(v.get_repaired_errors_count());
+            p.field(&format!("object {oi} volume {vi}: the painting"));
+            put_facets(p, &v.supported_facets);
+            put_facets(p, &v.seam_facets);
+            put_facets(p, &v.mmu_segmentation_facets);
+            put_facets(p, &v.fuzzy_skin_facets);
         }
     }
 }
@@ -706,11 +711,22 @@ fn put_model(p: &mut Payload, model: &Model) {
 /// An arrange result a record lists: the bed, the translation, the rotation and the item's id.
 type Placed = (i32, i64, i64, f64, i32);
 
-fn rebuild_lod(rec: &Record, dir: &TempDir) -> (String, Payload) {
+/// The beds of MBVL's records, in their order: an MLOD record names its beds by index among them.
+fn mbvl_beds(file: &ProbeFile) -> Vec<Bed> {
+    file.of_kind("MBVL")
+        .map(|rec| Bed::read(&mut rec.reader()))
+        .collect()
+}
+
+fn rebuild_lod(rec: &Record, dir: &TempDir, all_beds: &[Bed]) -> (String, Payload) {
     let mut r = rec.reader();
     let label = r.str().unwrap();
     let name = r.str().unwrap();
     let bytes = bytes_str(&mut r);
+    let nextra = r.count().unwrap();
+    let extra: Vec<(String, Vec<u8>)> = (0..nextra)
+        .map(|_| (r.str().unwrap(), bytes_str(&mut r)))
+        .collect();
     let mut inst = [[0.0f64; 12]; 2];
     for row in &mut inst {
         for v in row.iter_mut() {
@@ -719,7 +735,7 @@ fn rebuild_lod(rec: &Record, dir: &TempDir) -> (String, Payload) {
     }
     let allow_negative_z = r.bool().unwrap();
     let nbeds = r.count().unwrap();
-    let beds: Vec<Bed> = (0..nbeds).map(|_| Bed::read(&mut r)).collect();
+    let bed_ids: Vec<u64> = (0..nbeds).map(|_| r.u64().unwrap()).collect();
     let pairs = read_pairs(&mut r);
     let placed: Vec<Placed> = (0..3)
         .map(|_| {
@@ -738,6 +754,10 @@ fn rebuild_lod(rec: &Record, dir: &TempDir) -> (String, Payload) {
         .str(label.as_bytes())
         .str(name.as_bytes())
         .str(&bytes);
+    p.field("the files beside it").len(extra.len());
+    for (n, b) in &extra {
+        p.str(n.as_bytes()).str(b);
+    }
     p.field("the instances' inputs");
     for row in &inst {
         for &v in row {
@@ -745,10 +765,14 @@ fn rebuild_lod(rec: &Record, dir: &TempDir) -> (String, Payload) {
         }
     }
     p.boolean(allow_negative_z);
-    p.field("the beds").len(beds.len());
-    for b in &beds {
-        b.put(&mut p);
+    p.field("the beds").len(bed_ids.len());
+    for &b in &bed_ids {
+        p.u64(b);
     }
+    let beds: Vec<&Bed> = bed_ids
+        .iter()
+        .map(|&b| &all_beds[usize::try_from(b).expect("a bed index")])
+        .collect();
     p.field("the settings");
     put_pairs(&mut p, &pairs);
     p.field("the arrange results");
@@ -758,12 +782,18 @@ fn rebuild_lod(rec: &Record, dir: &TempDir) -> (String, Payload) {
 
     let file = dir.0.join(&name);
     std::fs::write(&file, &bytes).expect("the model file written");
+    for (n, b) in &extra {
+        std::fs::write(dir.0.join(n), b).expect("a file beside it written");
+    }
     let path = file.to_str().expect("a UTF-8 path").to_owned();
     let read = read_from_file(
         &path,
         load_strategy::LOAD_MODEL | load_strategy::ADD_DEFAULT_INSTANCES,
     );
     let _ = std::fs::remove_file(&file);
+    for (n, _) in &extra {
+        let _ = std::fs::remove_file(dir.0.join(n));
+    }
     let mut model = match read {
         Ok(m) => m,
         Err(e) => {
@@ -902,10 +932,11 @@ fn model_files_load_and_place_as_the_engine_does() {
     quiet();
     let file = model_file();
     let dir = TempDir::new("mlod");
+    let beds = mbvl_beds(&file);
     let mut m = Mismatches::default();
     oracle_arena().execute(|| {
         for rec in file.of_kind("MLOD") {
-            let (label, p) = rebuild_lod(rec, &dir);
+            let (label, p) = rebuild_lod(rec, &dir, &beds);
             let diff = p.first_difference(&rec.payload);
             m.check(diff.is_none(), || {
                 format!("MLOD {label}: {}", diff.unwrap_or_default())

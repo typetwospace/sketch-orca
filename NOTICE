@@ -334,8 +334,8 @@ orca-model (filled by the o2-model task, 2026-11-07)
     (src/facets.rs), Config.cpp's set_deserialize and PrintConfig.cpp's ModelConfig
     (src/config.rs), and Arrange.cpp's bed and inflation updates, PrintConfig.cpp's get_bed_shape
     and skirt distance, Print.cpp's filament temperature classes and MaterialType.cpp's table
-    (src/arrange.rs), with their headers. The OBJ and 3MF readers (Format/OBJ.cpp,
-    Format/objparser.cpp and Format/bbs_3mf.cpp) are not carried yet.
+    (src/arrange.rs), with their headers; Format/OBJ.cpp and Format/objparser.cpp, with their
+    headers (src/obj.rs, 2026-11-09). The 3MF reader (Format/bbs_3mf.cpp) is not carried yet.
   - The Microsoft C++ Standard Library, as its entry above names it (src/circle.rs).
 
 The staged engine does not carry these crates yet. Of them, sketch-orca-rs links only

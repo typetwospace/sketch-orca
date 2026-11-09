@@ -1,0 +1,7 @@
+# A face of five corners (sketch-orca probe fixture).
+v 0 0 0
+v 10 0 0
+v 12 8 0
+v 5 14 0
+v -2 8 0
+f 1 2 3 4 5

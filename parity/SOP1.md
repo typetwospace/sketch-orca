@@ -1159,10 +1159,12 @@ areas the same as the bed's or not, height 0), the committed set the first 10.
 ### MLOD
 
 One model file as the command line loads it (`cli/run.cpp`, `load_model`): `str` label, `str` the
-file's name, `str` its bytes; the inputs of the steps after loading: two instances of twelve `f64`
-(offset, scale, rotation, mirror), `bool` `allow_negative_z`, `u64` the number of beds and each
-bed, the settings, three arrange results of `i32` bed, `i64` x and y, `f64` rotation and `i32` item
-id. The file is written under its name to a temporary folder and read with
+file's name, `str` its bytes, `u64` the number of files beside it (an OBJ's material libraries)
+and each one's `str` name and `str` bytes; the inputs of the steps after loading: two instances of
+twelve `f64` (offset, scale, rotation, mirror), `bool` `allow_negative_z`, `u64` the number of beds
+and each bed's `u64` index among the beds of the MBVL records (which hold them, in order), the
+settings, three arrange results of `i32` bed, `i64` x and y, `f64` rotation and `i32` item id. The
+file is written under its name to a temporary folder, the files beside it next to it, and read with
 `Model::read_from_file(path, ..., LoadModel | AddDefaultInstances)`: `u8` 1 and `str` the
 exception's `what()`, or `u8` 0, each configuration cut to `extruder`, the layer ranges and
 profile cleared, `ensure_on_bed()`, and the model: `u64` the number of objects, each `str` name,
@@ -1171,7 +1173,8 @@ instances and each one's matrix, `u8` `print_volume_state`, `bool` `printable` a
 `i32` `arrange_order`, `u64` the number of parts and each one's `str` name, `i32` type, matrix,
 `u64` vertex and face counts and `u64` the hash of its mesh, `bool` it has a hull and then the
 hull's counts and hash, `i32` source object and part, three `f64` source offset, the configuration
-dump and `i32` `get_repaired_errors_count()`. A hash is FNV-1a (64 bits) of `u64` the vertex
+dump, `i32` `get_repaired_errors_count()` and its painting: the supports, the seams, the colours
+and the fuzzy skin, each as MFAC writes one. A hash is FNV-1a (64 bits) of `u64` the vertex
 count, each vertex's three `f32`, `u64` the face count and each face's three `i32`. Then `bool`
 every part of the first object has a hull (the command line refuses one without, so the record
 ends there), and of that object: the boxes `bounding_box_approx()` and `bounding_box_exact()`,
@@ -1194,9 +1197,20 @@ offset and `bounding_box_exact()`. The files: 18 made by hand (boxes on, off, be
 taller than the bed, two in a file, a triangle, a flat square, a tetrahedron, ASCII with LF and
 CRLF, an `.oltp` file, an upper-case extension, empty, no triangles, cut short, `.step`, no
 extension), 30 seeded boxes (rotated, some with a second), OrcaSlicer's test STL files but
-`20mmbox-CR.stl` and its 21 OBJ meshes as binary STL as Sketch writes `model.stl`
-(`parity/CORPUS.md`). The committed set: the files of 4000 bytes or fewer, of the seeded boxes the
-first 8.
+`20mmbox-CR.stl`, its 21 OBJ meshes as binary STL as Sketch writes `model.stl`
+(`parity/CORPUS.md`) and as they are, the fixtures of `parity/oracle/probe/fixtures/model/` (a
+folder each, `model.*` and the files beside it: OBJ files with quads, texture coordinates, normals
+and a material library, vertex colours and negative indices, a refused face, five corners, index
+0, an index past the vertices, no faces, a library that is not there), 26 OBJ files made by the
+probe (LF, CRLF and CR line ends, no line end at the end, NULs, Ctrl-Z, lines of 65536, 100000 and
+140000 bytes, CRLF lines over several 64 KiB pieces, the numbers `strtod` and `strtol` read, an
+index past a `long`, a negative index before the first vertex, two corners, a lone `f`, inside
+out, empty, comments only, materials without a library, an upper-case extension, a library with a
+line of 140000 bytes, a library of CRLF lines cut by Ctrl-Z), and in the full set only the
+corpus's model files (`<work>/parity/corpus/meshes`) but the CR box, each under its folder's name.
+The committed set: the files of 4000 bytes or fewer with the files beside them, of the seeded boxes
+the first 8, and each of OrcaSlicer's OBJ meshes once (as STL when that is 1500 bytes or fewer,
+otherwise as OBJ; the pyramid both ways).
 
 ### MARP
 

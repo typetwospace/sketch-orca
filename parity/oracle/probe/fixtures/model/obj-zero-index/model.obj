@@ -1,0 +1,5 @@
+# A corner of index 0, which becomes the end-of-face marker (sketch-orca probe fixture).
+v 0 0 0
+v 10 0 0
+v 0 10 0
+f 0 1 2

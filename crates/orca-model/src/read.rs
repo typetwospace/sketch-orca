@@ -9,17 +9,18 @@
 // (LICENSE) for more details.
 
 // Carries OrcaSlicer code: Model::read_from_file of src/libslic3r/Model.cpp and load_stl of
-// src/libslic3r/Format/STL.cpp, of OrcaSlicer v2.4.2, translated on 2026-11-07. Copyright the
+// src/libslic3r/Format/STL.cpp, of OrcaSlicer v2.4.2, translated on 2026-11-07 (the OBJ branch on
+// 2026-11-08). Copyright the
 // OrcaSlicer authors, the BambuStudio authors (Bambu Lab) and the PrusaSlicer authors (Prusa
 // Research), under the GNU Affero General Public License, version 3 (AGPL-3.0; LICENSE).
 
 //! `Model::read_from_file`: a model file read by its extension (compared without case), its
 //! objects given the file's path, and an instance added to each that has none when asked.
 //!
-//! An STL (`.stl`, or `.oltp` with a 256-byte header) is read and repaired by `orca-mesh`; an
-//! object is named after the text behind the path's last `\`, Windows' separator (so a path
-//! written with `/` names it by the whole path). The errors are the C++ exceptions' texts, byte
-//! for byte ([`ReadError::what`]).
+//! An STL (`.stl`, or `.oltp` with a 256-byte header) is read and repaired by `orca-mesh`, an OBJ
+//! by [`crate::obj`]; an object is named after the text behind the path's last `\`, Windows'
+//! separator (so a path written with `/` names it by the whole path). The errors are the C++
+//! exceptions' texts, byte for byte ([`ReadError::what`]).
 //!
 //! An ASCII STL whose `solid` line passes 255 bytes (a file with CR line ends is one line) overruns
 //! the C++ reader's buffer and the engine dies (0xC0000409, `parity/CORPUS.md`, "An engine fault:
@@ -32,6 +33,7 @@ use orca_mesh::admesh::stlinit::StlError;
 use orca_mesh::triangle_mesh::TriangleMesh;
 
 use crate::model::Model;
+use crate::obj::{ObjInfo, load_obj};
 
 /// `LoadStrategy`: the flags `read_from_file` takes.
 pub mod load_strategy {
@@ -166,7 +168,9 @@ pub fn read_from_file(input_file: &str, options: u32) -> Result<Model, ReadError
     } else if iends_with(input_file, ".oltp") {
         load_stl(input_file, &mut model, None, 256)?;
     } else if iends_with(input_file, ".obj") {
-        return Err(ReadError::NotPorted(".obj"));
+        // The colours it finds go to the GUI's dialog, which the command line has not.
+        let mut obj_info = ObjInfo::default();
+        load_obj(input_file, &mut model, &mut obj_info, None).map_err(ReadError::Message)?;
     } else if iends_with(input_file, ".svg") {
         return Err(ReadError::NotPorted(".svg"));
     } else if iends_with(input_file, ".drc") {
