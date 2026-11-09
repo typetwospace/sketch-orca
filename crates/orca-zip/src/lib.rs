@@ -10,15 +10,23 @@
 
 //! ZIP archives as miniz reads and writes them, for 3MF files.
 //!
-//! ZIP archives as the C++ engine reads and writes them with miniz (`deps_src/miniz`, through
-//! `miniz_extension.cpp`): the central directory, the deflate and inflate streams and the entries
-//! of a 3MF file, byte for byte.
+//! ZIP archives as the C++ engine reads them with miniz 2.1.0 (`deps_src/miniz`, through
+//! `miniz_extension.cpp`), translated by the o2-model task (2026-11-07): the read path the 3MF
+//! reader takes, bit for bit. [`reader`] opens an archive (from a file, from memory or through a
+//! read function), reads and checks its central directory with ZIP64, finds an entry by name,
+//! gives its statistics and extra field and extracts it to a buffer, through a callback or to a
+//! file; [`tinfl`] is the inflater it extracts with and [`crc`] the CRC-32 it checks with;
+//! [`error`] holds miniz's error codes and texts and [`extension`] libslic3r's wrapping of them.
+//! The writer (`mz_zip_writer_*`, `tdefl`) is not translated: the command line reads 3MF files
+//! and writes G-code.
 //!
-//! The o2-model task of phase O2 fills this crate; its records are in the probe file `zip.sop1`,
-//! which `tests/probes.rs` replays.
-//!
-//! Until that task runs, the crate holds only its name, and `tests/probes.rs` passes trivially
-//! while its probe file is a stub (HEAD and PRUN only).
+//! `tests/probes.rs` replays the probe file `zip.sop1`, which the C++ engine's own build writes.
+
+pub mod crc;
+pub mod error;
+pub mod extension;
+pub mod reader;
+pub mod tinfl;
 
 /// The crate's name, as Cargo has it.
 pub const NAME: &str = "orca-zip";

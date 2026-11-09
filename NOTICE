@@ -263,12 +263,14 @@ orca-mesh (filled by the o2-mesh task)
     asks; its section 3.3 lets the program combine it with code under the GNU Affero General
     Public License, version 3.
 
-orca-zip (filled by the o2-model task)
-  - miniz, based on miniz 2.1.0 (amalgamated) with Prusa Research's additions, as OrcaSlicer
-    v2.4.2 carries it in deps_src/miniz, Copyright 2013-2014 RAD Game Tools and Valve Software
-    and Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC, under the MIT licence
-    (licenses/MIT-miniz.txt).
-  - OrcaSlicer's src/libslic3r/miniz_extension.cpp, with its header.
+orca-zip (filled by the o2-model task, 2026-11-07/08)
+  - miniz, based on miniz 2.1.0 (amalgamated) with Prusa Research's and Bambu Lab's additions, as
+    OrcaSlicer v2.4.2 carries it in deps_src/miniz, Copyright 2013-2014 RAD Game Tools and Valve
+    Software and Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC, under the MIT
+    licence (licenses/MIT-miniz.txt): the zip reader (src/reader.rs), tinfl (src/tinfl.rs), the
+    CRC-32 (src/crc.rs) and the error texts (src/error.rs).
+  - OrcaSlicer's src/libslic3r/miniz_extension.cpp, with its header: open_zip_reader,
+    close_zip_reader and MZ_Archive (src/extension.rs, src/error.rs).
 
 orca-xml (filled by the o2-model task)
   - Expat 2.5.0, Copyright (c) 1998-2000 Thai Open Source Software Center Ltd and Clark Cooper

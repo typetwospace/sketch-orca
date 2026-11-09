@@ -564,8 +564,20 @@ through them too, and orca-qhull's section above has their hazards. The hazards 
 
 ### orca-zip
 
-miniz, as the 3MF reader and writer use it through `miniz_extension.cpp`. Probe file `zip.sop1`.
-Filled by o2-model.
+miniz 2.1.0's read path, as the 3MF reader uses it through `miniz_extension.cpp`. Probe file
+`zip.sop1`: ZCRC, ZINF, ZARC and ZERR (`parity/oracle/probe/zip.cpp`), which
+`crates/orca-zip/tests/probes.rs` replays; every record of both sets matched on 2026-11-08. Filled
+by o2-model. The hazards it owns (lines of `deps_src/miniz/miniz.c`):
+
+| What | Where | What the translation does |
+| --- | --- | --- |
+| `mz_zip_archive_file_stat::m_time` comes from `mktime` of the DOS date and time, in the local time zone and its daylight-saving rules (class P) | `mz_zip_dos_to_time_t`, `:3318-3329`, `:4145` | left out: the 3MF reader never reads it, and `mz_zip_reader_extract_to_file`'s `mz_zip_set_file_times` (which the command line never calls) is not translated |
+| The central directory's "stored" check reads the method and the file time as one 32-bit word (`MZ_READ_LE32(p + MZ_ZIP_CDH_METHOD_OFS)`), so a stored entry whose time is not zero passes with sizes that differ | `:3771` | kept (ZARC has such archives) |
+| The end-of-directory search steps back by 4093 bytes from `archive_size - 4096`; between 4097 and 8188 bytes it reaches a negative offset, which `MZ_MAX(..., 0)` of an `mz_int64` keeps negative, and the read there fails | `mz_zip_reader_locate_header_sig`, `:3505-3550` | kept: the read at a negative offset gives no bytes and the search fails with `MZ_ZIP_FAILED_FINDING_CENTRAL_DIR` (ZARC) |
+| `memcpy` of no bytes from an offset past the end of the archive's memory (`mz_zip_mem_read_func`) | `:3880-3886` | no read (a slice past the end would panic in Rust); ZARC's full set reaches it |
+| A callback extraction's end reports a CRC mismatch as `MZ_ZIP_DECOMPRESSION_FAILED`, where the extraction to memory says `MZ_ZIP_CRC_CHECK_FAILED` | `mz_zip_reader_extract_to_callback`, `:4768-4788` | kept (ZARC) |
+| `tinfl`'s match copy of 9 or more bytes no longer than the distance is `memcpy` of 8 bytes at a time (`MINIZ_UNALIGNED_USE_MEMCPY`), which MSVC makes one load and one store: in a ring smaller than the distance the source can overlap the output from behind, and the copy differs from a byte copy | `tinfl_decompress`, `:2727-2750` | the same load and store of 8 bytes (ZINF's ring of 1024 bytes in the full set); the zip reader's ring is the whole window, where it never overlaps |
+| The names are sorted with miniz's own heap sort (not `qsort`), case folded with `MZ_TOLOWER` of ASCII | `mz_zip_reader_sort_central_dir_offsets_by_filename`, `:3453-3503` | the same heap sort, step for step; the order of equal names is the C's (ZARC's queries) |
 
 ### orca-xml
 

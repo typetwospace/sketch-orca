@@ -271,7 +271,7 @@ records below, END.
 | `qhull.sop1` | o2-mesh | QHUL (`orca-qhull`; `orca-mesh` replays it too) |
 | `mesh.sop1` | o2-mesh | MCAS, MSTD (`orca-mesh`) |
 | `cstdio.sop1` | o2-mesh | CSCN, CFIL (`orca-fmt`'s `stdio` and `scanf`) |
-| `zip.sop1` | o2-model | none yet: a stub (`orca-zip`) |
+| `zip.sop1` | o2-model | ZCRC, ZINF, ZARC, ZERR (`orca-zip`) |
 | `xml.sop1` | o2-model | none yet: a stub (`orca-xml`) |
 | `model.sop1` | o2-model | MXFM, MFAC, MCFG, MCIR, MBVL, MLOD, MARP, MTMP (`orca-model`) |
 | `arrange.sop1` | o2-arrange | XI28, XRAT (`orca-exact`); NLOP, NOPT, RTRE, NFPC, NGEO, ARNG (`orca-arrange`) |
@@ -989,6 +989,67 @@ on boxes the CLI's excluded area and prime tower, fixed parts, and excluded and 
 regions. The seeded runs keep to inputs where the C++ is defined and ends (`parity/HAZARDS.md`,
 orca-arrange). The committed set: the 13 and the first 16 seeded of at most five items, an
 accuracy of 0.65 or less and at most 6144 bytes.
+
+### zip.sop1's values
+
+The records of `zip.sop1` (`parity/oracle/probe/zip.cpp`, added 2026-11-07) write each value in
+its own width. A hash is FNV-1a (64 bits) of the bytes. Streams come from miniz's own compressor
+(levels 0 to 10, its strategies, raw and zlib, raw-only and static-only blocks), by hand, cut
+short, with junk after them or with bits flipped; archives from miniz's writer at a fixed time and
+from a builder in the probe that writes each field as told (ZIP64 records and extra fields, disk
+numbers, flags, methods, sizes and CRCs that lie, comments, junk before), cut short or with bytes
+changed. `orca-zip`'s `tests/probes.rs` rebuilds every record and compares it whole.
+
+### ZCRC
+
+`u32` the running value, `str` the bytes, `u32` `mz_crc32` of them. 48 cases; the committed set
+those of 300 bytes or fewer.
+
+### ZINF
+
+`tinfl_decompress` called until it ends: the schedule, `u8` a ring (1) or a buffer that does not
+wrap, `u64` its size, `u32` the flags (`TINFL_FLAG_PARSE_ZLIB_HEADER`,
+`TINFL_FLAG_COMPUTE_ADLER32`), `u8` more input promised on every call, `u64` the seed of the
+chunks, `u32` the largest input chunk (0: all that is left) and `u32` the largest output chunk (0:
+all the room), `str` the stream; then `u64` the number of calls, the first 16 calls' `i32` status,
+`u64` input taken and `u64` output given, `u64` the hash of every call's three, `i32` the last
+status, `u64` all the input taken, `u64` all the output given, `u32` `tinfl_get_adler32`, `u64` the
+hash of the output, `bool` it is 256 bytes or fewer and then `str` it. Each stream runs under eight
+schedules (all at once, seeded chunks, a 32 KiB ring with all or seeded input, a byte at a time,
+more input promised to the end, a ring of 1024 bytes and one of 1000, which is refused); the
+committed set takes the small sources' first schedules.
+
+### ZARC
+
+One archive: `str` label, `str` its bytes, `u8` how it is opened (0 `open_zip_reader` of a file, 1
+`mz_zip_reader_init_mem`, 2 `mz_zip_reader_init` with a read function, 3 a path that does not
+exist, 4 a folder), `u32` the init flags, `u32` the extra field buffer's size, `u32` the callback
+call that refuses one byte, `u64` the number of name queries and each `str` name, `u32` flags,
+`bool` and `str` a comment. Then `bool` it opened, `i32` `m_last_error`, `str`
+`MZ_Archive::get_errorstr()`, `str` `mz_zip_get_error_string`, `u32` the number of files, `u64`
+`m_archive_size` and `m_central_directory_file_ofs`, `bool` `mz_zip_is_zip64`. For each entry up
+to 40 and the one past the last: `bool` `mz_zip_reader_file_stat` and `i32` the error, the
+statistics when it worked (`u32` index, `u64` directory offset, `u16` versions made by and
+needed, bit flag and method, `u32` CRC, `u64` compressed and uncompressed sizes, `u16` internal
+and `u32` external attributes, `u64` local header offset, `u32` comment size, `bool` directory,
+encrypted and supported, `i32` `m_is_utf8`, `str` name and comment), `u32`
+`mz_zip_reader_get_extra` and `str` what it wrote and `i32` the error, `bool` the entry is 8 MiB or
+smaller; for such an entry `mz_zip_reader_extract_to_mem` into a buffer of its size (`bool`, `i32`,
+`u64` hash, and the bytes when 300 or fewer), into one byte less (`bool`, `i32`), of its compressed
+bytes (`bool`, `i32`, `u64` hash), `mz_zip_reader_extract_to_callback` (`bool`, `i32`, `u64` calls,
+the first six calls' `u64` offset and size, `u64` the hash of every call's two, `u64` the bytes'
+count and hash) and `mz_zip_reader_extract_to_file` (`bool`, `i32`, `bool` the file exists, `u64`
+its size and hash). For each query `i32` `mz_zip_reader_locate_file` and `i32` the error, then
+`u64` the buffer's size, `bool` `mz_zip_reader_extract_file_to_mem`, `i32` the error and `u64` the
+buffer's hash; `bool` and `i32` of closing twice (`close_zip_reader`, or `mz_zip_reader_end` for
+memory and a read function), `u32` the number of files after. 94 archives, each opened the three
+ways (282 records; the committed set 78 of them, most from memory, some from a file, a few through
+the read function), and the missing path and the folder.
+
+### ZERR
+
+`u64` 35, then for each code from -1 to 33 `i32` the code, `str` `mz_zip_get_error_string` and
+`str` `MZ_Archive::get_errorstr`.
 
 ### model.sop1's values
 
