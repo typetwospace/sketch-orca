@@ -77,8 +77,8 @@
 //! program reads 0 there, which no check of this stage reads as a failure (the volumes and lengths
 //! it checks are lists of numbers, which Orca never reads as empty).
 
-// Settings and LoadedPreset hold what the steps after the model check read; they are not ported
-// yet (decline.rs).
+// Settings and LoadedPreset hold what the steps after the model stage read: an info job's answer
+// reads some of it (info.rs), and the steps that read the rest are not ported yet (decline.rs).
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
@@ -86,7 +86,7 @@ use std::collections::BTreeMap;
 use orca_config::value::escape_string_cstyle;
 use orca_config::{ConfigError, OptionType, OptionValue, PrinterTechnology};
 use orca_json::{Order, Value};
-use orca_placeholder::{Error as ConditionError, Symbols, evaluate_boolean_expression};
+use orca_placeholder::{Error as ConditionError, evaluate_boolean_expression};
 
 use crate::common::{Failure, fail, format_number};
 use crate::config::{
@@ -1853,12 +1853,6 @@ pub fn parse_setting(
     Ok(def.key.to_string())
 }
 
-impl Symbols for Config {
-    fn option(&self, key: &str) -> Option<&OptionValue> {
-        self.get(key)
-    }
-}
-
 /// A preset's configuration as the compatibility checks read it (`make_preset(type, loaded,
 /// option_keys)`): Orca's default of each setting of its type (`new_from_defaults_keys`), the
 /// file's values over them.
@@ -1871,40 +1865,6 @@ fn preset_config(loaded: &Config, keys: &[&str]) -> Result<Config, Failure> {
     }
     c.apply(loaded).map_err(|e| internal(&e))?;
     Ok(c)
-}
-
-/// `log_level()` of cli/main.cpp: SKETCH_ORCA_LOG_LEVEL as `strtoul` reads it, 0 to 5, else the
-/// stock command line's 1.
-fn log_level() -> u32 {
-    const STOCK: u32 = 1;
-    let Some(env) = std::env::var_os("SKETCH_ORCA_LOG_LEVEL") else {
-        return STOCK;
-    };
-    let text = env.to_string_lossy();
-    let b = text.as_bytes();
-    if b.is_empty() {
-        return STOCK;
-    }
-    let mut i = 0;
-    while i < b.len() && matches!(b[i], b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r') {
-        i += 1;
-    }
-    let neg = i < b.len() && b[i] == b'-';
-    if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
-        i += 1;
-    }
-    let start = i;
-    let mut v: u64 = 0;
-    while i < b.len() && b[i].is_ascii_digit() {
-        v = orca_stl::min(v * 10 + u64::from(b[i] - b'0'), u64::from(u32::MAX) + 1);
-        i += 1;
-    }
-    if i == start || i != b.len() || v > u64::from(u32::MAX) {
-        return STOCK;
-    }
-    let v = u32::try_from(v).unwrap_or(u32::MAX);
-    let v = if neg { v.wrapping_neg() } else { v };
-    if v <= 5 { v } else { STOCK }
 }
 
 /// The C string of a `std::string` (`c_str()`, which `printf("%s")` reads to its first NUL).
@@ -1920,8 +1880,9 @@ type Compat = Result<bool, String>;
 /// compatible_printers list, its compatible_printers_condition holds for the printer preset
 /// (`printer_config`, with `printer_preset`, the printer's name, and `num_extruders`, its count of
 /// nozzle diameters, over it), or there is none, or it does not parse (logged as Orca logs it, a
-/// warning on stderr at log level 2 or more); with a list, the list names the printer, or the
-/// parent of a printer that is not a system preset, or the printer has no name.
+/// warning, which Orca's log writes on stderr at log level 2 or more, `log.rs`); with a list, the
+/// list names the printer, or the parent of a printer that is not a system preset, or the printer
+/// has no name.
 fn compatible_with_printer(
     preset: &Config,
     printer: &LoadedPreset,
@@ -1950,17 +1911,13 @@ fn compatible_with_printer(
         {
             Ok(b) => Ok(b),
             Err(ConditionError::Parse(what)) => {
-                if log_level() >= 2 {
-                    // Boost.Log's record, its newline added where the message has none.
-                    let mut line = format!(
-                        "[warning] Slic3r::is_compatible_with_printer: parsing error of compatible_printers_condition {}: {what}",
+                orca_mesh::log::log(
+                    orca_mesh::log::Severity::Warning,
+                    &format!(
+                        "Slic3r::is_compatible_with_printer: parsing error of compatible_printers_condition {}: {what}",
                         printer.name
-                    );
-                    if !line.ends_with('\n') {
-                        line.push('\n');
-                    }
-                    crate::write_text(&mut std::io::stderr(), &line);
-                }
+                    ),
+                );
                 Ok(true)
             }
             Err(ConditionError::Unsupported(why)) => Err(why),

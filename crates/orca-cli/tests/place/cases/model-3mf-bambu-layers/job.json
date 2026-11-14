@@ -1,0 +1,27 @@
+{
+  "format": "sketch-orca-job/1",
+  "command": "layers",
+  "resources": "<resources>",
+  "workDir": "<case>/work",
+  "model": {
+    "path": "<case>/bambu.3mf"
+  },
+  "presets": {
+    "machine": "<presets>/generic2/machine.json",
+    "process": "<presets>/generic2/process.json",
+    "filaments": [
+      "<presets>/generic2/filament_1.json",
+      "<presets>/generic2/filament_2.json"
+    ]
+  },
+  "overrides": {},
+  "objects": [],
+  "customGcodes": [],
+  "arrange": true,
+  "orient": false,
+  "output": {
+    "gcode": "",
+    "bambu3mf": null,
+    "stats": true
+  }
+}

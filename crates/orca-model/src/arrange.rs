@@ -15,8 +15,10 @@
 // get_shared_poly, has_skirt and get_real_skirt_dist of PrintConfig.cpp with get_bed_temp_key and
 // get_bed_temp_1st_layer_key of PrintConfig.hpp, Print::get_filament_temp_type and
 // Print::get_compatible_filament_type of Print.cpp, and MaterialType's table and
-// get_temperature_range of MaterialType.cpp, of OrcaSlicer v2.4.2, translated on 2026-11-07.
-// Copyright the OrcaSlicer authors, the BambuStudio authors (Bambu Lab) and the PrusaSlicer authors
+// get_temperature_range of MaterialType.cpp, of OrcaSlicer v2.4.2, translated on 2026-11-07;
+// and get_bed_shape(const PrintConfig&, bool) (PrintConfig.cpp:11527-11542), get_bed_excluded_area
+// and get_bed_shape_with_excluded_area (11546-11571), translated on 2026-11-13 by
+// orca-o3-front-2. Copyright the OrcaSlicer authors, the BambuStudio authors (Bambu Lab) and the PrusaSlicer authors
 // (Prusa Research), under the GNU Affero General Public License, version 3 (AGPL-3.0; LICENSE).
 
 //! What the command line does around arrangement: an instance's arrange polygon with its
@@ -26,15 +28,22 @@
 //! The settings are read through [`OptionSource`] (`DynamicPrintConfig`'s `option`): an option
 //! the C++ dereferences without a check (`opt_float`, `opt_int`, `support_type`) panics here when
 //! it is missing or of another type, where the C++ dereferences a null pointer.
+//!
+//! The bed with its excluded area ([`get_bed_excluded_area`], [`get_bed_shape_with_excluded_area`],
+//! with [`get_bed_shape_of`], the `PrintConfig` overload of `get_bed_shape` they call) reads the
+//! print's static configuration (orca-config's `PrintConfig`), as the C++ does; orca-config
+//! cannot hold them, since the shared extruder area is this module's (added by orca-o3-front-2,
+//! 2026-11-13).
 
 use std::collections::BTreeMap;
 
 use orca_arrange::arrange::{ArrangeParams, ArrangePolygon};
 use orca_config::OptionValue;
+use orca_config::print_config::PrintConfig;
 use orca_eigen::Vec2d;
-use orca_geom::clipper_utils::{ApplySafetyOffset, intersection, make_counter_clockwise};
+use orca_geom::clipper_utils::{ApplySafetyOffset, diff, intersection, make_counter_clockwise};
 use orca_geom::point::{Coord, Point, Points, scale_, scaled};
-use orca_geom::polygon::Polygon;
+use orca_geom::polygon::{Polygon, Polygons};
 
 use crate::config::ModelConfig;
 use crate::model::{ModelObject, option_get_int};
@@ -65,6 +74,13 @@ impl OptionSource for ModelConfig {
 }
 
 impl OptionSource for BTreeMap<String, OptionValue> {
+    fn option(&self, key: &str) -> Option<&OptionValue> {
+        self.get(key)
+    }
+}
+
+/// The configuration as orca-model's arrangement reads one (`ConfigOptionResolver::option`).
+impl OptionSource for orca_config::config::Config {
     fn option(&self, key: &str) -> Option<&OptionValue> {
         self.get(key)
     }
@@ -482,6 +498,65 @@ pub fn get_bed_shape(config: &dyn OptionSource, use_share: bool) -> Points {
         return get_shared_poly(areas).points;
     }
     to_points(&make_counter_clockwise(&bed))
+}
+
+/// `get_bed_shape(const PrintConfig& cfg, use_share)` (`PrintConfig.cpp:11527-11542`), on the
+/// static configuration: the extruders' shared area when `use_share` and they have areas, else
+/// the bed outline made counter-clockwise, scaled and truncated.
+#[must_use]
+pub fn get_bed_shape_of(cfg: &PrintConfig, use_share: bool) -> Points {
+    let mut bed_poly = Polygon::default();
+    let extruder_areas = &cfg.extruder_printable_area.values;
+    if use_share && !extruder_areas.is_empty() {
+        bed_poly = get_shared_poly(extruder_areas);
+    } else {
+        let bed: Vec<Vec2d> = cfg
+            .printable_area
+            .values
+            .iter()
+            .map(|p| Vec2d::new(p[0], p[1]))
+            .collect();
+        bed_poly.points = to_points(&make_counter_clockwise(&bed));
+    }
+    bed_poly.points
+}
+
+/// `get_bed_excluded_area(cfg)` (`PrintConfig.cpp:11546-11559`): one polygon, the excluded area's
+/// points scaled and rounded (`Point(double, double)`), made counter-clockwise; an empty polygon
+/// when the area has no points.
+#[must_use]
+pub fn get_bed_excluded_area(cfg: &PrintConfig) -> Polygons {
+    let exclude_area_points = &cfg.bed_exclude_area.values;
+
+    let mut exclude_poly = Polygon::default();
+    for pt in exclude_area_points {
+        exclude_poly
+            .points
+            .push(Point::from_f64(scale_(pt[0]), scale_(pt[1])));
+    }
+
+    exclude_poly.make_counter_clockwise();
+
+    vec![exclude_poly]
+}
+
+/// `get_bed_shape_with_excluded_area(cfg, use_share)` (`PrintConfig.cpp:11561-11571`): the bed
+/// (`get_bed_shape`) less the excluded area, the first polygon Clipper gives, or the bed itself
+/// when the difference is empty.
+#[must_use]
+pub fn get_bed_shape_with_excluded_area(cfg: &PrintConfig, use_share: bool) -> Polygon {
+    let mut bed_poly = Polygon::new(get_bed_shape_of(cfg, use_share));
+
+    let exclude_polys = get_bed_excluded_area(cfg);
+    let tmp = diff(
+        std::slice::from_ref(&bed_poly),
+        &exclude_polys,
+        ApplySafetyOffset::No,
+    );
+    if let Some(first) = tmp.into_iter().next() {
+        bed_poly = first;
+    }
+    bed_poly
 }
 
 /// `has_skirt(cfg)`: skirt layers and loops, or a draft shield.

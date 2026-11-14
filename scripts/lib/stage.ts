@@ -21,7 +21,12 @@
 // (its file, engine version, `implementation` and SHA-256; engine.exe stays the C++ engine). It
 // must import only libraries Windows has and none of MSVC's dynamic C runtime (rustRuntimeRefusal),
 // the staged copy must report the engine's version and pass the Rust smoke cases (smoke.ts
-// RUST_SMOKE_CASES), held to the staged C++ engine, or nothing is swapped in.
+// RUST_SMOKE_CASES), held to the staged C++ engine, or nothing is swapped in. sketch-orca-rs builds
+// parity/parity.json in byte for byte (crates/orca-cli/src/decline.rs, include_str!) and declines by
+// it, so the program cargo gave and the staged copy must each hold the checkout's parity.json as it
+// is now (stagedParityProblem), or the stage is refused: a cargo that did not rebuild after `parity
+// record` or `parity certify` wrote the file, and a stage that would skip as current, are caught.
+// No manifest field records it; the program's own bytes are the record.
 
 import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { homedir, userInfo } from 'node:os'
@@ -106,16 +111,60 @@ export const MANIFEST_FILE = 'manifest.json'
 /**
  * The licence texts sketch-orca-rs needs beside the engine's, from licenses/, staged as
  * LICENSES/sketch-orca-rs/<file>: the code of others it carries, translated (NOTICE: the Microsoft
- * STL with the LLVM exception, oneTBB, Ryu, nlohmann/json, Boost.Filesystem), and the crates it is
- * built with (NOTICE: rayon, crossbeam, either, windows-sys, sha2 and the rest, each MIT OR
- * Apache-2.0, taken under Apache-2.0, none with a NOTICE file of its own), and Rust's standard
- * library (MIT OR Apache-2.0).
+ * STL with the LLVM exception, oneTBB, Ryu, nlohmann/json, Boost.Filesystem, and, since the model's
+ * reading and the placement joined it, Eigen under MPL-2.0, Qhull, miniz, expat and NLopt under
+ * their own licences, ADMesh under GPL-2.0 or later taken under GPL-3.0, and libnest2d under
+ * LGPL-3.0, which supplements GPL-3.0, and, with the 3MF reader, semver and fast_float under
+ * their MIT licences), and the crates it is built with (NOTICE: rayon, crossbeam, either,
+ * windows-sys, sha2 and the rest, each MIT OR Apache-2.0, taken under Apache-2.0, none with a
+ * NOTICE file of its own), and Rust's standard library (MIT OR Apache-2.0).
  */
-export const RUST_LICENSE_TEXTS = ['Apache-2.0.txt', 'LLVM-exception.txt', 'BSL-1.0.txt', 'MIT-nlohmann-json.txt'] as const
+export const RUST_LICENSE_TEXTS = [
+  'Apache-2.0.txt',
+  'LLVM-exception.txt',
+  'BSL-1.0.txt',
+  'MIT-nlohmann-json.txt',
+  'MPL-2.0.txt',
+  'Qhull.txt',
+  'MIT-miniz.txt',
+  'MIT-expat.txt',
+  'MIT-NLopt.txt',
+  'GPL-2.0.txt',
+  'GPL-3.0.txt',
+  'LGPL-3.0.txt',
+  'MIT-semver.txt',
+  'MIT-fast_float.txt',
+] as const
 
 /** The copies of RUST_LICENSE_TEXTS from `ownDir` (licenses/). */
 export function rustLicenseCopies(ownDir: string): StageCopy[] {
   return RUST_LICENSE_TEXTS.map((f) => ({ from: join(ownDir, f), to: `LICENSES/sketch-orca-rs/${f}` }))
+}
+
+/** The checkout's parity/parity.json, which sketch-orca-rs builds in byte for byte (crates/orca-cli/src/decline.rs, include_str!). */
+export function checkoutParityFile(engineDir: string): string {
+  return join(engineDir, 'parity', 'parity.json')
+}
+
+/** The bytes of the checkout's parity/parity.json now; a checkout without one stops the step. */
+export function readCheckoutParityJson(engineDir: string): Buffer {
+  const file = checkoutParityFile(engineDir)
+  if (!existsSync(file)) throw new StepError(`${file} is missing; sketch-orca-rs is built with it`)
+  return readFileSync(file)
+}
+
+/**
+ * Why the program file `exe` (sketch-orca-rs) does not hold `parityJson`, the bytes of the
+ * checkout's parity/parity.json as it is now; undefined when it does. The program declines every
+ * family parity.json does not certify, by the copy it was built with, so one built before `parity
+ * record` or `parity certify` last wrote the file declines by an older list. The bytes are searched
+ * for in the program's bytes: an older parity.json, or none, is not found.
+ */
+export function stagedParityProblem(exe: string, parityJson: Uint8Array): string | undefined {
+  if (parityJson.length === 0) return `parity/parity.json is empty, so ${exe} cannot be checked against it`
+  if (!existsSync(exe)) return `${exe} is missing; run stage`
+  if (readFileSync(exe).indexOf(parityJson) >= 0) return undefined
+  return `${exe} does not hold parity/parity.json as the checkout has it now (it was built with another one, or none); run stage`
 }
 
 const HEX64 = /^[0-9a-f]{64}$/
@@ -1109,6 +1158,9 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     rustName = `${RUST_PROGRAM}.exe`
     const rustRuntimeProblem = rustRuntimeRefusal(rustExe, windowsRuntimeIo())
     if (rustRuntimeProblem) throw new StepError(rustRuntimeProblem)
+    // Before the skip below: a staged copy of the same bytes is no more current than this.
+    const builtParityProblem = stagedParityProblem(rustExe, readCheckoutParityJson(ctx.engine.engine))
+    if (builtParityProblem) throw new StepError(`cargo build gave a sketch-orca-rs that is refused: ${builtParityProblem} (cargo's log: ${join(w.logs, 'stage-cargo.log')}). If cargo did not rebuild, rebuild orca-cli (for example \`cargo clean -p orca-cli\`) before staging again; stage alone gives the same program again`)
   }
   const rustSha256 = rustExe ? sha256File(rustExe) : null
   // What the engine was built from (the build checked that cli/ did not change meanwhile).
@@ -1183,6 +1235,9 @@ export async function runStage(ctx: Context, exe: string, log: Log): Promise<num
     if (parsed && parsed.implementation !== 'rust') rustProblems.push(`its implementation is ${JSON.stringify(parsed.implementation)}, not "rust"`)
     if (parsed && parsed.engineVersion !== engineVersion) rustProblems.push(`it reports engine version ${JSON.stringify(parsed.engineVersion)}, the C++ engine ${engineVersion}`)
     if (rustProblems.length > 0) throw new StepError(`the staged sketch-orca-rs does not report the engine: ${rustProblems.join('; ')} (log: ${engineLog})`)
+    // And it declines by the checkout's parity.json as it is now (read again: certify may have written it meanwhile).
+    const stagedParity = stagedParityProblem(stagedRust, readCheckoutParityJson(ctx.engine.engine))
+    if (stagedParity) throw new StepError(`the staged sketch-orca-rs is refused: ${stagedParity}`)
     rust = { exe: `bin/${rustName}`, engineVersion, sha256: rustSha256! }
   }
   const manifest = buildManifest({

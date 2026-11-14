@@ -40,6 +40,17 @@ Every patch acts only when its knob is set: with no knob set the oracle is the e
 | `0004-oracle-fma3.patch` | `SKETCH_ORCA_ORACLE_FMA3` |
 | `0005-oracle-dumps.patch` | `SKETCH_ORCA_ORACLE_DUMP` |
 | `0006-oracle-front-objects.patch` | `SKETCH_ORCA_ORACLE_DUMP` (more in `front-objects-<n>.sop1`) |
+| `0007-oracle-step-dumps.patch` | `SKETCH_ORCA_ORACLE_DUMP` (every step boundary in full, and the end of `process()`) |
+
+Patches 0001 to 0006 stay byte for byte as they are; a later patch changes the oracle's code
+through a patch of its own. Patch 0007 keeps lines 1-1017 of `OracleDump.cpp` (patch 0005's file,
+with 0006's records) at their numbers, as the Rust translation follows that file line by line:
+it changes five of those lines in place (18, its header comment; 66, the forward declarations of
+its three writers; 770, 783 and 1013, which call them before `dump.write()` in
+`write_print_dump`, `write_object_dump` and `dump_front_config`) and puts all its new code after
+line 1017. `test/parity-oracle.test.ts` applies 0005, 0006 and 0007 to the file in memory and
+checks that its lines 1-1017 differ only at those five, each keeping what it held: the file is
+checked, not the shape git gave the diff.
 
 ## The knobs
 
@@ -116,7 +127,15 @@ the wipe tower data. Patch 0006 (2026-11-07, no knob of its own) puts all the fr
 `front-objects-<n>.sop1`: the front end's config at that point (`load_settings`' config with the
 prime tower's place), the plates' custom G-code, and each object's height ranges, brim ears and
 volumes' painting, so the Rust translation's presets, model loading and placement can be checked
-at that boundary (`parity/SOP1.md`).
+at that boundary (`parity/SOP1.md`). Patch 0007 (2026-11-13, no knob of its own) makes every
+boundary hold what the step after it reads, so that a crate can replay one step from the dump
+before it: each object dump gets OSTA, OWRN and a LEXT per layer, `front-config-<n>.sop1` gets the
+default object and region configs, FPRT and a FOBJ per print object, and each print dump gets
+PWRN, PXTR and TLXT. `psConflictCheck` is never set done in OrcaSlicer 2.4.2, so patch 0007 also
+dumps the print as `print-psConflictCheck-<n>.sop1` at the end of `Print::process()`, after the
+conflict check (`Print.cpp`): the end-of-process boundary. An object, layer or volume is written
+as its index, never as a pointer or an `ObjectID`; `PrintObject::get_id` is left out, as the
+command line never sets it and it held a different value at 1 and 8 threads.
 
 Why: an output that differs says where, not why. The dumps give the state at each boundary, so a
 difference can be traced to the first step whose state differs.

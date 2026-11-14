@@ -1,7 +1,7 @@
 {
   "format": "sketch-orca-engine/1",
   "stageVersion": 4,
-  "engine": { "name": "sketch-orca", "version": "0.2.0", "exe": "bin/sketch-orca.exe", "resources": "resources", "libraryPath": "bin" },
+  "engine": { "name": "sketch-orca", "version": "0.3.0", "exe": "bin/sketch-orca.exe", "resources": "resources", "libraryPath": "bin" },
   "orca": {
     "repo": "OrcaSlicer/OrcaSlicer",
     "tag": "v2.4.2",
@@ -21,7 +21,7 @@
   "system": ["KERNEL32.dll", "USER32.dll"],
   "smoke": { "passed": true, "smokeVersion": 10 },
   "deps": { "inputs": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "mingw": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
-  "rust": { "exe": "bin/sketch-orca-rs.exe", "engineVersion": "0.2.0", "implementation": "rust", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+  "rust": { "exe": "bin/sketch-orca-rs.exe", "engineVersion": "0.3.0", "implementation": "rust", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
   "inputs": "4444444444444444444444444444444444444444444444444444444444444444",
   "stagedAt": "2026-10-30T18:00:00.000Z",
   "files": [

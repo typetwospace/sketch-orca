@@ -1,0 +1,4 @@
+{"stage":"job","percent":1.0,"message":"reading the job"}
+{"stage":"presets","percent":3.0,"message":"reading the presets"}
+{"stage":"model","percent":8.0,"message":"reading the model"}
+{"stage":"failed","percent":8.0,"message":"custom G-code per layer is not available with print_sequence \"by object\"; Orca runs it only for prints by layer"}

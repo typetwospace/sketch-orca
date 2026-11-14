@@ -1,0 +1,4 @@
+{"stage":"job","percent":1.0,"message":"reading the job"}
+{"stage":"presets","percent":3.0,"message":"reading the presets"}
+{"stage":"model","percent":8.0,"message":"reading the model"}
+{"stage":"failed","percent":8.0,"message":"objects[0].heightRanges[0].overrides.enable_support: enable_support cannot change over a height range; height ranges take layer_height, extruder and region settings (walls, infill, ...)"}

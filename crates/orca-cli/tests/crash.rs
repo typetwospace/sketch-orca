@@ -11,10 +11,14 @@
 //! The crash result: an access violation, an abort or a panic while a run is armed writes the
 //! C++ program's internal-error result ("the engine crashed (<what>) during '<stage>', in Orca's
 //! code"), and the process ends with -1, through `SKETCH_ORCA_TEST_CRASH` as the smoke case
-//! crash-result sets it. sketch-orca-rs reaches the stages `job`, `presets` and `model`: a crash
-//! at `presets` or `model` crashes as the C++ program does there, before that stage's progress
-//! line, and the point `decline`, past the model's file check, names the stage `model`. A crash at
-//! the stage `job`, before the result is armed, writes no result, as in the C++ program.
+//! crash-result sets it. sketch-orca-rs reaches the stages `job`, `presets` and `model`, `orient`
+//! for a job that orients its objects and `arrange` for a layers or slice job that arranges them:
+//! a crash at `presets`, `model`, `orient` or `arrange` crashes as the C++ program does there,
+//! before that stage's progress line, and the point `decline` names the stage the slice job here
+//! declines in, past that stage's progress line: `arrange`, once its objects are placed, or
+//! `orient` when the job orients its objects. A job that does not orient its objects never reaches
+//! `orient`. A crash at the stage `job`, before the result is armed, writes no result, as in the
+//! C++ program.
 
 mod common;
 
@@ -28,9 +32,18 @@ use orca_json::{Order, parse};
 /// `SKETCH_ORCA_TEST_CRASH=<trigger>`: the folder, the exit code, the result (if any) and the
 /// progress file.
 fn crashed(trigger: &str) -> (Scratch, i32, Option<String>, String) {
+    crashed_job(trigger, false)
+}
+
+/// [`crashed`], the job orienting its objects when `orient`.
+fn crashed_job(trigger: &str, orient: bool) -> (Scratch, i32, Option<String>, String) {
     let scratch = Scratch::new("crash", &trigger.replace(':', "-"));
     write_fixtures(&scratch);
-    let job = write_job(&scratch, &valid_job(&scratch, "slice"));
+    let mut job = valid_job(&scratch, "slice");
+    if orient {
+        job.insert("orient", true);
+    }
+    let job = write_job(&scratch, &job);
     let (out, progress) = (scratch.path("result.json"), scratch.path("progress.ndjson"));
     let r = program(
         &["run", "--job", &job, "--out", &out, "--progress", &progress],
@@ -61,7 +74,12 @@ fn crash_result(message: &str) -> String {
 /// Checks a crash at `trigger` that names `stage`, with the progress lines of `lines` before it
 /// and `what` opening the crash's description.
 fn check_crash(trigger: &str, what: &str, stage: &str, lines: &[&str]) {
-    let (scratch, code, result, progress) = crashed(trigger);
+    check_crash_job(trigger, false, what, stage, lines);
+}
+
+/// [`check_crash`], the job orienting its objects when `orient`.
+fn check_crash_job(trigger: &str, orient: bool, what: &str, stage: &str, lines: &[&str]) {
+    let (scratch, code, result, progress) = crashed_job(trigger, orient);
     assert_eq!(code, -1, "{trigger}");
     let result = result.unwrap_or_else(|| panic!("{trigger}: no result"));
     let r = parse(result.as_bytes(), Order::Insertion).unwrap();
@@ -94,15 +112,21 @@ fn an_access_violation_an_abort_and_a_panic_write_the_internal_error_result() {
         ("decline:abort", "abort"),
         ("decline:panic", "panic at crash.rs:"),
     ] {
-        check_crash(trigger, what, "model", &["job", "presets", "model"]);
+        check_crash(
+            trigger,
+            what,
+            "arrange",
+            &["job", "presets", "model", "arrange"],
+        );
     }
 }
 
 #[test]
-fn a_crash_at_the_presets_or_the_model_crashes_there_as_the_cpp_program_does() {
+fn a_crash_at_the_presets_the_model_or_the_arrange_crashes_there_as_the_cpp_program_does() {
     for (stage, lines) in [
         ("presets", &["job"][..]),
         ("model", &["job", "presets"][..]),
+        ("arrange", &["job", "presets", "model"][..]),
     ] {
         for (how, what) in [
             ("", "exception 0xC0000005 at "),
@@ -115,13 +139,51 @@ fn a_crash_at_the_presets_or_the_model_crashes_there_as_the_cpp_program_does() {
 }
 
 #[test]
+fn a_job_that_orients_its_objects_crashes_at_orient_and_its_decline_names_orient() {
+    // The stage is noted before its progress line, as each stage is: a crash at orient leaves the
+    // lines up to the model's, and the point decline, past the line "orient", names orient too.
+    for (how, what) in [
+        ("", "exception 0xC0000005 at "),
+        (":abort", "abort"),
+        (":panic", "panic at crash.rs:"),
+    ] {
+        check_crash_job(
+            &format!("orient{how}"),
+            true,
+            what,
+            "orient",
+            &["job", "presets", "model"],
+        );
+        check_crash_job(
+            &format!("decline{how}"),
+            true,
+            what,
+            "orient",
+            &["job", "presets", "model", "orient"],
+        );
+    }
+    // A job that does not orient its objects never reaches the stage: it is declined once its
+    // objects are placed, as it is without the trigger.
+    let (_scratch, code, result, progress) = crashed("orient");
+    let r = parse(result.unwrap().as_bytes(), Order::Insertion).unwrap();
+    assert_eq!((code, r["code"].as_str()), (-8, Some("not-ported")));
+    assert_eq!(
+        progress,
+        progress_text(
+            &["job", "presets", "model", "arrange"],
+            r["message"].as_str()
+        )
+    );
+}
+
+#[test]
 fn the_access_violations_place_is_a_module_and_an_offset_as_the_mask_reads_it() {
     let (_scratch, _, result, _) = crashed("decline");
     let r = parse(result.unwrap().as_bytes(), Order::Insertion).unwrap();
     let message = r["message"].as_str().unwrap();
     let place = message
         .strip_prefix("the engine crashed (exception 0xC0000005 at ")
-        .and_then(|m| m.strip_suffix(") during 'model', in Orca's code"))
+        .and_then(|m| m.strip_suffix(") during 'arrange', in Orca's code"))
         .unwrap();
     let (module, offset) = place.split_once("+0x").unwrap();
     assert!(

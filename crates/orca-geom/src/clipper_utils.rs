@@ -9,7 +9,8 @@
 // (LICENSE) for more details.
 
 // Carries OrcaSlicer code: src/libslic3r/ClipperUtils.cpp and ClipperUtils.hpp of OrcaSlicer
-// v2.4.2, translated on 2026-11-07. Copyright the OrcaSlicer authors, the BambuStudio authors
+// v2.4.2, translated on 2026-11-07, with the offset of a Polyline3 (ClipperUtils.cpp 415-426)
+// translated on 2026-11-13. Copyright the OrcaSlicer authors, the BambuStudio authors
 // (Bambu Lab) and the PrusaSlicer authors (Prusa Research), under the GNU Affero General Public
 // License, version 3 (AGPL-3.0; LICENSE).
 
@@ -38,6 +39,7 @@ use crate::line::{Line, Lines};
 use crate::point::{Point, Pointfs, Points, SCALED_EPSILON, cross2, vec2d};
 use crate::polygon::{self, Polygon, Polygons};
 use crate::polyline::{Polyline, Polylines};
+use crate::polyline3::Polyline3;
 
 /// `ClipperSafetyOffset`: 10 nm, a `float`.
 pub const CLIPPER_SAFETY_OFFSET: f32 = 10.0;
@@ -623,6 +625,28 @@ pub fn offset_polyline(
 ) -> Polygons {
     let raw = raw_offset(
         &[polyline.points.as_slice()],
+        delta,
+        join_type,
+        miter_limit,
+        end_type,
+    );
+    to_polygons(clipper_union(&paths_ref(&raw), PolyFillType::NonZero))
+}
+
+/// `offset(const Polyline3&, delta, joinType, miterLimit, end_type)` (geom-2, 2026-11-13): the
+/// union of the raw offset of the polyline's x and y (`to_polyline()`), as
+/// [`offset_polyline`].
+#[must_use]
+pub fn offset_polyline3(
+    polyline: &Polyline3,
+    delta: f32,
+    join_type: JoinType,
+    miter_limit: f64,
+    end_type: EndType,
+) -> Polygons {
+    let points = polyline.to_polyline().points;
+    let raw = raw_offset(
+        &[points.as_slice()],
         delta,
         join_type,
         miter_limit,

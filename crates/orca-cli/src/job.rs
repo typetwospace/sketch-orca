@@ -16,9 +16,10 @@
 //! `ordered_json` reads it (`orca-json`, [`Order::Insertion`]).
 //!
 //! The job's fields past its command are kept for the steps that read them: the resources and
-//! work folders, the presets, the overrides and the model's path are read by the presets stage
-//! and the model's file check (`run.rs`, `presets.rs`); until the steps after them are ported,
-//! sketch-orca-rs declines every job that reaches them (`decline.rs`).
+//! work folders, the presets, the overrides, the model's path, the objects' indexes and orient are
+//! read by the presets stage and the model stage (`run.rs`, `presets.rs`, `model.rs`); until the
+//! steps after them are ported, sketch-orca-rs declines every job that reaches them
+//! (`decline.rs`).
 
 // The steps that read most of these fields are not ported yet (decline.rs). The comparisons are
 // cli/job.cpp's as it writes them (`!(h > 0.)`, `e < 1 || e > 1e6`), which also say what a NaN
@@ -233,7 +234,7 @@ fn is_color(c: &str) -> bool {
 }
 
 /// `std::isspace` in the "C" locale: space, tab, line feed, vertical tab, form feed, carriage return.
-fn is_c_space(c: u8) -> bool {
+pub fn is_c_space(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
 }
 

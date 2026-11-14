@@ -1,0 +1,49 @@
+{
+  "format": "sketch-orca-job/1",
+  "command": "layers",
+  "resources": "<resources>",
+  "workDir": "<case>/work",
+  "model": {
+    "path": "<case>/model.stl"
+  },
+  "presets": {
+    "machine": "<presets>/generic2/machine.json",
+    "process": "<presets>/generic2/process.json",
+    "filaments": [
+      "<presets>/generic2/filament_1.json",
+      "<presets>/generic2/filament_2.json"
+    ]
+  },
+  "overrides": {},
+  "objects": [],
+  "customGcodes": [
+    {
+      "printZ": 3,
+      "type": "pause",
+      "note": "corpus: a pause"
+    },
+    {
+      "printZ": 6,
+      "type": "color",
+      "color": "#30c030",
+      "extruder": 2
+    },
+    {
+      "printZ": 9,
+      "type": "custom",
+      "gcode": "M117 corpus custom"
+    },
+    {
+      "printZ": 12,
+      "type": "filament",
+      "extruder": 1
+    }
+  ],
+  "arrange": true,
+  "orient": false,
+  "output": {
+    "gcode": "",
+    "bambu3mf": null,
+    "stats": true
+  }
+}

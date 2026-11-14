@@ -9,11 +9,15 @@
 // (LICENSE) for more details.
 
 // Carries OrcaSlicer code: class Polygon and its helpers of src/libslic3r/Polygon.hpp and
-// Polygon.cpp of OrcaSlicer v2.4.2, translated on 2026-11-07. Copyright the OrcaSlicer authors,
-// the BambuStudio authors (Bambu Lab) and the PrusaSlicer authors (Prusa Research), under the GNU
-// Affero General Public License, version 3 (AGPL-3.0; LICENSE).
+// Polygon.cpp of OrcaSlicer v2.4.2, translated on 2026-11-07; and Polygon.cpp 235-255 and 275-318
+// (convex_points, concave_points and their filters), translated on 2026-11-13. Copyright the
+// OrcaSlicer authors, the BambuStudio authors (Bambu Lab) and the PrusaSlicer authors (Prusa
+// Research), under the GNU Affero General Public License, version 3 (AGPL-3.0; LICENSE).
 
 //! `Polygon`: a closed path, counter-clockwise for a contour and clockwise for a hole.
+//!
+//! `convex_points` and `concave_points` pick the vertices that turn left or right, past an angle;
+//! a polygon of fewer than two points, which the C++ reads before its list for, panics there.
 
 use orca_eigen::Vec2d;
 
@@ -394,6 +398,82 @@ impl Polygon {
     /// `reverse()`.
     pub fn reverse(&mut self) {
         self.points.reverse();
+    }
+
+    /// `convex_points(angle_threshold)`: the vertices that turn left (`cross2 > 0` of the edge
+    /// into them and the edge out), with an angle between the two edges past `angle_threshold`
+    /// when that is above `EPSILON`; the last vertex first, then the others in order.
+    ///
+    /// # Panics
+    /// Below two points, which the C++ reads before the list for (`parity/sop1/paths.md`, "Edges").
+    #[must_use]
+    pub fn convex_points(&self, angle_threshold: f64) -> Points {
+        filter_convex_concave_points_by_angle_threshold(&self.points, angle_threshold, |v1, v2| {
+            cross2(v1, v2) > 0.
+        })
+    }
+
+    /// `concave_points(angle_threshold)`: as [`Polygon::convex_points`], for the vertices that
+    /// turn right (`cross2 < 0`).
+    ///
+    /// # Panics
+    /// Below two points, which the C++ reads before the list for (`parity/sop1/paths.md`, "Edges").
+    #[must_use]
+    pub fn concave_points(&self, angle_threshold: f64) -> Points {
+        filter_convex_concave_points_by_angle_threshold(&self.points, angle_threshold, |v1, v2| {
+            cross2(v1, v2) < 0.
+        })
+    }
+}
+
+/// `filter_points_by_vectors(poly, filter)`: each vertex for which `filter(v1, v2)` holds, `v1`
+/// the edge into it and `v2` the edge out, visited from the last vertex (Polygon.cpp 235-255).
+fn filter_points_by_vectors(poly: &[Point], filter: impl Fn(Vec2d, Vec2d) -> bool) -> Points {
+    if poly.len() < 2 {
+        panic!(
+            "filter_points_by_vectors of fewer than two points: undefined in the C++ engine (it \
+             reads before the list), not ported"
+        );
+    }
+    // The last point is the first visited.
+    let mut p1 = poly[poly.len() - 1];
+    // The vector into p1.
+    let mut v1 = (p1 - poly[poly.len() - 2]).cast_f64();
+    let mut out = Points::new();
+    for &p2 in poly {
+        // p2 is the point after the visited p1.
+        let v2 = (p2 - p1).cast_f64();
+        if filter(v1, v2) {
+            out.push(p1);
+        }
+        v1 = v2;
+        p1 = p2;
+    }
+    out
+}
+
+/// `filter_convex_concave_points_by_angle_threshold(poly, angle_threshold, filter)`: with a
+/// threshold above `EPSILON`, also the angle between the edges past it, the dot product of the
+/// normalized edges below `cos(nextafter(angle_threshold, +inf))` (Polygon.cpp 275-308; the
+/// asserts on the threshold are the debug build's).
+fn filter_convex_concave_points_by_angle_threshold(
+    poly: &[Point],
+    angle_threshold: f64,
+    convex_concave_filter: impl Fn(Vec2d, Vec2d) -> bool,
+) -> Points {
+    if angle_threshold > EPSILON {
+        // Just enough added that an input of π/2 does not match a right angle.
+        let cos_threshold = orca_crt::cos(orca_crt::nextafter(angle_threshold, f64::INFINITY));
+        filter_points_by_vectors(poly, |v1, v2| {
+            if !convex_concave_filter(v1, v2) {
+                return false;
+            }
+            // The dot product of the unit vectors is the cosine of the angle between them.
+            let vec_dot = v1.normalized().dot(&v2.normalized());
+            vec_dot < cos_threshold
+        })
+    } else {
+        filter_points_by_vectors(poly, convex_concave_filter)
     }
 }
 

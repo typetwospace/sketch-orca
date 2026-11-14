@@ -1,0 +1,3 @@
+# Both sizes claim the largest size miniz opens the archive with (miniz.c:3781 leaves out the
+# name's length): the data runs past the archive's end, which the extraction refuses (miniz.c:4432).
+Metadata/layer_heights_profile.txt end

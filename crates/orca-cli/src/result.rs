@@ -24,11 +24,12 @@
 //! - The progress file: one JSON line per step, `{stage, percent, message}`, the percent never
 //!   going down, then `done` at 100 or `failed` where it stopped.
 //! - Past the checks of the job, its work as far as it is ported (`run.rs`): the folders, the
-//!   presets stage and the model file's check, each failing as the C++ fails, with its warnings.
-//!   Then this program does only what is certified (`decline.rs`): every job that gets there is
-//!   declined for now, `not-ported` with exit -8, before any output is written. It writes no
-//!   G-code or .gcode.3mf yet: besides the result and the progress file, only the work folder and
-//!   its orca-data folder, which the C++ makes too.
+//!   presets stage and the model stage, each failing as the C++ fails, with its warnings, and an
+//!   info job's answer (`info`). Past that this program does only what is certified
+//!   (`decline.rs`): a job that orients its objects, and a layers or slice job, is declined,
+//!   `not-ported` with exit -8, before any output is written. It writes no G-code or .gcode.3mf
+//!   yet: besides the result and the progress file, only the work folder, its orca-data folder and
+//!   a 3MF's backup folder in it, which the C++ makes too.
 
 use std::io::Write;
 use std::sync::Mutex;
@@ -504,8 +505,8 @@ pub fn run_job(job_path: &str, out_path: &str, progress_path: &str, err: &mut dy
         body.insert("command", job.command_name.as_str());
         arm_crash(out_path, &body);
         check_outputs(&files, out_path)?;
-        // The job's work, as far as it is ported (run.rs), then the decline.
-        run::run(&job, &warnings, &mut progress)
+        // The job's work, as far as it is ported (run.rs): an info job's answer, else the decline.
+        run::run(&job, &mut body, &warnings, &mut progress)
     })();
     let failure = outcome.err();
     let ok = failure.is_none();

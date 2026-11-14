@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06">
+<metadata name="Application">BambuStudio-01.10.01.50</metadata>
+<metadata name="BambuStudio:3mfVersion">1</metadata>
+<resources>
+ <object id="1" type="model">
+  <mesh>
+   <vertices>
+    <vertex x="0" y="0" z="0"/>
+    <vertex x="10" y="0" z="0"/>
+    <vertex x="0" y="10" z="0"/>
+    <vertex x="0" y="0" z="10"/>
+   </vertices>
+   <triangles>
+    <triangle v1="0" v2="2" v3="1"/>
+    <triangle v1="0" v2="1" v3="3"/>
+    <triangle v1="0" v2="3" v3="2"/>
+    <triangle v1="1" v2="2" v3="3"/>
+   </triangles>
+  </mesh>
+ </object>
+ <object id="2" type="model">
+  <components>
+   <component objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/>
+  </components>
+ </object>
+</resources>
+<build>
+ <item objectid="2"/>
+</build>
+</model>

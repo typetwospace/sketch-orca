@@ -1,0 +1,3 @@
+# The relationships entry claims 2 GiB uncompressed: (int)2147483648 is negative, so expat's XML_GetBuffer
+# returns NULL without allocating (bbs_3mf.cpp:2470-2474).
+_rels/.rels 2147483648

@@ -31,11 +31,13 @@ import {
   pinnedSources,
   planDependencies,
   repositoryFiles,
+  runSource,
   RUST_SOURCE_FILES,
   RUST_VENDOR,
   shippedTreeBinaries,
   SOURCE_VERSION,
   sourceGaps,
+  stagedFor,
   verifySums,
   type DependencyArchive,
   type DownloadedFile,
@@ -45,10 +47,13 @@ import { MINGW_PACKAGES, MSYS2_BASE } from '../scripts/lib/mingw.ts'
 import { depsBuildArgs, formatCommand, orcaBuildArgs } from '../scripts/lib/cmake.ts'
 import { firstExisting, gitCandidates } from '../scripts/lib/env.ts'
 import { currentPlatform } from '../scripts/lib/toolchain.ts'
-import { listFiles, nativePath, sha256Bytes, sha256Sums, treeEntries, writeText } from '../scripts/lib/files.ts'
+import { hashTree, listFiles, nativePath, sha256Bytes, sha256Sums, treeEntries, writeText } from '../scripts/lib/files.ts'
 import { LOCK_FORMAT, type OrcaLock } from '../scripts/lib/lock.ts'
 import { PACKAGE_BINARIES, type KnownPackageBinary } from '../scripts/lib/packagebins.ts'
-import { buildManifest, findPersonalPaths, personalPathNeedles, PRIVACY_FIXTURE_MARK, privacyProblems, privacyProblemsIn, withoutFixtures, type EngineManifest } from '../scripts/lib/stage.ts'
+import { Log } from '../scripts/lib/run.ts'
+import { enginePaths, workPaths } from '../scripts/lib/paths.ts'
+import { buildManifest, findPersonalPaths, personalPathNeedles, PRIVACY_FIXTURE_MARK, privacyProblems, privacyProblemsIn, serializeManifest, withoutFixtures, type EngineManifest } from '../scripts/lib/stage.ts'
+import type { Context } from '../scripts/orca.ts'
 import { makePe } from './support/pe-writer.ts'
 import { writeTar } from './support/tar-writer.ts'
 import { writeZip } from './support/zip-writer.ts'
@@ -459,6 +464,65 @@ describe('the bundle', () => {
     expect(verifySums(b).sort()).toEqual(['changed BUILDING.md', 'missing engine/orca.lock.json', 'unlisted file extra.txt'])
     put('b/SHA256SUMS', 'not a sums file\n')
     expect(verifySums(b)).toEqual([expect.stringMatching(/not a sha256sum line/)])
+  })
+
+  test("source refuses a staged engine whose sketch-orca-rs does not hold the checkout's parity.json as it is now", async () => {
+    const now = '{\n  "format": "sketch-orca-parity/1",\n  "families": [{ "name": "placement", "certified": true }]\n}\n'
+    const older = '{\n  "format": "sketch-orca-parity/1",\n  "families": [{ "name": "placement", "certified": false }]\n}\n'
+    put('engine/cli/main.cpp', 'int main() {}')
+    put('engine/parity/parity.json', now)
+    const ctx = { lock: LOCK, work: workPaths(join(dir, 'work')), engine: enginePaths(join(dir, 'engine')), args: [] } satisfies Context
+    const staged = join(dir, 'work', 'dist', 'engine')
+    const rsExe = join(staged, 'bin', 'sketch-orca-rs.exe')
+    // A staged engine as stage writes it, with a sketch-orca-rs holding `parity` in its bytes, or none.
+    const stageWith = (parity: string | undefined) => {
+      rmSync(staged, { recursive: true, force: true })
+      put('work/dist/engine/bin/sketch-orca.exe', 'MZ the C++ engine')
+      if (parity !== undefined) put('work/dist/engine/bin/sketch-orca-rs.exe', `MZ code and rodata ${parity} more rodata`)
+      const files = treeEntries(staged)
+      const rs = files.find((f) => f.path === 'bin/sketch-orca-rs.exe')
+      const m = buildManifest({
+        lock: LOCK,
+        engineVersion: '0.3.0',
+        exeName: 'sketch-orca.exe',
+        platform: 'win32',
+        arch: 'x64',
+        patches: [],
+        cli: hashTree(ctx.engine.cli),
+        runtime: { copy: [], system: [], missing: [], crt: [] },
+        smokePassed: true,
+        deps: { inputs: H('7'), mingw: H('8') },
+        ...(rs ? { rust: { exe: rs.path, engineVersion: '0.3.0', sha256: rs.sha256 } } : {}),
+        inputs: H('d'),
+        files,
+        stagedAt: '2026-11-12T12:00:00.000Z',
+      })
+      writeText(join(staged, 'manifest.json'), serializeManifest(m))
+    }
+    // Built with the checkout's parity.json: taken.
+    stageWith(now)
+    expect(stagedFor(ctx).rust?.exe).toBe('bin/sketch-orca-rs.exe')
+    // parity.json changed after the stage: the staged program declines by another list.
+    put('engine/parity/parity.json', older)
+    expect(() => stagedFor(ctx)).toThrow(`the staged sketch-orca-rs is not this checkout's: ${rsExe} does not hold parity/parity.json as the checkout has it now (it was built with another one, or none); run stage`)
+    await expect(runSource(ctx, new Log(join(dir, 'work', 'logs', 'source.log'), true))).rejects.toThrow(/does not hold parity\/parity\.json .*; run stage$/)
+    // Built with an older parity.json, or holding none: refused.
+    put('engine/parity/parity.json', now)
+    stageWith(older)
+    expect(() => stagedFor(ctx)).toThrow(/does not hold parity\/parity\.json as the checkout has it now .*; run stage$/)
+    stageWith('')
+    expect(() => stagedFor(ctx)).toThrow(/does not hold parity\/parity\.json .*; run stage$/)
+    // A staged engine with no sketch-orca-rs has nothing to check.
+    stageWith(undefined)
+    expect(stagedFor(ctx).rust).toBeUndefined()
+    // A checkout without parity.json cannot vouch for a staged sketch-orca-rs.
+    stageWith(now)
+    rmSync(join(dir, 'engine', 'parity', 'parity.json'))
+    expect(() => stagedFor(ctx)).toThrow(/parity\.json is missing; sketch-orca-rs is built with it/)
+    // source takes the staged engine through stagedFor, before anything else.
+    const run = readFileSync(join(import.meta.dir, '..', 'scripts', 'lib', 'bundle.ts'), 'utf8').split('export async function runSource(')[1]!
+    expect(run.indexOf('stagedFor(ctx)')).toBeGreaterThan(0)
+    expect(run.indexOf('stagedFor(ctx)')).toBeLessThan(run.indexOf('depsWant('))
   })
 
   test("the privacy scan reads the bundle's own files, not the packages of others", () => {

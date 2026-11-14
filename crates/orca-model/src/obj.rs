@@ -26,6 +26,16 @@
 //! short keeps the corners read before the fault, with no end marker after them). Numbers go
 //! through `strtod` and `strtol` (`orca-fmt`, the "C" locale), the values kept as `float`.
 //!
+//! What the C logs at error goes to `orca_mesh::log` in the same words and order: each line of a
+//! command the parser does not know (`ObjParser: Unknown command: <its first character>`; the C
+//! writes that byte as it is, and a byte past 0x7F, which is no text alone, is U+FFFD here), a line
+//! past 64 KiB (`ObjParser: Excessive line length`, `MtlParser: Excessive line length`), each
+//! failure of `load_obj` (`load_obj: failed to parse <path>`, with its reason for a face or a
+//! corner, `load_obj:load_mtl: failed to parse <library>`, `load_obj: This OBJ file couldn't be
+//! read because it's empty. <path>`) and a material library that is not there (`load_obj: failed
+//! to load mtl_path:<library>`, after which the load goes on). The C's `Out of memory` records are
+//! not translated: Rust ends the process at a failed allocation.
+//!
 //! A face of three corners is one triangle, of four two (0, 1, 2 and 0, 2, 3); more than four or
 //! fewer than three is an error, as is a corner outside the vertices. A corner index of 0 becomes
 //! -1, the end-of-face marker, as the C's `--` makes it. Vertex colours and the material library's
@@ -37,6 +47,7 @@ use orca_eigen::{Vec3f, Vec3i32};
 use orca_fmt::parse::{strtod, strtol};
 use orca_fmt::stdio::fopen;
 use orca_mesh::admesh::IndexedTriangleSet;
+use orca_mesh::log::{Severity, log};
 use orca_mesh::triangle_mesh::TriangleMesh;
 use orca_stl::minmax::clamp;
 
@@ -597,8 +608,13 @@ fn obj_parseline(line: &[u8], data: &mut ObjData) -> bool {
                 smoothing_group_id: g,
             });
         }
-        // "ObjParser: Unknown command" goes to the log.
-        _ => {}
+        _ => log(
+            Severity::Error,
+            &format!(
+                "ObjParser: Unknown command: {}",
+                String::from_utf8_lossy(&[c1])
+            ),
+        ),
     }
     true
 }
@@ -725,8 +741,9 @@ fn mtl_parseline(line: &[u8], data: &mut MtlData, cur: &mut Vec<u8>) -> bool {
 }
 
 /// The loop `objparse` and `mtlparse` share: the file in text mode, 64 KiB at a time, each line
-/// handed to `parse_line`. False when the file cannot be opened or a line passes 64 KiB.
-fn read_lines(path: &str, mut parse_line: impl FnMut(&[u8])) -> bool {
+/// handed to `parse_line`. False when the file cannot be opened or a line passes 64 KiB, which is
+/// logged under `parser`'s name ("ObjParser" or "MtlParser").
+fn read_lines(path: &str, parser: &str, mut parse_line: impl FnMut(&[u8])) -> bool {
     let Some(mut file) = fopen(Path::new(path), "rt") else {
         return false;
     };
@@ -752,7 +769,7 @@ fn read_lines(path: &str, mut parse_line: impl FnMut(&[u8])) -> bool {
         }
         len_prev = len - last_line;
         if len_prev > 65536 {
-            // "Excessive line length" goes to the log.
+            log(Severity::Error, &format!("{parser}: Excessive line length"));
             return false;
         }
         buf.copy_within(last_line..len, 0);
@@ -762,7 +779,7 @@ fn read_lines(path: &str, mut parse_line: impl FnMut(&[u8])) -> bool {
 
 /// `ObjParser::objparse(path, data)`.
 pub fn objparse(path: &str, data: &mut ObjData) -> bool {
-    read_lines(path, |line| {
+    read_lines(path, "ObjParser", |line| {
         obj_parseline(line, data);
     })
 }
@@ -770,7 +787,7 @@ pub fn objparse(path: &str, data: &mut ObjData) -> bool {
 /// `ObjParser::mtlparse(path, data)`.
 pub fn mtlparse(path: &str, data: &mut MtlData) -> bool {
     let mut cur = Vec::new();
-    read_lines(path, |line| {
+    read_lines(path, "MtlParser", |line| {
         mtl_parseline(line, data, &mut cur);
     })
 }
@@ -857,6 +874,16 @@ fn set_face_color_by_mtl(
     }
 }
 
+/// `load_obj`'s refusal of the file's faces: the record `load_obj: failed to parse <path>.
+/// <message>` at error, and the message.
+fn parse_failure(path: &str, message: &str) -> String {
+    log(
+        Severity::Error,
+        &format!("load_obj: failed to parse {path}. {message}"),
+    );
+    message.to_owned()
+}
+
 /// `load_obj(path, meshptr, obj_info, message)`: the mesh, or the message.
 ///
 /// # Errors
@@ -867,6 +894,10 @@ pub fn load_obj_mesh(path: &str, obj_info: &mut ObjInfo) -> Result<TriangleMesh,
     let mut data = ObjData::default();
     let mut mtl_data = MtlData::default();
     if !objparse(path, &mut data) {
+        log(
+            Severity::Error,
+            &format!("load_obj: failed to parse {path}"),
+        );
         return Err("load_obj: failed to parse".to_owned());
     }
     let mut exist_mtl = false;
@@ -882,8 +913,16 @@ pub fn load_obj_mesh(path: &str, obj_info: &mut ObjInfo) -> Result<TriangleMesh,
         } else {
             format!("{}/{}", parent_path(path), name)
         };
-        // A library that is not there sends "failed to load mtl_path" to the log.
-        if Path::new(&mtl_path).exists() && !mtlparse(&mtl_path, &mut mtl_data) {
+        if !Path::new(&mtl_path).exists() {
+            log(
+                Severity::Error,
+                &format!("load_obj: failed to load mtl_path:{mtl_path}"),
+            );
+        } else if !mtlparse(&mtl_path, &mut mtl_data) {
+            log(
+                Severity::Error,
+                &format!("load_obj:load_mtl: failed to parse {mtl_path}"),
+            );
             return Err("load mtl in obj: failed to parse".to_owned());
         }
     }
@@ -898,9 +937,15 @@ pub fn load_obj_mesh(path: &str, obj_info: &mut ObjInfo) -> Result<TriangleMesh,
         let n = j - i;
         if n > 0 {
             if n > 4 {
-                return Err("The file contains polygons with more than 4 vertices.".to_owned());
+                return Err(parse_failure(
+                    path,
+                    "The file contains polygons with more than 4 vertices.",
+                ));
             } else if n < 3 {
-                return Err("The file contains polygons with less than 2 vertices.".to_owned());
+                return Err(parse_failure(
+                    path,
+                    "The file contains polygons with less than 2 vertices.",
+                ));
             }
             if n == 4 {
                 num_quads += 1;
@@ -946,7 +991,10 @@ pub fn load_obj_mesh(path: &str, obj_info: &mut ObjInfo) -> Result<TriangleMesh,
                 break;
             }
             if vertex.coord_idx < 0 || vertex.coord_idx >= its.vertices.len() as i32 {
-                return Err("The file contains invalid vertex index.".to_owned());
+                return Err(parse_failure(
+                    path,
+                    "The file contains invalid vertex index.",
+                ));
             }
             indices[cnt] = vertex.coord_idx;
             uvs[cnt] = vertex.texture_coord_idx;
@@ -971,6 +1019,10 @@ pub fn load_obj_mesh(path: &str, obj_info: &mut ObjInfo) -> Result<TriangleMesh,
     }
     let mut mesh = TriangleMesh::from_its(its);
     if mesh.empty() {
+        log(
+            Severity::Error,
+            &format!("load_obj: This OBJ file couldn't be read because it's empty. {path}"),
+        );
         return Err("This OBJ file couldn't be read because it's empty.".to_owned());
     }
     if mesh.volume() < 0.0 {
@@ -1065,5 +1117,143 @@ mod tests {
         assert_eq!(red.ka, [0.1, 0.2, 0.3]);
         assert_eq!(red.tr, 0.5);
         assert_eq!(red.map_kd, b"t.png");
+    }
+
+    thread_local! {
+        static RECORDS: std::cell::RefCell<Option<Vec<String>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// Runs `f` and returns what it returns with the records it logged on this thread, each as
+    /// `[<severity>] <message>`.
+    fn logged<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
+        orca_mesh::log::set_sink(Some(Box::new(|severity, message| {
+            RECORDS.with(|r| {
+                if let Some(v) = r.borrow_mut().as_mut() {
+                    v.push(format!("[{}] {message}", severity.name()));
+                }
+            });
+        })));
+        RECORDS.with(|r| *r.borrow_mut() = Some(Vec::new()));
+        let out = f();
+        let records = RECORDS.with(|r| r.borrow_mut().take()).unwrap_or_default();
+        (out, records)
+    }
+
+    #[test]
+    fn each_failure_and_a_missing_library_are_logged_as_the_c_logs_them() {
+        let dir = std::env::temp_dir().join(format!("orca-model-obj-log-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = |name: &str, text: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, text).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        let tetra = "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 0 0 1\nf 1 2 3\nf 1 2 4\nf 1 3 4\nf 2 3 4\n";
+        // An unknown command, then a library that is not there: both logged, and the load goes on.
+        let missing = file(
+            "missing.obj",
+            &format!("mtllib missing.mtl\n{tetra}l 1 2\n"),
+        );
+        let (mesh, records) = logged(|| load_obj_mesh(&missing, &mut ObjInfo::default()));
+        assert!(mesh.is_ok());
+        assert_eq!(
+            records,
+            [
+                "[error] ObjParser: Unknown command: l".to_owned(),
+                format!(
+                    "[error] load_obj: failed to load mtl_path:{}/missing.mtl",
+                    parent_path(&missing)
+                ),
+            ]
+        );
+        // A corner outside the vertices.
+        let bad = file("bad.obj", "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 9\n");
+        let (mesh, records) = logged(|| load_obj_mesh(&bad, &mut ObjInfo::default()));
+        assert_eq!(mesh.unwrap_err(), "The file contains invalid vertex index.");
+        assert_eq!(
+            records,
+            [format!(
+                "[error] load_obj: failed to parse {bad}. The file contains invalid vertex index."
+            )]
+        );
+        // No triangle.
+        let empty = file("empty.obj", "# nothing\n");
+        let (mesh, records) = logged(|| load_obj_mesh(&empty, &mut ObjInfo::default()));
+        assert!(mesh.is_err());
+        assert_eq!(
+            records,
+            [format!(
+                "[error] load_obj: This OBJ file couldn't be read because it's empty. {empty}"
+            )]
+        );
+        // A face of five corners, and one of two: the C's words, "less than 2" included.
+        let five = file(
+            "five.obj",
+            "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nf 1 2 3 4 5\n",
+        );
+        let (mesh, records) = logged(|| load_obj_mesh(&five, &mut ObjInfo::default()));
+        assert_eq!(
+            mesh.unwrap_err(),
+            "The file contains polygons with more than 4 vertices."
+        );
+        assert_eq!(
+            records,
+            [format!(
+                "[error] load_obj: failed to parse {five}. The file contains polygons with more than 4 vertices."
+            )]
+        );
+        let two = file("two.obj", "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2\n");
+        let (mesh, records) = logged(|| load_obj_mesh(&two, &mut ObjInfo::default()));
+        assert_eq!(
+            mesh.unwrap_err(),
+            "The file contains polygons with less than 2 vertices."
+        );
+        assert_eq!(
+            records,
+            [format!(
+                "[error] load_obj: failed to parse {two}. The file contains polygons with less than 2 vertices."
+            )]
+        );
+        // A line still unfinished after a read, past 64 KiB: the parser's record, then load_obj's.
+        let long_line = format!("# {}\n", "a".repeat(140_000));
+        let long_obj = file("long.obj", &format!("{tetra}{long_line}"));
+        let (mesh, records) = logged(|| load_obj_mesh(&long_obj, &mut ObjInfo::default()));
+        assert_eq!(mesh.unwrap_err(), "load_obj: failed to parse");
+        assert_eq!(
+            records,
+            [
+                "[error] ObjParser: Excessive line length".to_owned(),
+                format!("[error] load_obj: failed to parse {long_obj}"),
+            ]
+        );
+        // The same in a material library that is there.
+        file("long-lib.mtl", &format!("newmtl red\n{long_line}"));
+        let long_mtl = file("long-mtl.obj", &format!("mtllib long-lib.mtl\n{tetra}"));
+        let (mesh, records) = logged(|| load_obj_mesh(&long_mtl, &mut ObjInfo::default()));
+        assert_eq!(mesh.unwrap_err(), "load mtl in obj: failed to parse");
+        assert_eq!(
+            records,
+            [
+                "[error] MtlParser: Excessive line length".to_owned(),
+                format!(
+                    "[error] load_obj:load_mtl: failed to parse {}/long-lib.mtl",
+                    parent_path(&long_mtl)
+                ),
+            ]
+        );
+        // A library that is there but cannot be opened (a folder): mtlparse logs nothing itself.
+        std::fs::create_dir_all(dir.join("folder-lib.mtl")).unwrap();
+        let shut = file("shut.obj", &format!("mtllib folder-lib.mtl\n{tetra}"));
+        let (mesh, records) = logged(|| load_obj_mesh(&shut, &mut ObjInfo::default()));
+        assert_eq!(mesh.unwrap_err(), "load mtl in obj: failed to parse");
+        assert_eq!(
+            records,
+            [format!(
+                "[error] load_obj:load_mtl: failed to parse {}/folder-lib.mtl",
+                parent_path(&shut)
+            )]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

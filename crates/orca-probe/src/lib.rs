@@ -560,13 +560,14 @@ mod tests {
     /// The SOP1 files of the probe registry (`scripts/lib/parity/probe.ts`, `PROBE_REGISTRY`): the
     /// foundations', which hold records, and phase O2's (2026-11-07), stubs until their tasks fill them.
     const FOUNDATION_PROBES: [&str; 4] = ["crt", "fmt", "stl", "tbb"];
-    const O2_PROBES: [&str; 9] = [
+    const O2_PROBES: [&str; 10] = [
         "geom",
         "qhull",
         "mesh",
         "cstdio",
         "zip",
         "xml",
+        "ptree",
         "model",
         "arrange",
         "placeholder",

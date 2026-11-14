@@ -1,0 +1,4 @@
+{"stage":"job","percent":1.0,"message":"reading the job"}
+{"stage":"presets","percent":3.0,"message":"reading the presets"}
+{"stage":"model","percent":8.0,"message":"reading the model"}
+{"stage":"failed","percent":8.0,"message":"the prime tower at wipe_tower_x 1000, wipe_tower_y 1000 (66 x 15.974 mm with its brim) is not all on the printable area"}

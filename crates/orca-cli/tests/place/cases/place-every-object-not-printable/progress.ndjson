@@ -1,0 +1,5 @@
+{"stage":"job","percent":1.0,"message":"reading the job"}
+{"stage":"presets","percent":3.0,"message":"reading the presets"}
+{"stage":"model","percent":8.0,"message":"reading the model"}
+{"stage":"slice","percent":14.0,"message":"preparing the print"}
+{"stage":"failed","percent":14.0,"message":"nothing to slice: no object is printable with these settings"}

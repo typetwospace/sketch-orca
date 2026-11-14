@@ -11,8 +11,14 @@
 // itself (certify.ts declineGaps), the families held as this run raises them. The program runs with
 // the golden pass's knobs and a fresh SKETCH_ORCA_ORACLE_DUMP folder per run, and the dumps it keeps
 // (record.ts KEPT_DUMPS) are compared with the goldens'; a decline that reached a boundary passes the
-// families before it (certify.ts BOUNDARY_FAMILIES). It needs parity corpus, and parity oracle,
-// neutral and record run for this checkout's cli/ and patches (certify.ts oracleChainProblems).
+// families before it (certify.ts BOUNDARY_FAMILIES). After a run the program declines, its case goes
+// on from the golden C++ run's outputs (certify.ts goldenCarry), so a smoke case's later runs are
+// made, from what the C++ program had, and judged; the report lists those declines as `carried`. It
+// prints what the declines wrote to their streams (`decline streams: <n> declines; stderr ...;
+// stdout ...`, certify.ts declineStreams) and, for each family, its answered runs (`pre-boundary
+// holders of <family>: <k> answered runs`, the first five named, certify.ts preBoundaryHolders);
+// neither changes the exit status. It needs parity corpus, and parity oracle, neutral and record run
+// for this checkout's cli/ and patches (certify.ts oracleChainProblems).
 
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -29,9 +35,14 @@ import {
   compareCase,
   DECLINE_HELD_KINDS,
   declineGaps,
+  declineStreams,
+  declineStreamsLine,
   envelopeIndex,
   familyVerdicts,
+  goldenCarry,
   oracleChainProblems,
+  preBoundaryHolders,
+  preBoundaryLine,
   raiseCertified,
   readJsonIf,
   RUST_PROGRAM,
@@ -111,6 +122,8 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
   const dumps = dumpsRoot(join(files.store, '..'), 'rust')
   rmSync(dumps, { recursive: true, force: true })
   say(`${cases.length} cases with ${exe}, in ${files.root}, with ${Object.entries(index.knobs).map(([k, v]) => `${k}=${v}`).join(' ') || 'no knobs'}`)
+  const golden: Side = { store: join(paths.goldens, 'cases'), root: index.root, resources: index.resources, work: index.work }
+  const rust: Side = { store: files.store, root: files.root, resources: index.resources, work: ctx.work.home }
   const records = await runEngineCases(
     { label: RUST_PROGRAM, exe, resources: index.resources, libraryPath: dirname(exe) },
     {
@@ -124,13 +137,14 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
       platform,
       timeoutMs: smokeTimeoutMs(),
       run: knobRunner(index.knobs, dumps, runHidden, (f) => keptDump(f)),
+      // Past a declined run, the case goes on from the golden run's outputs.
+      after: goldenCarry({ golden, goldens: index.cases, rust }),
       log: (m) => log.detail(m),
     },
   )
   collectDumps(dumps, files.store, records)
+  const carried = records.flatMap((c) => c.runs.filter((r) => r.carried).map((r) => `${c.id}/${r.index}`))
 
-  const golden: Side = { store: join(paths.goldens, 'cases'), root: index.root, resources: index.resources, work: index.work }
-  const rust: Side = { store: files.store, root: files.root, resources: index.resources, work: ctx.work.home }
   const verdicts = new Map<string, CaseVerdict>()
   for (const c of cases) {
     verdicts.set(
@@ -160,6 +174,15 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
       golden: { side: golden, record: index.cases.find((x) => x.id === c.id) },
     }),
   )
+  // What the declines wrote to their streams, and which answered runs hold each family's lines (J11).
+  const streams = declineStreams(
+    cases.map((c) => ({
+      caseId: c.id,
+      golden: { side: golden, record: index.cases.find((x) => x.id === c.id) },
+      rust: { side: rust, record: records.find((x) => x.id === c.id) },
+    })),
+  )
+  const holders = preBoundaryHolders(parity, verdicts)
   const report: CertifyReport = {
     format: CERTIFY_FORMAT,
     createdAt: new Date().toISOString(),
@@ -170,6 +193,9 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
     summary: { families: families.length, passed: families.filter((f) => f.passed).length, certified: raisedParity.families.filter((f) => f.certified).length, raised, regressions },
     families,
     declineGaps: declineGapList,
+    carried,
+    declineStreams: streams,
+    preBoundaryHolders: holders,
   }
   writeJsonAtomic(files.report, report)
   for (const f of families) {
@@ -182,6 +208,10 @@ export async function run({ ctx, args, log }: ParityRun): Promise<number> {
     say(`raised in ${pf}: ${raised.join(', ')}`)
   }
   say(`written: ${files.report}`)
+  say(`${carried.length} declined runs were carried (the case went on from the golden run's outputs; a later run of such a case was made from what the C++ program had)`)
+  say(declineStreamsLine(streams))
+  for (const n of streams.notPrefix.slice(0, 5)) say(`  not a prefix: ${n}`)
+  for (const h of holders) say(preBoundaryLine(h))
   if (declineGapList.length === 0) say(`the decline: every run of the ${held.length} corpus jobs, examples and refusals that reaches an uncertified family is declined, naming each`)
   else say(`DECLINE GAP: ${declineGapList.length} runs of corpus jobs, examples and refusals are let through for a family that is not certified: ${declineGapList.slice(0, 5).join(' | ')}`)
   if (regressions.length > 0) say(`REGRESSION: parity.json certifies ${regressions.join(', ')}, which ${regressions.length === 1 ? 'does' : 'do'} not pass now`)

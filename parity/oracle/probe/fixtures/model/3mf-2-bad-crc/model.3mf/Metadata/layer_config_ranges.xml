@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<objects>
+ <object id="1">
+  <range min_z="0" max_z="1">
+   <option opt_key="layer_height">0.1</option>
+  </range>
+ </object>
+</objects>

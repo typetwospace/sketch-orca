@@ -9,14 +9,28 @@
 // machine, a Visual Studio or a rustc that is not that one, and an argument that would steer cargo
 // somewhere else: another toolchain (`+nightly`), another target, a RUSTFLAGS of the caller's.
 //
+// Every cargo command it runs but fmt also remaps cargo's home folder to the relative `cargo`
+// (rustc's --remap-path-prefix, given through cargo's --config as one more flag of
+// target.x86_64-pc-windows-msvc.rustflags; cargo appends it to the +crt-static of
+// .cargo/config.toml, as it joins arrays). A crate from cargo's registry records its source files'
+// paths in the program (the panic locations of rayon-core, crossbeam-deque and crossbeam-epoch,
+// which orca-tbb brings in). Without the remap those are C:\Users\<name>\.cargo\registry\src\...,
+// which stage refuses to ship (stage.ts privacyProblemsIn); with it they are
+// cargo\registry\src\.... The target is relative because stage also refuses an absolute POSIX
+// path to a source file. Every command gets the same flags, so rs:test:release and stage build one
+// program and cargo rebuilds nothing when one follows the other.
+//
 // The pipeline uses it too: `stage` builds the program it ships with buildRustRelease (cargo build
 // --locked --release, target/release/sketch-orca-rs.exe), and `source` vendors the crates the
-// program is built from with vendorRustCrates (cargo vendor --locked --versioned-dirs).
+// program is built from with vendorRustCrates (cargo vendor --locked --versioned-dirs). The release
+// build also writes a program database (target/release/sketch_orca_rs.pdb). stage does not ship
+// it: the program database names the build folder, which is one reason stage never ships it. The
+// program names it without its folder (its CodeView record is sketch_orca_rs.pdb).
 
 import { spawn, spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { BUILT_WITH } from './bundle.ts'
 import { cleanWinBuildPath, findOnPath, isLeakyEnv, parseSetOutput, splitPathList, vcvarsBaseEnv, winBaselinePath } from './env.ts'
 import { listFiles } from './files.ts'
@@ -41,7 +55,7 @@ export function rustTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
  * limit runs out. Throws a StepError when it fails.
  */
 export async function runCargo(root: string, argv: string[], o: { logPath: string; timeoutMs?: number; env?: NodeJS.ProcessEnv }): Promise<void> {
-  const inv = parseRustArgs(argv)
+  const inv = parseRustArgs(argv, cargoHomeDir(o.env ?? process.env))
   const tool = findRustToolchain(root, o.env ?? process.env)
   mkdirSync(dirname(o.logPath), { recursive: true })
   appendFileSync(o.logPath, `$ cargo ${inv.cargoArgs.join(' ')}\n${tool.notes.join('; ')}\n`)
@@ -147,12 +161,15 @@ function isLibtestFlag(arg: string): boolean {
  *   libtest options (--nocapture, --test-threads and the rest) and everything after the first of
  *   them go after one `--`. A `--` the caller wrote stays where it is.
  * - fmt formats the whole workspace (--all); clippy checks every target unless one is selected.
+ * - Every command but fmt gets `--config` cargoHomeRemapConfig(cargoHome) right after its
+ *   subcommand, which remaps cargo's home folder out of what it builds. fmt compiles nothing,
+ *   and cargo-fmt would not take the flag. clippy hands it on to the cargo check it runs.
  *
  * Throws a UsageError for no command, an unknown command, a cargo toolchain override (`+name`), a
  * `--target` other than the host's, and `--manifest-path` (the workspace is the one in the
  * repository's root).
  */
-export function parseRustArgs(argv: string[]): RustInvocation {
+export function parseRustArgs(argv: string[], cargoHome: string = cargoHomeDir()): RustInvocation {
   const [first, ...rest] = argv
   if (first === undefined) throw new UsageError(`rust.ts needs a command: ${Object.keys(RUST_COMMANDS).join(', ')}`)
   if (!Object.hasOwn(RUST_COMMANDS, first)) throw new UsageError(`unknown rust command ${first} (${Object.keys(RUST_COMMANDS).join(', ')})`)
@@ -183,6 +200,7 @@ export function parseRustArgs(argv: string[]): RustInvocation {
   }
 
   const args: string[] = [RUST_COMMANDS[command]]
+  if (command !== 'fmt') args.push('--config', cargoHomeRemapConfig(cargoHome))
   if (command !== 'fmt' && !own.some((a) => a === '--locked' || a === '--frozen')) args.push('--locked')
   if (command === 'fmt' && !own.includes('--all') && !own.includes('-p') && !own.includes('--package')) args.push('--all')
   if (command === 'clippy' && !own.some((a) => TARGET_SELECTORS.includes(a))) args.push('--all-targets')
@@ -262,9 +280,29 @@ export function rustcProblems(vv: string): string[] {
   return problems
 }
 
+/** Cargo's home folder, as cargo finds it: CARGO_HOME, or .cargo in the home folder; absolute. */
+export function cargoHomeDir(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
+  return resolve(env.CARGO_HOME && env.CARGO_HOME !== '' ? env.CARGO_HOME : join(home, '.cargo'))
+}
+
 /** Cargo's folder: CARGO_HOME\bin, or .cargo\bin in the home folder. */
 export function cargoBinDir(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
   return join(env.CARGO_HOME && env.CARGO_HOME !== '' ? env.CARGO_HOME : join(home, '.cargo'), 'bin')
+}
+
+/** What cargo's home folder becomes in the paths the program records: relative, never `/cargo`. */
+export const CARGO_HOME_REMAP_TO = 'cargo'
+
+/**
+ * The `--config` value that remaps `cargoHome` to CARGO_HOME_REMAP_TO: rustc's
+ * --remap-path-prefix as one more flag of the host target's rustflags, the table .cargo/config.toml
+ * gives +crt-static in. Cargo joins an array given with --config to the config files' (theirs
+ * first), so +crt-static stays; build.rustflags would not do, as cargo ignores it when a
+ * target's rustflags are set. The value is a TOML basic string (JSON's escapes of `\` and `"` are
+ * TOML's), and rustc splits the flag at its last `=`, so a folder with `=` in it stays whole.
+ */
+export function cargoHomeRemapConfig(cargoHome: string): string {
+  return `target.${RUST_PINS.host}.rustflags=[${JSON.stringify(`--remap-path-prefix=${cargoHome}=${CARGO_HOME_REMAP_TO}`)}]`
 }
 
 /**

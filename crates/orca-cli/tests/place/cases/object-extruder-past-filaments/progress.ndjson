@@ -1,0 +1,4 @@
+{"stage":"job","percent":1.0,"message":"reading the job"}
+{"stage":"presets","percent":3.0,"message":"reading the presets"}
+{"stage":"model","percent":8.0,"message":"reading the model"}
+{"stage":"failed","percent":8.0,"message":"objects[0].overrides.extruder: extruder 3 is not one of the job's 1 filament(s) (0 keeps the default)"}

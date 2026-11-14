@@ -1,0 +1,37 @@
+{
+  "format": "sketch-orca-job/1",
+  "command": "layers",
+  "resources": "<resources>",
+  "workDir": "<case>/work",
+  "model": {
+    "path": "<case>/model.stl"
+  },
+  "presets": {
+    "machine": "<presets>/generic2/machine.json",
+    "process": "<presets>/generic2/process.json",
+    "filaments": [
+      "<presets>/generic2/filament_1.json",
+      "<presets>/generic2/filament_2.json"
+    ]
+  },
+  "overrides": {
+    "enable_prime_tower": "1",
+    "wipe_tower_x": "40",
+    "wipe_tower_y": "40"
+  },
+  "objects": [],
+  "customGcodes": [
+    {
+      "printZ": 5,
+      "type": "filament",
+      "extruder": 2
+    }
+  ],
+  "arrange": true,
+  "orient": false,
+  "output": {
+    "gcode": "",
+    "bambu3mf": null,
+    "stats": true
+  }
+}

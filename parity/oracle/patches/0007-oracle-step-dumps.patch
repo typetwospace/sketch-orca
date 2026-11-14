@@ -1,0 +1,568 @@
+sketch-orca oracle patch 0007: every step boundary in full, under SKETCH_ORCA_ORACLE_DUMP.
+Modified for Sketch, 2026-11-13.
+
+With SKETCH_ORCA_ORACLE_DUMP=<folder> (patch 0005), each dump holds every value the step after it
+reads, so that the Rust translation's Print::process() steps can be checked one boundary at a time
+(parity/SOP1.md):
+- object<i>-<step>-<n>.sop1 adds, after its OBJ, LAYR and SUPL records, an OSTA record (the shared
+  object, the slicing parameters, the instances, the first layer wall extruders, the brim box, the
+  object's own skirt and the first layer slices by volume and group), an OWRN record (the object's
+  step states and warnings) and a LEXT record per layer (the layers below and above, the lslices'
+  boxes, the overhangs' box and the curled lines);
+- front-config-<n>.sop1 adds a CONF "default-object" and a CONF "default-region", an FPRT record
+  (the plate, the origin, the filament maps, the print regions and the skirt, brim and wipe tower
+  flags) and an FOBJ record per print object (its size, transformation, instances, slicing
+  parameters, volumes and region layout);
+- print-<step>-<n>.sop1 adds, after CNFL, a PWRN record (the print's step states and warnings), a
+  PXTR record (the conflict's instances, the objects' first layer wall extruders, brim boxes and
+  skirts, the unprintable filaments, the filament maps, the filament change statistics and the fake
+  wipe tower) and a TLXT record (the tool ordering's custom G-code);
+- Print::process() writes print-psConflictCheck-<n>.sop1 at its end, after the conflict check and
+  before "Slicing process finished.": the end of process().
+OracleDump.cpp keeps its lines 1-1017 where patch 0006 left them, as the Rust translation follows
+them line by line. Five of them change in place (18, 66, 770, 783 and 1013) and every new record is
+written after line 1017. It reads no knob of its own. A dump folder that does not exist stops the
+oracle before it does anything else, with exit code 78 (patch 0005). Unset, nothing is written and
+nothing changes.
+
+---
+diff --git a/src/libslic3r/OracleDump.cpp b/src/libslic3r/OracleDump.cpp
+index 3b8a727..7d731a4 100644
+--- a/src/libslic3r/OracleDump.cpp
++++ b/src/libslic3r/OracleDump.cpp
+@@ -15,7 +15,7 @@
+ // written here (HEAD, RUN, CONF, MODL, OBJ, LAYR, SUPL, PRNT, TOOL, WIPE, STAT, CNFL, END) and their
+ // payloads are listed there field by field, in the order this file writes them.
+ // sketch-orca oracle patch 0006 (2026-11-07): front-objects-<n>.sop1 adds the kinds PCGC, HRNG, BRIM
+-// and PNTV, and the CONF scopes run and model-height-range.
++// and PNTV, and the CONF scopes run and model-height-range. Oracle patch 0007 (2026-11-13): the records below line 1017.
+ #include "OracleDump.hpp"
+ 
+ #include <algorithm>
+@@ -63,7 +63,7 @@ struct OracleDumpAccess
+ 
+ namespace Oracle {
+ 
+-namespace {
++namespace { class Dump; void put_object_step_records(Dump &dump, const PrintObject &object, int64_t index); void put_print_step_records(Dump &dump, const Print &print); void put_front_config_records(Dump &dump, const Print &print);
+ 
+ const uint32_t SOP1_VERSION = 1;
+ 
+@@ -767,7 +767,7 @@ void write_print_dump(const Print &print, const std::string &step)
+     }
+     dump.record("CNFL", cnfl);
+ 
+-    dump.write();
++    put_print_step_records(dump, print); dump.write();
+ }
+ 
+ void write_object_dump(const PrintObject &object, int64_t index, const std::string &step)
+@@ -780,7 +780,7 @@ void write_object_dump(const PrintObject &object, int64_t index, const std::stri
+     position = 0;
+     for (const SupportLayer *layer : object.support_layers())
+         dump.record("SUPL", support_layer_record(*layer, position++));
+-    dump.write();
++    put_object_step_records(dump, object, index); dump.write();
+ }
+ 
+ const char *print_step_name(int step)
+@@ -1010,8 +1010,482 @@ void dump_front_config(const Print &print, const DynamicPrintConfig &config)
+         for (size_t r = 0; r < object->num_printing_regions(); ++r)
+             dump.record("CONF", config_record("region", int64_t(i), int64_t(r), object->printing_region(r).config()));
+     }
+-    dump.write();
++    put_front_config_records(dump, print); dump.write();
++}
++
++} // namespace Oracle
++} // namespace Slic3r
++
++// ==== sketch-orca oracle patch 0007 (2026-11-13): the step boundaries in full ====
++//
++// Patch 0007 makes each dump hold every value the step after it reads, so that a crate can replay
++// one step from the dump before it (parity/SOP1.md in sketch-orca). Lines 1-1017 above keep their
++// numbers, as the Rust translation follows them line by line: the writers above reach this code
++// through five lines changed in place (18, 66, 770, 783 and 1013), and every new record kind is
++// written here. Three parts, each its own block of lines:
++// - the object records, OSTA, OWRN and LEXT, appended to every object<i>-<step>-<n>.sop1;
++// - the front-config records, CONF default-object and default-region, FPRT and FOBJ, appended to
++//   every front-config-<n>.sop1;
++// - the print records, PWRN, PXTR and TLXT, appended to every print-<step>-<n>.sop1, the
++//   print-psConflictCheck-<n>.sop1 that Print::process() now writes after its conflict check
++//   (Print.cpp) among them.
++// An object, a layer or a volume is written as its index (in the print, the object's layers or
++// the model object's volumes), never as a pointer or an ObjectID, whose values depend on what
++// was made before. Nothing here runs unless "SKETCH_ORCA_ORACLE_DUMP" is set (dump_enabled()).
++
++#include <set>
++
++#include "BoundingBox.hpp"
++#include "CustomGCode.hpp"
++#include "Line.hpp"
++#include "Slicing.hpp"
++
++namespace Slic3r {
++namespace Oracle {
++namespace {
++
++// ---- Shared by the three parts ----
++
++// The index of `value` in `list`, or -1.
++template<class T, class U> int64_t index_in(const std::vector<T *> &list, const U *value)
++{
++    for (size_t i = 0; i < list.size(); ++i)
++        if (list[i] == value)
++            return int64_t(i);
++    return -1;
++}
++
++// A volume of `object` by its ObjectID, as its index in the model object's volumes, or -1.
++int64_t volume_index(const ModelObject *object, const ObjectID &id)
++{
++    if (object == nullptr)
++        return -1;
++    for (size_t i = 0; i < object->volumes.size(); ++i)
++        if (object->volumes[i]->id() == id)
++            return int64_t(i);
++    return -1;
++}
++
++// A bounding box: bool defined, point min, point max.
++void put_bbox(Payload &p, const BoundingBox &box)
++{
++    p.boolean(box.defined);
++    put_point(p, box.min);
++    put_point(p, box.max);
++}
++
++// The step states of a Print or PrintObject: for each step, u8 state (PrintStateBase::State), then
++// its warnings, each u8 level, bool current, str message, i32 message id. The time stamps are left
++// out: they count every state change of the run, not of this object.
++template<class Base, class Step> void put_step_states(Payload &p, const Base &base, int count)
++{
++    p.count(size_t(count));
++    for (int s = 0; s < count; ++s) {
++        const PrintStateBase::StateWithWarnings state = base.step_state_with_warnings(static_cast<Step>(s));
++        p.u8(uint8_t(state.state));
++        p.count(state.warnings.size());
++        for (const PrintStateBase::Warning &w : state.warnings) {
++            p.u8(uint8_t(w.level));
++            p.boolean(w.current);
++            p.str(w.message);
++            p.i32(int32_t(w.message_id));
++        }
++    }
++}
++
++// SlicingParameters (Slicing.hpp), every field in its order.
++void put_slicing_parameters(Payload &p, const SlicingParameters &s)
++{
++    p.boolean(s.valid);
++    p.u64(uint64_t(s.base_raft_layers));
++    p.u64(uint64_t(s.interface_raft_layers));
++    p.f64(s.base_raft_layer_height);
++    p.f64(s.interface_raft_layer_height);
++    p.f64(s.contact_raft_layer_height);
++    p.f64(s.layer_height);
++    p.f64(s.min_layer_height);
++    p.f64(s.max_layer_height);
++    p.f64(s.max_suport_layer_height);
++    p.f64(s.first_print_layer_height);
++    p.f64(s.first_object_layer_height);
++    p.boolean(s.first_object_layer_bridging);
++    p.boolean(s.zero_gap_interface_top);
++    p.boolean(s.zero_gap_interface_bottom);
++    p.boolean(s.zero_gap_interface_raft);
++    p.f64(s.gap_raft_object);
++    p.f64(s.gap_object_support);
++    p.f64(s.gap_support_object);
++    p.f64(s.raft_base_top_z);
++    p.f64(s.raft_interface_top_z);
++    p.f64(s.raft_contact_top_z);
++    p.f64(s.object_print_z_min);
++    p.f64(s.object_print_z_max);
++    p.f64(s.object_print_z_uncompensated_max);
++    p.f64(s.object_shrinkage_compensation_z);
++}
++
++// ==== The object records (object<i>-<step>-<n>.sop1) ====
++
++// OSTA: what the print object holds besides its layers: i64 index, i64 the object whose layers it
++// shares (Print::process()'s is_print_object_the_same, else -1; PrintObject::get_id is left out, as
++// the command line never sets it), its slicing parameters, a vec of instances (u64 unique id, i64
++// model instance index, point shift without the plate offset), vec<i32> first layer wall extruders
++// (ToolOrdering), bbox first layer brim box (make_brim), entity the object's own skirt, a vec of
++// first layer slices by volume (i64 volume index, a vec of vec<expolygon>), and a vec of first layer
++// volume groups (i32 group id, vec<i64> volume indices, vec<expolygon> slices), as posSlice's
++// groupingVolumesForBrim made them.
++Payload object_state_record(const PrintObject &object, int64_t index)
++{
++    Payload            p;
++    const ModelObject *model = object.model_object();
++    p.i64(index);
++    const PrintObject *shared = object.get_shared_object();
++    p.i64(shared != nullptr && object.print() != nullptr ? object_index(*object.print(), shared) : -1);
++    put_slicing_parameters(p, object.slicing_parameters());
++    p.count(object.instances().size());
++    for (const PrintInstance &instance : object.instances()) {
++        p.u64(uint64_t(instance.unique_id));
++        p.i64(model != nullptr ? index_in(model->instances, instance.model_instance) : -1);
++        put_point(p, instance.shift_without_plate_offset());
++    }
++    p.count(object.object_first_layer_wall_extruders.size());
++    for (int e : object.object_first_layer_wall_extruders)
++        p.i32(int32_t(e));
++    put_bbox(p, object.firstLayerObjectBrimBoundingBox);
++    put_entity(p, object.object_skirt());
++    p.count(object.firstLayerObjSlice().size());
++    for (const VolumeSlices &v : object.firstLayerObjSlice()) {
++        p.i64(volume_index(model, v.volume_id));
++        p.count(v.slices.size());
++        for (const ExPolygons &slices : v.slices)
++            put_expolygons(p, slices);
++    }
++    p.count(object.firstLayerObjGroups().size());
++    for (const groupedVolumeSlices &g : object.firstLayerObjGroups()) {
++        p.i32(int32_t(g.groupId));
++        p.count(g.volume_ids.size());
++        for (const ObjectID &id : g.volume_ids)
++            p.i64(volume_index(model, id));
++        put_expolygons(p, g.slices);
++    }
++    return p;
++}
++
++// OWRN: i64 index, then the object's step states and warnings (put_step_states), one per
++// PrintObjectStep in Print.hpp's order: where a step's warning (the support check's) is kept.
++Payload object_warnings_record(const PrintObject &object, int64_t index)
++{
++    Payload p;
++    p.i64(index);
++    put_step_states<PrintObject, PrintObjectStep>(p, object, int(posCount));
++    return p;
++}
++
++// LEXT: one layer's values that LAYR does not hold, in the layers' order: u64 position, i64 the
++// position of the layer below and of the layer above (-1 for none), vec<bbox> the lslices'
++// boxes, bbox the overhangs' box (posDetectOverhangsForLift), and a vec of curled lines (point a,
++// point b, f32 curled height), which the curled extrusions step leaves on the layer and dumps
++// nowhere of its own (PrintObject::estimate_curled_extrusions never sets its step done).
++Payload layer_extra_record(const std::vector<const Layer *> &layers, const Layer &layer, size_t position)
++{
++    Payload p;
++    p.u64(uint64_t(position));
++    p.i64(layer.lower_layer != nullptr ? index_in(layers, layer.lower_layer) : -1);
++    p.i64(layer.upper_layer != nullptr ? index_in(layers, layer.upper_layer) : -1);
++    p.count(layer.lslices_bboxes.size());
++    for (const BoundingBox &box : layer.lslices_bboxes)
++        put_bbox(p, box);
++    put_bbox(p, layer.loverhangs_bbox);
++    p.count(layer.curled_lines.size());
++    for (const CurledLine &line : layer.curled_lines) {
++        put_point(p, line.a);
++        put_point(p, line.b);
++        p.f32(line.curled_height);
++    }
++    return p;
++}
++
++// After OBJ, the LAYRs and the SUPLs (write_object_dump, line 783): OSTA, OWRN, a LEXT per layer.
++void put_object_step_records(Dump &dump, const PrintObject &object, int64_t index)
++{
++    dump.record("OSTA", object_state_record(object, index));
++    dump.record("OWRN", object_warnings_record(object, index));
++    std::vector<const Layer *> layers;
++    for (const Layer *layer : object.layers())
++        layers.push_back(layer);
++    for (size_t position = 0; position < layers.size(); ++position)
++        dump.record("LEXT", layer_extra_record(layers, *layers[position], position));
++}
++
++// ==== The front-config records (front-config-<n>.sop1) ====
++
++// FPRT: the print's own values that process() reads besides its configs: i32 plate index, bool no
++// check, bool a Bambu Lab printer, f64 plate origin x, y and z, vec<i32> filament maps, a vec of
++// print regions (i32 print region id), bool has a wipe tower, bool has a skirt, bool has an
++// infinite skirt, bool has a brim.
++Payload front_print_record(const Print &print)
++{
++    Payload p;
++    p.i32(int32_t(print.get_plate_index()));
++    p.boolean(print.get_no_check_flag());
++    p.boolean(print.is_BBL_printer());
++    const Vec3d origin = print.get_plate_origin();
++    p.f64(origin.x());
++    p.f64(origin.y());
++    p.f64(origin.z());
++    const std::vector<int> maps = print.get_filament_maps();
++    p.count(maps.size());
++    for (int m : maps)
++        p.i32(int32_t(m));
++    p.count(print.num_print_regions());
++    for (size_t r = 0; r < print.num_print_regions(); ++r)
++        p.i32(int32_t(print.get_print_region(r).print_region_id()));
++    p.boolean(print.has_wipe_tower());
++    p.boolean(print.has_skirt());
++    p.boolean(print.has_infinite_skirt());
++    p.boolean(print.has_brim());
++    return p;
+ }
+ 
++// The layer ranges of an object's regions (PrintObjectRegions): f64 from, f64 to, bool has a config
++// of its own, a vec of volumes (i64 volume index, f32 box min x, y, z and max x, y, z), a vec of
++// volume regions (i64 volume index, i32 parent, i32 the region's print object region id or -1), a
++// vec of painted regions (u32 extruder, i32 parent, i32 region id) and a vec of fuzzy skin
++// painted regions (u8 parent type, i32 parent, i32 region id).
++void put_layer_ranges(Payload &p, const ModelObject *model, const PrintObjectRegions &regions)
++{
++    const auto region_id = [](const PrintRegion *r) { return int32_t(r != nullptr ? r->print_object_region_id() : -1); };
++    p.count(regions.layer_ranges.size());
++    for (const PrintObjectRegions::LayerRangeRegions &range : regions.layer_ranges) {
++        p.f64(double(range.layer_height_range.first));
++        p.f64(double(range.layer_height_range.second));
++        p.boolean(range.config != nullptr);
++        p.count(range.volumes.size());
++        for (const PrintObjectRegions::VolumeExtents &v : range.volumes) {
++            p.i64(volume_index(model, v.volume_id));
++            for (int k = 0; k < 3; ++k)
++                p.f32(v.bbox.min()(k));
++            for (int k = 0; k < 3; ++k)
++                p.f32(v.bbox.max()(k));
++        }
++        p.count(range.volume_regions.size());
++        for (const PrintObjectRegions::VolumeRegion &v : range.volume_regions) {
++            p.i64(v.model_volume != nullptr ? volume_index(model, v.model_volume->id()) : -1);
++            p.i32(int32_t(v.parent));
++            p.i32(region_id(v.region));
++        }
++        p.count(range.painted_regions.size());
++        for (const PrintObjectRegions::PaintedRegion &v : range.painted_regions) {
++            p.u32(uint32_t(v.extruder_id));
++            p.i32(int32_t(v.parent));
++            p.i32(region_id(v.region));
++        }
++        p.count(range.fuzzy_skin_painted_regions.size());
++        for (const PrintObjectRegions::FuzzySkinPaintedRegion &v : range.fuzzy_skin_painted_regions) {
++            p.u8(uint8_t(v.parent_type));
++            p.i32(int32_t(v.parent));
++            p.i32(region_id(v.region));
++        }
++    }
++}
++
++// FOBJ: one print object as posSlice finds it: i64 index, i64 its model object's index in the
++// print's model, size as three i64, point centre offset, matrix transformation, f64 max z, a vec of
++// instances (point shift, u64 id, u64 unique id, i64 model instance index), its slicing
++// parameters, a vec of its model object's volumes (i32 type, matrix, u64 vertex count, u64
++// triangle count; their meshes are front-objects' MODL), then bool has regions and, when it has,
++// matrix the regions' box transformation, a vec of all regions (i32 print region id, i32 print
++// object region id) and the layer ranges (put_layer_ranges).
++Payload front_object_record(const Print &print, const PrintObject &object, int64_t index)
++{
++    Payload            p;
++    const ModelObject *model = object.model_object();
++    p.i64(index);
++    p.i64(model != nullptr ? index_in(print.model().objects, model) : -1);
++    p.i64(int64_t(object.size().x()));
++    p.i64(int64_t(object.size().y()));
++    p.i64(int64_t(object.size().z()));
++    put_point(p, object.center_offset());
++    put_matrix(p, object.trafo());
++    p.f64(object.max_z());
++    p.count(object.instances().size());
++    for (const PrintInstance &instance : object.instances()) {
++        put_point(p, instance.shift);
++        p.u64(uint64_t(instance.id));
++        p.u64(uint64_t(instance.unique_id));
++        p.i64(model != nullptr ? index_in(model->instances, instance.model_instance) : -1);
++    }
++    put_slicing_parameters(p, object.slicing_parameters());
++    p.count(model != nullptr ? model->volumes.size() : 0);
++    if (model != nullptr)
++        for (const ModelVolume *volume : model->volumes) {
++            p.i32(int32_t(volume->type()));
++            put_matrix(p, volume->get_matrix());
++            p.u64(uint64_t(volume->mesh().its.vertices.size()));
++            p.u64(uint64_t(volume->mesh().its.indices.size()));
++        }
++    const PrintObjectRegions *regions = object.shared_regions();
++    p.boolean(regions != nullptr);
++    if (regions != nullptr) {
++        put_matrix(p, regions->trafo_bboxes);
++        p.count(regions->all_regions.size());
++        for (const std::unique_ptr<PrintRegion> &r : regions->all_regions) {
++            p.i32(int32_t(r->print_region_id()));
++            p.i32(int32_t(r->print_object_region_id()));
++        }
++        put_layer_ranges(p, model, *regions);
++    }
++    return p;
++}
++
++// After the CONFs of dump_front_config (line 1013): a CONF default-object and a CONF
++// default-region (the defaults Print::apply made the objects' and regions' configs from, which
++// steps read too, as the curled extrusions step reads inner_wall_acceleration), FPRT, a FOBJ per
++// print object.
++void put_front_config_records(Dump &dump, const Print &print)
++{
++    dump.record("CONF", config_record("default-object", -1, -1, print.default_object_config()));
++    dump.record("CONF", config_record("default-region", -1, -1, print.default_region_config()));
++    dump.record("FPRT", front_print_record(print));
++    const auto objects = print.objects();
++    for (size_t i = 0; i < objects.size(); ++i)
++        dump.record("FOBJ", front_object_record(print, *objects[i], int64_t(i)));
++}
++
++// ==== The print records (print-<step>-<n>.sop1) ====
++
++// A print instance a conflict names, as i64 object index and i64 instance index: -1 and -1 for
++// none (the prime tower, ConflictResult's null), -2 and -2 for one that is not the print's.
++void put_conflict_side(Payload &p, const Print &print, const void *side)
++{
++    if (side == nullptr) {
++        p.i64(-1);
++        p.i64(-1);
++        return;
++    }
++    const auto objects = print.objects();
++    for (size_t i = 0; i < objects.size(); ++i)
++        for (size_t k = 0; k < objects[i]->instances().size(); ++k)
++            if (static_cast<const void *>(&objects[i]->instances()[k]) == side) {
++                p.i64(int64_t(i));
++                p.i64(int64_t(k));
++                return;
++            }
++    p.i64(-2);
++    p.i64(-2);
++}
++
++// One filament change statistic (FilamentChangeStats): i32 flush weight, change count, extruder
++// change count.
++void put_change_stats(Payload &p, const FilamentChangeStats &s)
++{
++    p.i32(int32_t(s.filament_flush_weight));
++    p.i32(int32_t(s.filament_change_count));
++    p.i32(int32_t(s.extruder_change_count));
++}
++
++// PXTR: what the print steps leave that PRNT, TOOL, WIPE, STAT and CNFL do not hold: bool has a
++// conflict and the instances it names (put_conflict_side, first then second; -1 and -1 each when
++// there is none), a vec of objects (i64 index, vec<i32> first layer wall extruders, bbox first
++// layer brim box, entity the object's own skirt), a vec of geometric unprintable filaments per
++// extruder (a vec<i32> each), vec<i32> filament maps, the filament change statistics by extruder
++// count (single extruder, best and current multi-extruder), and the fake wipe tower the conflict
++// check reads (f32 x, y, width, height, layer height, depth, a vec of (f32 z, f32 depth), f32 brim
++// width, rotation angle, cone angle, f64 plate origin x and y, f32 rib offset x and y, a vec of
++// outer walls (f32 z, vec<polyline>)).
++Payload print_extra_record(const Print &print)
++{
++    Payload    p;
++    const auto conflict = print.get_conflict_result();
++    p.boolean(conflict.has_value());
++    put_conflict_side(p, print, conflict.has_value() ? conflict->_obj1 : nullptr);
++    put_conflict_side(p, print, conflict.has_value() ? conflict->_obj2 : nullptr);
++    const auto objects = print.objects();
++    p.count(objects.size());
++    for (size_t i = 0; i < objects.size(); ++i) {
++        const PrintObject &object = *objects[i];
++        p.i64(int64_t(i));
++        p.count(object.object_first_layer_wall_extruders.size());
++        for (int e : object.object_first_layer_wall_extruders)
++            p.i32(int32_t(e));
++        put_bbox(p, object.firstLayerObjectBrimBoundingBox);
++        put_entity(p, object.object_skirt());
++    }
++    const std::vector<std::set<int>> unprintables = print.get_geometric_unprintable_filaments();
++    p.count(unprintables.size());
++    for (const std::set<int> &filaments : unprintables) {
++        p.count(filaments.size());
++        for (int f : filaments)
++            p.i32(int32_t(f));
++    }
++    const std::vector<int> maps = print.get_filament_maps();
++    p.count(maps.size());
++    for (int m : maps)
++        p.i32(int32_t(m));
++    const StatisticsByExtruderCount stats = print.statistics_by_extruder();
++    put_change_stats(p, stats.stats_by_single_extruder);
++    put_change_stats(p, stats.stats_by_multi_extruder_best);
++    put_change_stats(p, stats.stats_by_multi_extruder_curr);
++    const FakeWipeTower &tower = print.get_fake_wipe_tower();
++    p.f32(tower.pos.x());
++    p.f32(tower.pos.y());
++    p.f32(tower.width);
++    p.f32(tower.height);
++    p.f32(tower.layer_height);
++    p.f32(tower.depth);
++    p.count(tower.z_and_depth_pairs.size());
++    for (const std::pair<float, float> &zd : tower.z_and_depth_pairs) {
++        p.f32(zd.first);
++        p.f32(zd.second);
++    }
++    p.f32(tower.brim_width);
++    p.f32(tower.rotation_angle);
++    p.f32(tower.cone_angle);
++    p.f64(tower.plate_origin.x());
++    p.f64(tower.plate_origin.y());
++    p.f32(tower.rib_offset.x());
++    p.f32(tower.rib_offset.y());
++    p.count(tower.outer_wall.size());
++    for (const auto &wall : tower.outer_wall) {
++        p.f32(wall.first);
++        put_polylines(p, wall.second);
++    }
++    return p;
++}
++
++// TLXT: the tool ordering's custom G-code, layer by layer as TOOL lists the layers: for each, a vec
++// of the custom G-code placed there (none or one: f64 print z, i32 type, i32 extruder, str colour,
++// str extra), which TOOL gives only as a bool.
++Payload tool_extra_record(const Print &print)
++{
++    const ToolOrdering &ordering = print.tool_ordering();
++    Payload             p;
++    p.count(size_t(ordering.end() - ordering.begin()));
++    for (auto it = ordering.begin(); it != ordering.end(); ++it) {
++        const CustomGCode::Item *item = it->custom_gcode;
++        p.count(item != nullptr ? 1 : 0);
++        if (item == nullptr)
++            continue;
++        p.f64(item->print_z);
++        p.i32(int32_t(item->type));
++        p.i32(int32_t(item->extruder));
++        p.str(item->color);
++        p.str(item->extra);
++    }
++    return p;
++}
++
++// After CNFL (write_print_dump, line 770): PWRN, the print's step states and warnings
++// (put_step_states, one per PrintStep in Print.hpp's order), PXTR and TLXT.
++void put_print_step_records(Dump &dump, const Print &print)
++{
++    Payload warnings;
++    put_step_states<Print, PrintStep>(warnings, print, int(psCount));
++    dump.record("PWRN", warnings);
++    dump.record("PXTR", print_extra_record(print));
++    dump.record("TLXT", tool_extra_record(print));
++}
++
++} // namespace
+ } // namespace Oracle
+ } // namespace Slic3r
+diff --git a/src/libslic3r/Print.cpp b/src/libslic3r/Print.cpp
+index e25ef7d..367c7dd 100644
+--- a/src/libslic3r/Print.cpp
++++ b/src/libslic3r/Print.cpp
+@@ -2608,6 +2608,11 @@ void Print::process(long long *time_cost_with_cache, bool use_cache)
+         }
+     }
+ 
++    // sketch-orca oracle patch 0007 (2026-11-13): the end of process(). psConflictCheck is never set
++    // done here, so with "SKETCH_ORCA_ORACLE_DUMP" set the print is dumped as print-psConflictCheck-<n>
++    // after the check.
++    if (Oracle::dump_enabled())
++        Oracle::dump_print_step(*this, int(psConflictCheck));
+     BOOST_LOG_TRIVIAL(info) << "Slicing process finished." << log_memory_info();
+ }
+ 

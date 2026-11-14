@@ -24,6 +24,9 @@
 //! - [`its`]: the `its_*` helpers of `TriangleMesh.cpp`, `MeshSplitImpl.hpp` and `stl.h` that
 //!   those reach (the volume, the bounding box, the face neighbours, the split into patches, the
 //!   transforms, the projections for 2D hulls).
+//! - [`face_edge_ids`]: `its_face_edge_ids` of `TriangleMesh.cpp` in its four forms, the edge ids
+//!   the slicer chains its lines by (added by orca-o3-front-2, 2026-11-13; `slice.sop1`'s SLFE
+//!   records them, which orca-model's probe test replays).
 //! - [`eigen_lu`]: the determinant Eigen takes of a block of runtime size, by LU factorisation.
 //! - [`log`]: the engine's `BOOST_LOG_TRIVIAL` messages these send, to a sink the caller sets.
 //!
@@ -34,6 +37,7 @@
 
 pub mod admesh;
 pub mod eigen_lu;
+pub mod face_edge_ids;
 pub mod its;
 pub mod log;
 pub mod triangle_mesh;

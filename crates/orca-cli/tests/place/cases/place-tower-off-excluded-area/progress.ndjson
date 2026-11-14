@@ -1,0 +1,17 @@
+{"stage":"job","percent":1.0,"message":"reading the job"}
+{"stage":"presets","percent":3.0,"message":"reading the presets"}
+{"stage":"model","percent":8.0,"message":"reading the model"}
+{"stage":"arrange","percent":12.0,"message":"arranging the objects on the plate"}
+{"stage":"slice","percent":14.0,"message":"preparing the print"}
+{"stage":"slice","percent":19.0,"message":"Slicing mesh"}
+{"stage":"slice","percent":27.0,"message":"Generating walls"}
+{"stage":"slice","percent":35.0,"message":"Generating infill regions"}
+{"stage":"slice","percent":43.0,"message":"Generating infill toolpath"}
+{"stage":"slice","percent":55.0,"message":"Checking support necessity"}
+{"stage":"slice","percent":71.8,"message":"Detect overhangs for auto-lift"}
+{"stage":"slice","percent":71.8,"message":"Generating skirt & brim"}
+{"stage":"slice","percent":75.0,"message":"Optimizing toolpath"}
+{"stage":"slice","percent":75.0,"message":"Optimizing toolpath"}
+{"stage":"slice","percent":75.0,"message":"Optimizing toolpath"}
+{"stage":"slice","percent":75.0,"message":"Generating skirt & brim"}
+{"stage":"done","percent":100.0,"message":"done"}

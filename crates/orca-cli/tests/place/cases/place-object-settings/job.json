@@ -1,0 +1,55 @@
+{
+  "format": "sketch-orca-job/1",
+  "command": "layers",
+  "resources": "<resources>",
+  "workDir": "<case>/work",
+  "model": {
+    "path": "<case>/model.stl"
+  },
+  "presets": {
+    "machine": "<presets>/generic/machine.json",
+    "process": "<presets>/generic/process.json",
+    "filaments": [
+      "<presets>/generic/filament_1.json"
+    ]
+  },
+  "overrides": {},
+  "objects": [
+    {
+      "index": 0,
+      "overrides": {
+        "wall_loops": "3",
+        "sparse_infill_density": "30%",
+        "extruder": "1"
+      },
+      "layerHeights": {
+        "mode": "fixed"
+      },
+      "heightRanges": [
+        {
+          "from": 5,
+          "to": 10,
+          "overrides": {
+            "layer_height": "0.1",
+            "wall_loops": "4"
+          }
+        },
+        {
+          "from": 12,
+          "to": 15,
+          "overrides": {
+            "sparse_infill_pattern": "gyroid"
+          }
+        }
+      ]
+    }
+  ],
+  "customGcodes": [],
+  "arrange": true,
+  "orient": false,
+  "output": {
+    "gcode": "",
+    "bambu3mf": null,
+    "stats": true
+  }
+}

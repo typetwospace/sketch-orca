@@ -25,11 +25,15 @@
 //!   reaches that stage, `<stage>:abort` with an abort, as in the C++ program, and `<stage>:panic`
 //!   (this program only) with a panic. The access violation is raised with `RaiseException`, so
 //!   its place is in the system's KERNELBASE.dll (the crash-location mask of parity/masks.json
-//!   covers any place). This program reaches the stages `job`, `presets` and `model` (`run.rs`),
-//!   so a trigger at one of them crashes as the C++ program does there. [`test_point`] is the
-//!   trigger alone, for a point that is not a stage: `decline`, just before sketch-orca-rs
-//!   writes a decline (`run.rs`), while the result is armed, since it reaches no stage past
-//!   `model`.
+//!   covers any place). This program reaches the stages `job`, `presets`, `model`, for a job
+//!   that orients its objects `orient`, and for a layers or slice job that arranges its objects
+//!   `arrange` (`run.rs`), so a trigger at one of them crashes as the C++ program does there.
+//!   [`test_point`] is the trigger alone, for a point that is not a stage: `decline`, just before
+//!   sketch-orca-rs writes a decline (`run.rs`), while the result is armed, since it reaches no
+//!   stage past the one it declines in; a crash there names that stage (`presets` for a
+//!   compatibility condition the parser does not take, `model`, `orient` for a job that orients
+//!   its objects, and for a layers or slice job declined once its objects are placed, `arrange`,
+//!   or `model` when it does not arrange them).
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};

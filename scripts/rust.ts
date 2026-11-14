@@ -15,7 +15,9 @@
 // cargo's own when cargo ran; 3 when the runner refuses (another Visual Studio, MSVC, SDK or
 // rustc than the pinned ones, or the cargo run was stopped after its time limit); 64 for a command
 // line it does not take (run.ts, EXIT). The cargo run ends at the latest after 45 minutes
-// (SKETCH_ORCA_RUST_TIMEOUT_MS sets another limit); it never opens a window.
+// (SKETCH_ORCA_RUST_TIMEOUT_MS sets another limit); it never opens a window. Every command but fmt
+// also gets the cargo-home remap, a --config that remaps cargo's home folder to `cargo`
+// (scripts/lib/rust.ts).
 
 import { spawn, spawnSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'

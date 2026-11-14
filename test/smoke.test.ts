@@ -8,7 +8,7 @@ import { REFUSAL_FAMILIES } from '../scripts/lib/parity/corpus.ts'
 import { isEngineAbsolute, RESULT_FORMAT, validateJob, type JobResult } from '../scripts/lib/job.ts'
 import type { OrcaLock } from '../scripts/lib/lock.ts'
 import { writeStamp, workPaths } from '../scripts/lib/paths.ts'
-import { cube, meshBounds } from '../scripts/lib/models.ts'
+import { cube, encodeBinaryStl, meshBounds } from '../scripts/lib/models.ts'
 import type { FlatPreset, PresetSet } from '../scripts/lib/profiles.ts'
 import {
   CAPITAL_KEY,
@@ -28,10 +28,16 @@ import {
   PRIME_TOWER_JOBS,
   REFUSALS,
   REFUSE,
+  MODEL_REFUSE,
+  RS_DECLINE_DONE,
+  RS_INFO_CUBE_OBJ,
   RUN_INPUTS,
+  RUST_MODEL_REFUSALS,
   RUST_OWN_REFUSALS,
   RUST_SMOKE_CASES,
+  RUST_STAGES,
   SMOKE_CASES,
+  asciiStl,
   endedWithinRust,
   lowByte,
   withoutImplementation,
@@ -616,8 +622,11 @@ describe('jobs and the engine environment', () => {
     // process made for another printer, an override value the setting does not take, a
     // nozzle_volume past the flushing volumes, settings Orca's check refuses, no profiles, a work
     // folder that cannot be made) and a missing model with the stage's warnings, which checkRefusal
-    // now checks.
-    expect(SMOKE_VERSION).toBe(12)
+    // now checks; version 13 the refusals of the model's reading and of placement (an empty or
+    // broken model file of each reader, an object past the model, an object's and a height range's
+    // settings, custom G-code placement refuses, a prime tower past the bed or too wide, a cube left
+    // off the bed), rs-info, rs-model-refusals, and rs-decline at the slice.
+    expect(SMOKE_VERSION).toBe(13)
     // A raised and a lowered nozzle; the capitalised key is one of Orca's own.
     expect(Z_OFFSETS.some((o) => o > 0) && Z_OFFSETS.some((o) => o < 0)).toBe(true)
     expect(CAPITAL_KEY.key).not.toBe(CAPITAL_KEY.key.toLowerCase())
@@ -1078,8 +1087,32 @@ describe('exit codes, refusals and info', () => {
       'resources-without-profiles',
       'work-folder-unmakeable',
       'preset-warnings',
+      'empty-model-file',
+      'stl-no-triangles',
+      'stl-truncated',
+      'stl-ascii-bad-facet',
+      'obj-face-out-of-range',
+      'object-index-past-model',
+      'object-whole-plate-setting',
+      'object-unknown-setting',
+      'object-extruder-past-filaments',
+      'range-object-setting',
+      'range-zero-layer-height',
+      'range-extruder-past-filaments',
+      'color-change-without-extruder',
+      'filament-change-one-filament',
+      'filament-change-past-filaments',
+      'pause-without-pause-gcode',
+      'custom-gcode-by-object',
+      'tower-set-past-the-bed',
+      'tower-fits-nowhere',
+      'off-the-bed',
     ])
-    for (const r of REFUSALS) expect(`${r.code} ${table.get(r.code)}`).toBe(`${r.code} ${r.exitCode}`)
+    // not-printable is -52 in the table, but -50 (empty-plate's) when no object is inside the
+    // volume (cli/run.cpp check_build_volume): off-the-bed's one object is wholly off the bed.
+    expect([table.get('not-printable'), table.get('empty-plate')]).toEqual([-52, -50])
+    const tableExitCode = (r: { id: string; code: string }) => (r.id === 'off-the-bed' ? table.get('empty-plate') : table.get(r.code))
+    for (const r of REFUSALS) expect(`${r.id} ${r.code} ${tableExitCode(r)}`).toBe(`${r.id} ${r.code} ${r.exitCode}`)
     for (const j of FLUSH_JOBS) if (j.refused) expect(`${j.refused.code} ${table.get(j.refused.code)}`).toBe(`${j.refused.code} ${j.refused.exitCode}`)
     const dir = resolve(scratch, 'refuse')
     const res = resolve(scratch, 'resources')
@@ -1091,9 +1124,14 @@ describe('exit codes, refusals and info', () => {
     writeFileSync(presets.process, JSON.stringify(generic.process))
     writeFileSync(presets.filaments[0]!, JSON.stringify(generic.filament))
     const made = Object.fromEntries(REFUSALS.map((r) => [r.id, r.make(join(dir, r.id), res, presets)]))
+    // Layers jobs: the profile refusals, the objects index past the model, and every refusal of
+    // placement (each reaches the boundary without slicing); the rest are slice jobs.
+    const placementFrom = REFUSALS.findIndex((r) => r.id === 'object-whole-plate-setting')
+    const layersJobs = ['profile-not-at-zero', 'layers-above-the-nozzle', 'object-index-past-model', ...REFUSALS.slice(placementFrom).map((r) => r.id)]
+    expect(layersJobs.length).toBe(3 + 14)
     for (const r of REFUSALS) {
       const { job } = made[r.id]!
-      expect(job.command).toBe(['profile-not-at-zero', 'layers-above-the-nozzle'].includes(r.id) ? 'layers' : 'slice')
+      expect(`${r.id} ${job.command}`).toBe(`${r.id} ${layersJobs.includes(r.id) ? 'layers' : 'slice'}`)
       expect(job.output.gcode).toBe(r.id === 'gcode-folder-unmakeable' ? join(dir, r.id, 'blocker', 'out.gcode') : join(dir, r.id, 'out.gcode'))
       expect(job.overrides.layer_height).toBe(r.id === 'settings-orca-refuses' ? PRESET_REFUSE.refusedSetting.value : String(CUBE.layerHeight))
       // The jobs written unchecked are the ones job.ts refuses itself: the engine must refuse them too.
@@ -1136,6 +1174,54 @@ describe('exit codes, refusals and info', () => {
     expect(REFUSE.belowFirstLayer).toBeLessThanOrEqual(0.5 * CUBE.firstLayer)
     expect(made['too-big-for-the-bed']!.model!.triangles).toEqual(cube(REFUSE.tooBig).triangles)
     expect(REFUSALS.find((r) => r.id === 'too-big-for-the-bed')!.objectIndex).toBe(0)
+
+    // The model's reading: each writes its own broken file in its folder.
+    const file = (id: string, name: string) => readFileSync(join(dir, id, name))
+    expect(made['empty-model-file']!.job.model.path).toBe(join(dir, 'empty-model-file', 'model.stl'))
+    expect(file('empty-model-file', 'model.stl').length).toBe(0)
+    const none = file('stl-no-triangles', 'model.stl')
+    expect([none.length, none.readUInt32LE(80)]).toEqual([84, 0])
+    // Cut inside the sixth triangle, while the count still says 12.
+    const cut = file('stl-truncated', 'model.stl')
+    expect([cut.length, cut.readUInt32LE(80)]).toEqual([MODEL_REFUSE.truncatedAt, 12])
+    expect(cut.equals(encodeBinaryStl(cube(CUBE.size), 'truncated').subarray(0, MODEL_REFUSE.truncatedAt))).toBe(true)
+    expect(MODEL_REFUSE.truncatedAt > 84 + 50 * 5 && MODEL_REFUSE.truncatedAt < 84 + 50 * 6).toBe(true)
+    // An ASCII STL of the cube with one vertex's z not a number; the rest as asciiStl writes it.
+    const bad = file('stl-ascii-bad-facet', 'model.stl').toString('utf8').split('\n')
+    const good = asciiStl(cube(CUBE.size), 'bad facet').split('\n')
+    expect(bad.filter((l, i) => l !== good[i]!)).toEqual([good[24]!.replace(/ \S+$/, ` ${MODEL_REFUSE.badVertex}`)])
+    expect(good[24]!.trim().startsWith('vertex ')).toBe(true)
+    expect(good[0]).toBe('solid bad facet')
+    expect(made['obj-face-out-of-range']!.job.model.path).toBe(join(dir, 'obj-face-out-of-range', 'model.obj'))
+    expect(file('obj-face-out-of-range', 'model.obj').toString('utf8')).toBe(MODEL_REFUSE.objOutOfRange)
+    expect(made['object-index-past-model']!.job.objects.map((o) => o.index)).toEqual([1])
+    // Placement: an object's or a height range's setting, a filament past the job's, custom G-code
+    // that placement refuses, the prime tower, and a cube that arrange off leaves off the bed.
+    expect(made['object-whole-plate-setting']!.job.objects[0]!.overrides).toEqual({ nozzle_diameter: '0.6' })
+    expect(made['range-object-setting']!.job.objects[0]!.heightRanges[0]!.overrides).toEqual({ enable_support: '1' })
+    expect(made['range-zero-layer-height']!.job.objects[0]!.heightRanges[0]!.overrides).toEqual({ layer_height: '0' })
+    for (const id of ['color-change-without-extruder', 'filament-change-past-filaments']) expect(made[id]!.job.presets.filaments).toEqual([presets.filaments[0], presets.filaments[0]])
+    expect(made['filament-change-one-filament']!.job.presets.filaments.length).toBe(1)
+    expect(made['pause-without-pause-gcode']!.job.overrides.machine_pause_gcode).toBe('')
+    expect(made['custom-gcode-by-object']!.job.overrides.print_sequence).toBe('by object')
+    expect(made['tower-set-past-the-bed']!.job.overrides.wipe_tower_x).toBe(String(TOWER_OFF_BED))
+    expect(made['tower-fits-nowhere']!.job.overrides.prime_tower_width).toBe(String(TOWER_TOO_WIDE))
+    expect(made['off-the-bed']!.job.arrange).toBe(false)
+    expect(meshBounds(made['off-the-bed']!.model!)).toEqual({ min: MODEL_REFUSE.offBed.min, max: MODEL_REFUSE.offBed.max })
+    expect(REFUSALS.filter((r) => r.objectIndex === 0).map((r) => r.id)).toEqual([
+      'too-big-for-the-bed',
+      'flat-model',
+      'lone-triangle',
+      'profile-not-at-zero',
+      'layers-above-the-nozzle',
+      'object-whole-plate-setting',
+      'object-unknown-setting',
+      'object-extruder-past-filaments',
+      'range-object-setting',
+      'range-zero-layer-height',
+      'range-extruder-past-filaments',
+      'off-the-bed',
+    ])
 
     // The presets stage's refusals: each changes one preset file, written into the refusal's own
     // presets/ folder (the layout of crates/orca-cli/tests/intake.rs), and leaves the others the set's.
@@ -1220,8 +1306,8 @@ describe('exit codes, refusals and info', () => {
 })
 
 describe("the Rust program's cases", () => {
-  test('rs-version, rs-config-def, rs-intake and rs-decline, in that order, none of them a C++ case', () => {
-    expect(RUST_SMOKE_CASES.map((c) => c.id)).toEqual(['rs-version', 'rs-config-def', 'rs-intake', 'rs-decline'])
+  test('rs-version, rs-config-def, rs-intake, rs-info, rs-model-refusals and rs-decline, in that order, none of them a C++ case', () => {
+    expect(RUST_SMOKE_CASES.map((c) => c.id)).toEqual(['rs-version', 'rs-config-def', 'rs-intake', 'rs-info', 'rs-model-refusals', 'rs-decline'])
     for (const c of RUST_SMOKE_CASES) expect(SMOKE_CASES.some((s) => s.id === c.id)).toBe(false)
     expect(SMOKE_CASES.length).toBe(19)
   })
@@ -1252,11 +1338,42 @@ describe("the Rust program's cases", () => {
     // holds each to the C++ result as an intake golden (parity/goldens/front/intake/).
     const beforeTheModel = REFUSALS.filter((r) => !['preset-file-key', 'two-at-one-print-z', 'profile-not-at-zero', 'drive-rooted-path'].includes(r.id) && REFUSAL_FAMILIES[r.id] === undefined).map((r) => r.id)
     expect(beforeTheModel).toEqual([...RUST_OWN_REFUSALS])
-    // A decline of a job the C++ refused within those steps is wrong; past them it is not.
+    // A decline of a job the C++ ended within the stages the Rust program does (RUST_STAGES: the
+    // job, the presets, the model and the placement) is wrong; past them, at the slice, it is not.
+    expect([...RUST_STAGES]).toEqual(['job', 'presets', 'model', 'arrange'])
     expect(endedWithinRust(['job', 'presets', 'failed'], 'setting-invalid')).toBe(true)
     expect(endedWithinRust(['job', 'presets', 'model', 'failed'], 'file-not-found')).toBe(true)
-    expect(endedWithinRust(['job', 'presets', 'model', 'failed'], 'model-unreadable')).toBe(false)
-    expect(endedWithinRust(['job', 'presets', 'model', 'arrange', 'failed'], 'arrange-failed')).toBe(false)
+    expect(endedWithinRust(['job', 'presets', 'model', 'failed'], 'model-unreadable')).toBe(true)
+    expect(endedWithinRust(['job', 'presets', 'model', 'done'])).toBe(true)
+    expect(endedWithinRust(['job', 'presets', 'model', 'arrange', 'failed'], 'arrange-failed')).toBe(true)
+    expect(endedWithinRust(['job', 'presets', 'model', 'arrange', 'done'])).toBe(true)
+    expect(endedWithinRust(['job', 'presets', 'model', 'arrange', 'slice', 'failed'], 'not-printable')).toBe(false)
+    expect(endedWithinRust(['job', 'presets', 'model', 'arrange', 'slice', 'done'])).toBe(false)
+    // A run cut off inside the model or the placement, with no line of its end, did not end there.
+    expect(endedWithinRust(['job', 'presets', 'model'], 'internal-error')).toBe(false)
+    expect(endedWithinRust(['job', 'presets', 'model', 'arrange'], 'internal-error')).toBe(false)
+  })
+
+  test("the refusals of the model's reading and of placement: refusals of the smoke run in model-load and placement, none of them rs-intake's", () => {
+    for (const id of RUST_MODEL_REFUSALS) expect(REFUSALS.some((r) => r.id === id)).toBe(true)
+    expect([...RUST_MODEL_REFUSALS].sort() as string[]).toEqual(
+      REFUSALS.filter((r) => {
+        const f = REFUSAL_FAMILIES[r.id]
+        return Array.isArray(f) && !f.includes('slice-mesh')
+      })
+        .map((r) => r.id)
+        .sort(),
+    )
+    for (const id of RUST_MODEL_REFUSALS) expect((RUST_OWN_REFUSALS as readonly string[]).includes(id)).toBe(false)
+  })
+
+  test("rs-info's quad cube and rs-decline's done families", () => {
+    // Six quads of the 20 mm cube: twelve triangles once each face is a fan.
+    expect(RS_INFO_CUBE_OBJ.split('\n').filter((l) => l.startsWith('v ')).length).toBe(8)
+    expect(RS_INFO_CUBE_OBJ.split('\n').filter((l) => l.startsWith('f ') && l.split(' ').length === 5).length).toBe(6)
+    expect([...RS_DECLINE_DONE]).toEqual(['version', 'config-def', 'intake', 'preset-conditions', 'model-load', 'placement', 'info'])
+    expect((RS_DECLINE_DONE as readonly string[]).includes('slice-mesh')).toBe(false)
+    expect((RS_DECLINE_DONE as readonly string[]).includes('orient')).toBe(false)
   })
 
   test('an exit code is compared by its low byte, as Bun and Node report -8', () => {

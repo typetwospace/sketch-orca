@@ -27,7 +27,10 @@
 //   bundle.json                     sketch-orca-source/1: what this is the source of, and what it holds
 //   SHA256SUMS                      every other file
 //
-// The bundle is made only for a staged engine that matches the current lock, patches and front end.
+// The bundle is made only for a staged engine that matches the current lock, patches and front end,
+// and whose staged sketch-orca-rs, if it has one, holds the checkout's parity/parity.json as it is
+// now (stage.ts stagedParityProblem: the program declines by the copy it was built with, so a stale
+// decline list never ships).
 // Run again, it skips when its inputs are unchanged and every file matches SHA256SUMS.
 // --no-deps leaves the dependency packages out (they stay listed in bundle.json, with their URLs),
 // and the bundle then says it is not complete. A built dependency whose source is not pinned, a file
@@ -51,7 +54,7 @@ import { MINGW_PACKAGES, MSYS2_BASE, type MingwPackage } from './mingw.ts'
 import { binariesNotice, binaryLicenseTexts, cachedInventory, checkPackageBinaries, describeUnit, INVENTORY_VERSION, inventoryPackage, PACKAGE_BINARIES, type KnownPackageBinary } from './packagebins.ts'
 import { sha256File, sha256Text, writeStamp } from './paths.ts'
 import { capture, Log, runLogged, StepError } from './run.ts'
-import { builderNeedles, builtDependencies, dependencySourceDir, privacyProblems, privacyProblemsIn, privacyRefusal, readManifest, USER_FOLDER_NEEDLES, verifyStaged, type EngineManifest, type StageCopy } from './stage.ts'
+import { builderNeedles, builtDependencies, dependencySourceDir, privacyProblems, privacyProblemsIn, privacyRefusal, readCheckoutParityJson, readManifest, stagedParityProblem, USER_FOLDER_NEEDLES, verifyStaged, type EngineManifest, type StageCopy } from './stage.ts'
 import { currentPlatform, findDepsTools } from './toolchain.ts'
 
 export const SOURCE_FORMAT = 'sketch-orca-source/1'
@@ -712,7 +715,7 @@ function findGit(platform: Platform): string {
   return git
 }
 
-/** The staged engine, checked against the current lock, patches and front end. */
+/** The staged engine, checked against the current lock, patches and front end, its sketch-orca-rs against parity/parity.json. */
 export function stagedFor(ctx: Context): EngineManifest {
   const dir = join(ctx.work.dist, 'engine')
   if (!existsSync(join(dir, 'manifest.json'))) throw new StepError(`no staged engine in ${dir}; run stage first`)
@@ -723,6 +726,11 @@ export function stagedFor(ctx: Context): EngineManifest {
   if (m.cli !== hashTree(ctx.engine.cli)) throw new StepError('cli/ changed since the engine was staged; run build and stage')
   const problems = verifyStaged(dir, m)
   if (problems.length > 0) throw new StepError(`the staged engine does not match its manifest (${problems.slice(0, 3).join('; ')}); run stage`)
+  // The staged sketch-orca-rs declines by the parity.json it was built with: the checkout's as it is now.
+  if (m.rust) {
+    const parityProblem = stagedParityProblem(nativePath(dir, m.rust.exe), readCheckoutParityJson(ctx.engine.engine))
+    if (parityProblem) throw new StepError(`the staged sketch-orca-rs is not this checkout's: ${parityProblem}`)
+  }
   return m
 }
 

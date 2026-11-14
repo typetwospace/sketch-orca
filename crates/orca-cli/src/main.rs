@@ -18,10 +18,19 @@
 //! `implementation: "rust"`). `run` checks its command line and reads and checks the job as the
 //! C++ does, writing the same result and progress file for a job it refuses (`result.rs`,
 //! `job.rs`); then it does the job's work as far as it is ported (`run.rs`): the resources and
-//! work folders, the presets stage (`presets.rs`, on Orca's configuration in `config.rs`) and the
-//! model file's check, with the C++ failures and warnings. A valid job that gets past them it
-//! declines, `not-ported` with exit -8, while what the job needs is not ported and certified
-//! (`decline.rs`). A crash or a panic still writes the result (`crash.rs`).
+//! work folders, the presets stage (`presets.rs`, on Orca's configuration in `config.rs`), the
+//! model stage (`model.rs`, on orca-model's readers) and the objects' settings and placement
+//! (`place.rs`, on orca-model's and orca-arrange's arrangement), with the C++ failures and
+//! warnings. An info job it answers whole (`info.rs`). A job that orients its objects, and a
+//! layers or slice job once its objects are placed, it declines, `not-ported` with exit -8, while
+//! what the job needs is not ported and certified (`decline.rs`). Orca's log goes to stderr as
+//! the C++ program's does (`log.rs`), and a crash or a panic still writes the result
+//! (`crash.rs`).
+//!
+//! For parity work it reads the oracle's knobs (`SKETCH_ORCA_ORACLE_*`) as the oracle does
+//! (`oracle.rs`): `main` turns the CRT's FMA3 paths off when asked, refuses a knob it cannot read
+//! before anything else (exit 78), and runs the rest, the engine's main, in the thread knob's
+//! arena when that knob is set.
 
 mod common;
 mod config;
@@ -29,8 +38,13 @@ mod config_def;
 mod crash;
 mod decline;
 mod files;
+mod info;
 mod job;
+mod log;
+mod model;
+mod oracle;
 mod paths;
+mod place;
 mod presets;
 mod result;
 mod run;
@@ -296,20 +310,39 @@ pub(crate) fn write_text(out: &mut dyn Write, text: &str) {
     let _ = out.flush();
 }
 
-fn main() {
+/// The engine's main (`engine_main` of the oracle's `cli/main.cpp`): the clock, seed and dump
+/// knobs checked, then the crash handlers, the log and the command.
+fn engine_main() -> i32 {
+    if let Some(problem) = oracle::engine_problem() {
+        return oracle::knob_error(&mut std::io::stderr(), &problem);
+    }
     crash::install();
     let args: Vec<String> = std::env::args_os()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
+    // cli/main.cpp: log_to_stderr() and set_logging_level(log_level()), before the command.
+    log::install();
     let mut out = std::io::stdout();
     let mut err = std::io::stderr();
-    let code = run(
+    run(
         &args,
         &mut Streams {
             out: &mut out,
             err: &mut err,
         },
-    );
+    )
+}
+
+fn main() {
+    // The oracle's static initializer runs first of all: SKETCH_ORCA_ORACLE_FMA3=0.
+    oracle::fma3_switch();
+    if let Some(problem) = oracle::main_problem() {
+        std::process::exit(oracle::knob_error(&mut std::io::stderr(), problem));
+    }
+    let code = match oracle::threads() {
+        None => engine_main(),
+        Some(p) => oracle::in_thread_arena(p, engine_main),
+    };
     std::process::exit(code);
 }
 

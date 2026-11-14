@@ -1,0 +1,16 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "temperature-difference",
+  "message": "object 0 (cube) and object 1 (block) print with filaments of far apart temperatures (a high-temperature and a low-temperature filament type), which Orca does not arrange on one plate; slice them as separate jobs",
+  "exitCode": -62,
+  "warnings": [],
+  "command": "layers",
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.3.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

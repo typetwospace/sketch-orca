@@ -190,6 +190,48 @@ off, and builds them with 2 Ninja jobs; a `CompilerIdFortran` folder or a `.vfpr
 `<work>/oracle/probe-build` before or after the build fails the run. The programs run hidden, one
 after the other, with the oracle's library folders on `PATH`.
 
+### The chain for an engine version
+
+A new engine version (0.3.0 first, on 2026-11-11) runs the whole chain in this order, each step
+after the last has passed, so the goldens stand for the `cli/`, the oracle and the corpus there
+are now. With `SKETCH_ORCA_JOBS=4` a C++ build stays within 12 GB (2.5 GB a compile job).
+
+```
+bun run engine build                 # the engine, with the new SKETCH_ORCA_VERSION
+bun run engine smoke                 # every smoke case, then the stamp stage reads
+bun run engine parity oracle         # the oracle on the same cli/, with every oracle patch
+bun run engine parity probe --check  # the probe records, unchanged on the new oracle
+bun run engine stage                 # the engine and sketch-orca-rs in <work>/dist/engine
+bun run engine parity neutral        # must exit 0
+bun run engine parity corpus         # the corpus as corpus.ts makes it now
+bun run engine parity record         # the goldens, with the front-objects dumps
+bun run engine parity envelope       # the shipped engine's own run-to-run variance
+bun run rs:build                     # target/debug/sketch-orca-rs.exe, which certify runs
+bun run engine parity certify        # raises the families every run passes
+bun run rs:build                     # again: the program with the flags certify raised
+bun run engine parity certify --check
+bun run engine parity goldens --check <second work folder>   # must list no H-site
+bun run engine stage                 # again: sketch-orca-rs with the parity.json the steps above wrote
+```
+
+`parity neutral`, `parity record` and `parity same` refuse a `<work>/dist/engine` that this
+checkout did not stage: its stage version, `SMOKE_VERSION`, commit, patches and `cli/` must be this
+checkout's (`scripts/lib/parity/same.ts`, `headEngineProblems`). `parity envelope`, `certify` and
+`goldens --check` need `record`'s output for the current `parity/corpus.json`. A new version
+changes `cli/CMakeLists.txt`, so `stage` must run before them. `stage` runs again at the end:
+`record`, `certify` and `goldens --check` rewrite `parity/parity.json` (its corpus SHA-256, its
+families and the certified flags), and `sketch-orca-rs` builds that file in
+(`crates/orca-cli/src/decline.rs`, `include_str!`), so the program staged before them declines
+with the old list. `headEngineProblems` does not compare parity.json, so parity neutral, record and
+same do not notice it; `stage` and `source` refuse a `sketch-orca-rs` that does not hold the
+checkout's parity.json (`scripts/lib/stage.ts`, `stagedParityProblem`), so the last step is not
+optional. Staging replaces the engine a dev Sketch runs from the default work folder, and Sketch's
+dev builds take only the versions on their accepted list (README.md, "Publishing a release"): stage
+a new version there once Sketch accepts it, or run the chain in a work folder of its own
+(`SKETCH_ORCA_HOME`). After every C++ build no `.vfproj` or `CompilerIdFortran` may exist in
+`<work>/build`, `<work>/oracle/build` or `<work>/oracle/probe-build`, and `devenv.exe` must not have
+run.
+
 ## OpenSSL
 
 libslic3r computes MD5 sums with OpenSSL's libcrypto, which the engine links statically. OrcaSlicer

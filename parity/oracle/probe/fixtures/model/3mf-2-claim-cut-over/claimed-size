@@ -1,0 +1,3 @@
+# The cut information (deflated) claims 4 bytes more than it inflates to: miniz's extraction by name
+# fails after inflating, bbs_3mf.cpp:2562-2566.
+Metadata/cut_information.xml 144

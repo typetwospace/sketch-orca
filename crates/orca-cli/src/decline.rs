@@ -9,26 +9,42 @@
 // (LICENSE) for more details.
 
 //! The decline: sketch-orca-rs does only what the parity harness has certified it to do the C++
-//! engine's way. A job is checked once the steps this program does are behind it (`run.rs`: the
-//! presets stage and the model's file check), against `parity/parity.json` as this program was
-//! built with it: a job that reaches a family (a step of the engine, as the harness names them)
-//! that this program has no code for, or that `parity certify` has not certified, gets the result
-//! code `not-ported`, exit code -8 (the stock command line's `CLI_UNSUPPORTED_OPERATION`, as
-//! `unsupported`), and `missing`, those families in parity.json's order. It is refused before any
-//! output file is written: the result, the progress file, and the work folder and its orca-data
-//! folder (which the C++ engine makes before the presets, as this program does) are the run's
-//! only files. A job whose presets have a compatibility condition Orca works out reaches the
+//! engine's way. A job is declined where it reaches the first step this program does not do
+//! (`run.rs`): a job that orients its objects where orientation would start, after the model stage
+//! and the progress line "orient" ([`orient`]), and a layers or slice job once its objects are
+//! placed and, with `SKETCH_ORCA_ORACLE_DUMP` set, dumped, as slicing comes next ([`placed`]).
+//! An info job that does not orient its objects is answered whole, never declined. A declined job
+//! gets the result code `not-ported`, exit code -8 (the stock command line's
+//! `CLI_UNSUPPORTED_OPERATION`, as `unsupported`), and `missing`: the
+//! families (the steps of the engine, as the harness names them) the job reaches that this program
+//! has no code for ([`PORTED`]) or that `parity certify` has not certified (`parity/parity.json`
+//! as this program was built with it), in parity.json's order, one it does not list last. It is
+//! refused before any output file is written: the result, the progress file, and the work folder
+//! and its orca-data folder (which the C++ engine makes before the presets, as this program does;
+//! a 3MF's reader makes its backup folder in the work folder too, as the C++ one does) are the
+//! run's only files. A job whose presets have a compatibility condition Orca works out reaches the
 //! family preset-conditions ([`preset_families`], as corpus.ts's `presetFamilies` finds it); the
 //! presets stage works the condition out (`presets.rs`, orca-placeholder), and one the placeholder
 //! parser does not take is declined there, naming preset-conditions besides the families the job
-//! reaches ([`unsupported_condition`]).
+//! reaches ([`unsupported_condition`]). A model whose reader orca-model has not translated is
+//! declined in the model stage, naming model-load ([`model_reader`]).
 //!
 //! The families a job reaches are those `scripts/lib/parity/corpus.ts` gives it (`familiesFor`).
-//! Some every job of a command reaches ([`command_families`]): model-load and placement for every
-//! command, info for info, slice-mesh for layers and slice, and for slice the internal concentric
-//! infill, the print steps every slice runs, and the G-code export and its processor. The others
-//! a slice's settings turn on ([`setting_families`]): the wall generator, the infill pattern of
-//! each surface, supports, raft, ironing, fuzzy skin, the prime tower and Z contouring. The prime
+//! Some every job of a command reaches ([`command_families`]): model-load for every command,
+//! placement for layers and slice (an info job is answered before the objects are placed), info
+//! for info; for layers and slice, slice-mesh, the internal concentric infill and every step
+//! process() runs whatever the settings (corpus.ts `PROCESS_STEPS`: the object steps, the skirt
+//! and brim, the conflict check and the tool ordering); then the layers answer (`layers`) for
+//! layers, and the G-code export and its processor for slice; a job that orients its objects
+//! reaches orient after model-load ([`reached`]). A layers or slice job with more than one
+//! filament reaches multi-filament ([`reached`]), and one whose model is painted (support, seam,
+//! colour or fuzzy-skin painting, as orca-model reads it) reaches painted-facets ([`placed`]). The
+//! others a layers or slice job's settings turn on ([`setting_families`]): the wall generator, the
+//! infill pattern of each surface, supports (`enable_support`, or `enforce_support_layers` above
+//! zero, as Orca's `PrintObject::has_support` has it) or else the support check that runs without
+//! them (support-check), raft, ironing, fuzzy skin, the prime tower, Z contouring, printing object
+//! by object (`print_sequence`) and multiline infill (`fill_multiline` above 1 where there is
+//! sparse infill). The prime
 //! tower is on, as Orca's `Print::has_wipe_tower` has it, with two filaments or more, with smooth
 //! timelapse, or with clumping detection (`enable_wrapping_detection`) and an exclusion area of
 //! more than two points (`wrapping_exclude_area`). The settings are read as corpus.ts's
@@ -42,13 +58,13 @@
 //! that cannot be read, or a value that is not text, leaves the settings unknown, and the job then
 //! reaches every family a setting can turn on ([`unsettled_families`]), so a job is never let
 //! through for a family it might reach. The front end (version, config-def and intake) is decided
-//! before this check, so it is never missing; for now every info, layers and slice job that gets
-//! past the presets and the model's file is declined. `parity certify` holds the decline to the
-//! corpus: a declined job must name every family the corpus lists for it that parity.json does not
-//! certify, and must have reached a step this program does not do in the C++ run
-//! (`scripts/lib/parity/certify.ts`).
+//! before this check, so it is never missing. `parity certify` holds the decline to the corpus: a
+//! declined job must name every family the corpus lists for it that parity.json does not certify
+//! (a job that orients its objects is held to orient alone), and must have reached a step this
+//! program does not do in the C++ run (`scripts/lib/parity/certify.ts`).
 
 use orca_json::{Order, Value};
+use orca_model::model::Model;
 
 use crate::common::Failure;
 use crate::files::read_file;
@@ -59,7 +75,15 @@ const PARITY_JSON: &str = include_str!("../../../parity/parity.json");
 
 /// The families this program has the code for. A family is done only when it is here and
 /// parity.json certifies it.
-pub const PORTED: &[&str] = &["version", "config-def", "intake", "preset-conditions"];
+pub const PORTED: &[&str] = &[
+    "version",
+    "config-def",
+    "intake",
+    "preset-conditions",
+    "model-load",
+    "placement",
+    "info",
+];
 
 /// The families a setting can turn on besides the infill patterns (corpus.ts `familiesFor`), in
 /// parity.json's order.
@@ -74,14 +98,33 @@ const SETTING_FAMILIES: &[&str] = &[
     "wipe-tower",
     "step-contouring",
     "step-simplify-support-path",
+    "support-check",
+    "print-by-object",
+    "fill-multiline",
 ];
 
-/// The families every job of a command reaches, whatever its settings.
+/// The families every job of a command reaches, whatever its settings (corpus.ts `familiesFor`),
+/// in parity.json's order.
 #[must_use]
 pub fn command_families(command: Command) -> &'static [&'static str] {
     match command {
-        Command::Info => &["model-load", "placement", "info"],
-        Command::Layers => &["model-load", "placement", "slice-mesh"],
+        Command::Info => &["model-load", "info"],
+        Command::Layers => &[
+            "model-load",
+            "placement",
+            "slice-mesh",
+            "infill-concentricinternal",
+            "step-estimate-curled-extrusions",
+            "step-prepare-infill",
+            "step-simplify-path",
+            "step-detect-overhangs-for-lift",
+            "step-simplify-wall",
+            "step-simplify-infill",
+            "step-skirt-brim",
+            "step-conflict-check",
+            "tool-ordering",
+            "layers",
+        ],
         Command::Slice => &[
             "model-load",
             "placement",
@@ -97,6 +140,7 @@ pub fn command_families(command: Command) -> &'static [&'static str] {
             "step-simplify-infill",
             "step-skirt-brim",
             "step-conflict-check",
+            "tool-ordering",
         ],
     }
 }
@@ -135,11 +179,17 @@ fn infill_families(all: &[(String, bool)]) -> Vec<String> {
         .collect()
 }
 
-/// Whether `text` reads as a number above zero, or does not read as a number at all (which
-/// leaves the family on); `strtod` reads it, as the C runtime reads Orca's numbers.
-fn above_zero_or_unread(text: &str) -> bool {
+/// `text` as a number, `strtod` reading it as the C runtime reads Orca's numbers; `None` when it
+/// does not read as one (or reads as NaN).
+fn number(text: &str) -> Option<f64> {
     let r = orca_fmt::parse::strtod(text.as_bytes());
-    r.end == 0 || r.value.is_nan() || r.value > 0.0
+    (r.end != 0 && !r.value.is_nan()).then_some(r.value)
+}
+
+/// Whether `text` reads as a number above `floor`, or does not read as a number at all (which
+/// leaves the family on).
+fn above_or_unread(text: &str, floor: f64) -> bool {
+    number(text).is_none_or(|v| v > floor)
 }
 
 /// How many pieces Orca's reader of a list of points (`ConfigOptionPoints::deserialize`, a
@@ -153,9 +203,9 @@ pub fn comma_pieces(text: &str) -> usize {
     text.split(',').count() - usize::from(text.ends_with(','))
 }
 
-/// The families a slice's settings turn on (corpus.ts `familiesFor`), `get` reading each setting,
-/// `points` counting the points of a list of them and `filaments` the job's filament count; `Err`
-/// when a setting it reads is unknown.
+/// The families one level of a layers or slice job's settings turns on (corpus.ts
+/// `settingFamilies`), `get` reading each setting, `points` counting the points of a list of them
+/// and `filaments` the job's filament count; `Err` when a setting it reads is unknown.
 ///
 /// # Errors
 ///
@@ -181,7 +231,8 @@ pub fn setting_families(
         get("bottom_surface_pattern")?,
         get("internal_solid_infill_pattern")?,
     ];
-    if above_zero_or_unread(&density) {
+    let sparse = above_or_unread(&density, 0.0);
+    if sparse {
         patterns.push(get("sparse_infill_pattern")?);
     }
     for p in patterns.into_iter().flatten() {
@@ -190,13 +241,24 @@ pub fn setting_families(
             out.push(family);
         }
     }
-    if is("enable_support", "1")? {
+    // Supports, or else the check that runs without them; an enforce_support_layers that does not
+    // read as a number might be either, so it reaches both.
+    let (supports, check) = if is("enable_support", "1")? {
+        (true, false)
+    } else {
+        let enforced = get("enforce_support_layers")?.unwrap_or_else(|| "0".to_string());
+        number(&enforced).map_or((true, true), |v| (v > 0.0, v <= 0.0))
+    };
+    if supports {
         let tree = get("support_type")?.is_some_and(|t| t.starts_with("tree"));
         out.push(if tree { "tree-supports" } else { "supports" }.to_string());
         out.push("step-simplify-support-path".to_string());
         out.push("infill-supportbase".to_string());
     }
-    if above_zero_or_unread(&get("raft_layers")?.unwrap_or_else(|| "0".to_string())) {
+    if check {
+        out.push("support-check".to_string());
+    }
+    if above_or_unread(&get("raft_layers")?.unwrap_or_else(|| "0".to_string()), 0.0) {
         out.push("raft".to_string());
     }
     if get("ironing_type")?.as_deref().unwrap_or("no ironing") != "no ironing" {
@@ -218,10 +280,22 @@ pub fn setting_families(
     if is("zaa_enabled", "1")? {
         out.push("step-contouring".to_string());
     }
+    if is("print_sequence", "by object")? {
+        out.push("print-by-object".to_string());
+    }
+    if sparse
+        && above_or_unread(
+            &get("fill_multiline")?.unwrap_or_else(|| "1".to_string()),
+            1.0,
+        )
+    {
+        out.push("fill-multiline".to_string());
+    }
     Ok(out)
 }
 
-/// Every family a slice's settings can turn on: what a job whose settings are unknown reaches.
+/// Every family a layers or slice job's settings can turn on: what a job whose settings are
+/// unknown reaches.
 #[must_use]
 pub fn unsettled_families(infill: &[String]) -> Vec<String> {
     SETTING_FAMILIES
@@ -373,18 +447,24 @@ pub fn preset_families(presets: Option<&[Value]>) -> Vec<String> {
     Vec::new()
 }
 
-/// The families `job` reaches: those of its presets, its command's, then those its settings turn
-/// on, each once.
+/// The families `job` reaches: those of its presets, its command's (with orient after model-load
+/// for a job that orients its objects), then, for a layers or slice job, those its settings turn
+/// on at every level (the job's, each object's and each height range's) and multi-filament with
+/// more than one filament, each once. The model's painting is not read here ([`placed`]).
 #[must_use]
 pub fn reached(job: &Job) -> Vec<String> {
     let presets = read_presets(job);
     let mut out = preset_families(presets.as_deref());
-    out.extend(
-        command_families(job.command)
-            .iter()
-            .map(|s| (*s).to_string()),
-    );
-    if job.command == Command::Slice {
+    for family in command_families(job.command) {
+        out.push((*family).to_string());
+        if *family == "model-load" && job.orient {
+            out.push("orient".to_string());
+        }
+    }
+    if job.command != Command::Info {
+        if job.filaments.len() > 1 {
+            out.push("multi-filament".to_string());
+        }
         let infill = infill_families(&families());
         let mut views: Vec<Vec<&Overrides>> = vec![vec![&job.overrides]];
         for object in &job.objects {
@@ -417,8 +497,18 @@ pub fn reached(job: &Job) -> Vec<String> {
 /// order; one parity.json does not list comes last, in the order of `reach`.
 #[must_use]
 pub fn missing_of(reach: &[String]) -> Vec<String> {
+    missing_with(reach, &[])
+}
+
+/// [`missing_of`], with the families of `undone` counted as not done wherever they stand: a job
+/// past what was certified for them.
+fn missing_with(reach: &[String], undone: &[&str]) -> Vec<String> {
     let all = families();
-    let done = |name: &str| PORTED.contains(&name) && all.iter().any(|(n, c)| n == name && *c);
+    let done = |name: &str| {
+        !undone.contains(&name)
+            && PORTED.contains(&name)
+            && all.iter().any(|(n, c)| n == name && *c)
+    };
     let mut out: Vec<String> = all
         .iter()
         .filter(|(n, _)| reach.contains(n) && !done(n))
@@ -430,12 +520,6 @@ pub fn missing_of(reach: &[String]) -> Vec<String> {
         }
     }
     out
-}
-
-/// The families `job` reaches that are not done, in parity.json's order.
-#[must_use]
-pub fn missing(job: &Job) -> Vec<String> {
-    missing_of(&reached(job))
 }
 
 /// The decline of a job whose command reaches `missing`.
@@ -453,18 +537,27 @@ pub fn not_ported(command_name: &str, missing: Vec<String>) -> Failure {
     }
 }
 
-/// `Ok` when this program does every family the job reaches, else its decline.
-///
-/// # Errors
-///
-/// The [`not_ported`] failure.
-pub fn check(job: &Job) -> Result<(), Failure> {
-    let m = missing(job);
-    if m.is_empty() {
-        Ok(())
-    } else {
-        Err(not_ported(&job.command_name, m))
+/// The decline of a layers or slice job once its objects are placed and dumped (`run.rs`): the
+/// families it reaches past the front-objects boundary that are not done, in parity.json's order,
+/// painted-facets among them when `model` is painted (Orca's `ModelVolume::is_*_painted`:
+/// support, seam, colour or fuzzy-skin painting, as corpus.ts's `modelPainting` finds it). The
+/// families of [`PORTED`] it reaches are behind it by then, run, certified or not, so they are not
+/// named; slicing (slice-mesh) is always among the rest.
+#[must_use]
+pub fn placed(job: &Job, model: &Model) -> Failure {
+    let mut reach = reached(job);
+    if model.is_fdm_support_painted()
+        || model.is_seam_painted()
+        || model.is_mm_painted()
+        || model.is_fuzzy_skin_painted()
+    {
+        reach.push("painted-facets".to_string());
     }
+    let missing = missing_of(&reach)
+        .into_iter()
+        .filter(|f| !PORTED.contains(&f.as_str()))
+        .collect();
+    not_ported(&job.command_name, missing)
 }
 
 /// The decline of a job whose presets have a compatibility condition the placeholder parser does
@@ -480,11 +573,33 @@ pub fn unsupported_condition(job: &Job) -> Failure {
     not_ported(&job.command_name, missing)
 }
 
+/// The decline of a job that orients its objects, where orientation would start (`run.rs`):
+/// orienting the objects (Orca's `orientation::orient`) is not ported. It names the families the
+/// job reaches, orient among them.
+#[must_use]
+pub fn orient(job: &Job) -> Failure {
+    not_ported(&job.command_name, missing_with(&reached(job), &["orient"]))
+}
+
+/// The decline of a model whose reader orca-model has not translated (`model.rs`,
+/// `ReadError::NotPorted`): the families the job reaches, with model-load among them even where
+/// parity.json certifies it, since this file is past what was certified. No job reaches it now:
+/// a job's model is a .3mf, .stl or .obj file, and the command line's load of a 3MF reads no
+/// entry orca-model leaves out.
+#[must_use]
+pub fn model_reader(job: &Job) -> Failure {
+    not_ported(
+        &job.command_name,
+        missing_with(&reached(job), &["model-load"]),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         Command, PORTED, Setting, Unknown, comma_pieces, command_families, families,
-        infill_families, missing_of, not_ported, setting_families, unsettled_families,
+        infill_families, missing_of, missing_with, not_ported, setting_families,
+        unsettled_families,
     };
 
     fn strings(list: &[&str]) -> Vec<String> {
@@ -524,57 +639,134 @@ mod tests {
         for f in unsettled_families(&infill) {
             assert!(all.iter().any(|(n, _)| *n == f), "{f}");
         }
+        // The two the filaments and the model's painting add (reached, placed).
+        for f in ["multi-filament", "painted-facets"] {
+            assert!(all.iter().any(|(n, _)| n == f), "{f}");
+        }
         for p in PORTED {
             assert!(all.iter().any(|(n, _)| n == p), "{p}");
         }
     }
 
+    /// `list` without the families that are done (in PORTED and certified by parity.json), which
+    /// a decline does not name.
+    fn undone(list: &[&str]) -> Vec<String> {
+        let all = families();
+        list.iter()
+            .filter(|f| !(PORTED.contains(f) && all.iter().any(|(n, c)| n == *f && *c)))
+            .map(|f| (*f).to_string())
+            .collect()
+    }
+
     #[test]
-    fn every_job_is_declined_for_now_naming_the_steps_in_parity_json_order() {
+    fn a_decline_names_the_steps_not_done_in_parity_json_order() {
         let reach = |c: Command| strings(command_families(c));
+        // An info job is placed nowhere; layers and slice jobs place their objects.
+        assert_eq!(command_families(Command::Info), ["model-load", "info"]);
         assert_eq!(
             missing_of(&reach(Command::Info)),
-            ["model-load", "placement", "info"]
+            undone(&["model-load", "info"])
         );
-        assert_eq!(
-            missing_of(&reach(Command::Layers)),
-            ["model-load", "placement", "slice-mesh"]
-        );
+        // Every step process() runs whatever the settings (corpus.ts PROCESS_STEPS), the tool
+        // ordering last among them.
+        let steps = [
+            "step-estimate-curled-extrusions",
+            "step-prepare-infill",
+            "step-simplify-path",
+            "step-detect-overhangs-for-lift",
+            "step-simplify-wall",
+            "step-simplify-infill",
+            "step-skirt-brim",
+            "step-conflict-check",
+            "tool-ordering",
+        ];
+        let mut layers = vec![
+            "model-load",
+            "placement",
+            "slice-mesh",
+            "infill-concentricinternal",
+        ];
+        layers.extend(steps);
+        layers.push("layers");
+        assert_eq!(missing_of(&reach(Command::Layers)), undone(&layers));
+        // A slice with Orca's defaults: its walls and patterns, the G-code, the steps and the
+        // support check that runs without supports.
         let mut slice = reach(Command::Slice);
         slice.extend(with(&[], 1).unwrap());
         let slice = missing_of(&slice);
-        assert_eq!(slice.len(), 18);
-        assert_eq!(
-            slice[..8],
-            [
-                "model-load",
-                "placement",
-                "slice-mesh",
-                "perimeters-arachne",
-                "infill-monotonic",
-                "infill-monotonicline",
-                "infill-crosshatch",
-                "infill-concentricinternal"
-            ]
-        );
-        assert_eq!(
-            slice.last().map(String::as_str),
-            Some("step-conflict-check")
-        );
-        let f = not_ported("info", missing_of(&reach(Command::Info)));
+        let first = undone(&[
+            "model-load",
+            "placement",
+            "slice-mesh",
+            "perimeters-arachne",
+            "infill-monotonic",
+            "infill-monotonicline",
+            "infill-crosshatch",
+            "infill-concentricinternal",
+            "gcode-export",
+            "gcode-processor",
+        ]);
+        let mut want = first;
+        want.extend(strings(&steps));
+        want.push("support-check".to_string());
+        assert_eq!(slice, want);
+        let f = not_ported("info", strings(&["model-load", "info"]));
         assert_eq!(
             (f.code.as_str(), f.exit_code, f.object_index),
             ("not-ported", -8, -1)
         );
         assert_eq!(
             f.message,
-            "sketch-orca-rs cannot do this info job yet: it reaches steps that are not ported (model-load, placement, info)"
+            "sketch-orca-rs cannot do this info job yet: it reaches steps that are not ported (model-load, info)"
+        );
+    }
+
+    #[test]
+    fn the_families_this_program_does_are_the_front_end_the_conditions_the_model_placement_and_info()
+     {
+        // Held to the list itself: the tests above build what a decline names from PORTED
+        // (`undone`), so a family put there by mistake would pass them once parity.json
+        // certifies it.
+        assert_eq!(
+            PORTED,
+            [
+                "version",
+                "config-def",
+                "intake",
+                "preset-conditions",
+                "model-load",
+                "placement",
+                "info"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_family_past_what_was_certified_is_named_wherever_it_stands() {
+        // A family parity.json does not list comes last; one forced undone stays in parity.json's
+        // order.
+        let reach = strings(&["model-load", "orient", "placement"]);
+        let listed = families().iter().any(|(n, _)| n == "orient");
+        let m = missing_with(&reach, &["model-load"]);
+        let mut want = strings(&["model-load"]);
+        if listed {
+            want.extend(undone(&["orient", "placement"]));
+        } else {
+            want.extend(undone(&["placement"]));
+            want.push("orient".to_string());
+        }
+        assert_eq!(m, want);
+        assert!(
+            missing_with(&reach, &["orient"])
+                .iter()
+                .any(|f| f == "orient")
         );
     }
 
     #[test]
     fn settings_turn_families_on_as_the_corpus_reads_them() {
-        // Orca's defaults: Arachne walls, the three surface patterns and the sparse one at 20%.
+        // Orca's defaults: Arachne walls, the three surface patterns and the sparse one at 20%,
+        // and no supports, so the check that runs without them.
         assert_eq!(
             with(&[], 1).unwrap(),
             [
@@ -582,7 +774,8 @@ mod tests {
                 "infill-monotonicline",
                 "infill-monotonic",
                 "infill-monotonic",
-                "infill-crosshatch"
+                "infill-crosshatch",
+                "support-check"
             ]
         );
         // No sparse infill at 0%; a pattern the corpus does not name is no family.
@@ -597,7 +790,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             none,
-            ["perimeters-arachne", "infill-gyroid", "infill-monotonic"]
+            [
+                "perimeters-arachne",
+                "infill-gyroid",
+                "infill-monotonic",
+                "support-check"
+            ]
         );
         let on = with(
             &[
@@ -627,6 +825,8 @@ mod tests {
             assert!(on.iter().any(|x| x == f), "{f}");
         }
         assert!(!on.iter().any(|x| x == "perimeters-arachne"));
+        // With supports there is no support check.
+        assert!(!on.iter().any(|x| x == "support-check"));
         // Normal supports; the prime tower needs two filaments or a timelapse.
         let normal = with(&[("enable_support", "1"), ("enable_prime_tower", "1")], 1).unwrap();
         assert!(normal.iter().any(|x| x == "supports"));
@@ -638,6 +838,41 @@ mod tests {
         assert!(raft.iter().any(|x| x == "raft"));
         // A setting it cannot read leaves the job's settings unknown.
         assert_eq!(with(&[("enable_support", "?")], 1), Err(Unknown));
+    }
+
+    #[test]
+    fn enforced_support_layers_printing_by_object_and_multiline_infill_turn_their_families_on() {
+        let has =
+            |settings: &[(&str, &str)], f: &str| with(settings, 1).unwrap().iter().any(|x| x == f);
+        // Enforced support layers above zero are supports, as PrintObject::has_support has them.
+        let enforced = [("enforce_support_layers", "3")];
+        assert!(has(&enforced, "supports"));
+        assert!(has(&enforced, "step-simplify-support-path"));
+        assert!(has(&enforced, "infill-supportbase"));
+        assert!(!has(&enforced, "support-check"));
+        assert!(has(&[("enforce_support_layers", "0")], "support-check"));
+        assert!(!has(&[("enforce_support_layers", "0")], "supports"));
+        // One that does not read as a number might be either: it reaches both.
+        let unread = [("enforce_support_layers", "")];
+        assert!(has(&unread, "supports") && has(&unread, "support-check"));
+        // Printing object by object.
+        assert!(has(&[("print_sequence", "by object")], "print-by-object"));
+        assert!(!has(&[("print_sequence", "by layer")], "print-by-object"));
+        assert!(!has(&[], "print-by-object"));
+        // Multiline infill: above one line, where there is sparse infill.
+        assert!(has(&[("fill_multiline", "2")], "fill-multiline"));
+        assert!(!has(&[("fill_multiline", "1")], "fill-multiline"));
+        assert!(!has(&[], "fill-multiline"));
+        assert!(!has(
+            &[("fill_multiline", "2"), ("sparse_infill_density", "0%")],
+            "fill-multiline"
+        ));
+        assert!(has(&[("fill_multiline", "x")], "fill-multiline"));
+        // Every one of them is among what a job whose settings are unknown reaches.
+        let unsettled = unsettled_families(&infill_families(&families()));
+        for f in ["support-check", "print-by-object", "fill-multiline"] {
+            assert!(unsettled.iter().any(|x| x == f), "{f}");
+        }
     }
 
     #[test]

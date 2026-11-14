@@ -1,0 +1,3 @@
+# Both sizes claim one byte more than miniz opens the archive with (miniz.c:3781): the archive is
+# refused before any entry is read.
+Metadata/layer_heights_profile.txt past

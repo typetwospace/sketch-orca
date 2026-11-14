@@ -1,0 +1,8 @@
+# Each entry the config pass reads is stored with a CRC one bit off, in entry order: the svg shape,
+# the brim ears, the cut information, the height ranges, the layer heights and model_settings.config.
+3D/shape.svg
+Metadata/brim_ear_points.txt
+Metadata/cut_information.xml
+Metadata/layer_config_ranges.xml
+Metadata/layer_heights_profile.txt
+Metadata/model_settings.config

@@ -16,10 +16,21 @@
 //! the inputs it holds and what this crate computes with them, and the two are compared whole; a
 //! difference is named by the field it falls in. The kinds: MXFM (Transformation), MFAC (a part's
 //! painting), MCFG (ModelConfig), MCIR (the circle fits), MBVL (BuildVolume), MLOD (a model file
-//! read as the command line reads it, then placed, checked against beds and arranged), MARP (the
-//! bed and the items' inflation) and MTMP (the filaments' temperature classes). Filled by o2-model
-//! (2026-11-07).
+//! read as the command line reads it, then placed, checked against beds and arranged), M3MF (a 3MF
+//! file read so), MARP (the bed and the items' inflation) and MTMP (the filaments' temperature
+//! classes). Filled by o2-model (2026-11-07); M3MF by orca-3mf-probe (2026-11-10), one test for
+//! each of the 3MF reader's three pieces, and all three replay: piece 1's (orca-3mf-port-1,
+//! 2026-11-10), piece 2's (orca-3mf-port-2, 2026-11-11) and piece 3's (orca-3mf-port-3,
+//! 2026-11-11).
+//!
+//! The records of `slice.sop1` of the piece front-2 (SLFE, SLMC, SLTS, SLSH and SLBX,
+//! `parity/sop1/slice.md`) are replayed by the module `probes/slice_front.rs` (orca-o3-front-2,
+//! 2026-11-13), with the helpers here.
 
+#[path = "probes/slice_front.rs"]
+mod slice_front;
+
+use std::cell::RefCell;
 use std::path::PathBuf;
 
 use orca_arrange::arrange::{ArrangeParams, ArrangePolygon};
@@ -28,6 +39,7 @@ use orca_geom::bounding_box::{BoundingBox, BoundingBoxf3};
 use orca_geom::point::{Point, Points};
 use orca_geom::polygon::Polygon;
 use orca_mesh::admesh::IndexedTriangleSet;
+use orca_mesh::log::Severity;
 use orca_mesh::triangle_mesh::TriangleMesh;
 use orca_model::arrange::{
     apply_arrange_polygon, get_bed_shape, get_compatible_filament_type, get_filament_temp_type,
@@ -47,11 +59,53 @@ fn model_file() -> ProbeFile {
     load_probe("model").unwrap_or_else(|e| panic!("{e}"))
 }
 
-/// Discards what libslic3r logs and what Qhull writes to `std::cerr`: the probe records neither.
+thread_local! {
+    /// The log of the read this thread is replaying (`logged`), or none.
+    static READ_LOG: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Discards what libslic3r logs and what Qhull writes to `std::cerr`, which the probe does not
+/// record, but for the log of a read that `logged` holds on the calling thread (M3MF records it).
+/// The sink is the same for every test: the tests run on threads of their own, each sets it, and a
+/// record goes to the log of its own thread only (the oracle's arena runs a read on the thread
+/// that calls it).
 fn quiet() {
-    orca_mesh::log::set_sink(None);
+    orca_mesh::log::set_sink(Some(Box::new(|severity, message| {
+        READ_LOG.with(|log| {
+            if let Some(text) = log.borrow_mut().as_mut() {
+                put_log_record(text, severity, message);
+            }
+        });
+    })));
     orca_mesh::log::set_stderr_sink(Some(Box::new(|_| {})));
     orca_fmt::stdio::set_stdout_sink(Some(Box::new(|_| {})));
+}
+
+/// One record as the engine prints it on stderr (`cli/main.cpp`, `log_to_stderr`, at its default
+/// level 1), the probe's `ReadLog`: error and fatal only, `[<severity>] <message>` and a line feed
+/// unless the message ends with one.
+fn put_log_record(text: &mut String, severity: Severity, message: &str) {
+    if severity < Severity::Error {
+        return;
+    }
+    text.push('[');
+    text.push_str(severity.name());
+    text.push_str("] ");
+    text.push_str(message);
+    if !message.ends_with('\n') {
+        text.push('\n');
+    }
+}
+
+/// Runs `f` and returns what it returns with the log of it (`put_log_record`), as the probe's
+/// `ReadLog` holds it around a read. `quiet` must have set the sink.
+fn logged<T>(f: impl FnOnce() -> T) -> (T, String) {
+    READ_LOG.with(|log| *log.borrow_mut() = Some(String::new()));
+    let out = f();
+    let text = READ_LOG
+        .with(|log| log.borrow_mut().take())
+        .unwrap_or_default();
+    (out, text)
 }
 
 /// The probe's threading, the oracle's: one thread in an arena of concurrency 8.
@@ -718,6 +772,95 @@ fn mbvl_beds(file: &ProbeFile) -> Vec<Bed> {
         .collect()
 }
 
+/// The inputs of the steps after loading (the probe's `LodInputs`): two instances (offset,
+/// scale, rotation, mirror), allow_negative_z, the beds, the print settings and three arrange
+/// results.
+struct LodInputs {
+    inst: [[f64; 12]; 2],
+    allow_negative_z: bool,
+    bed_ids: Vec<u64>,
+    pairs: Vec<(String, String)>,
+    placed: Vec<Placed>,
+}
+
+impl LodInputs {
+    fn read(r: &mut Reader<'_>) -> LodInputs {
+        let mut inst = [[0.0f64; 12]; 2];
+        for row in &mut inst {
+            for v in row.iter_mut() {
+                *v = r.f64().unwrap();
+            }
+        }
+        let allow_negative_z = r.bool().unwrap();
+        let nbeds = r.count().unwrap();
+        let bed_ids: Vec<u64> = (0..nbeds).map(|_| r.u64().unwrap()).collect();
+        let pairs = read_pairs(r);
+        let placed: Vec<Placed> = (0..3)
+            .map(|_| {
+                (
+                    r.i32().unwrap(),
+                    r.i64().unwrap(),
+                    r.i64().unwrap(),
+                    r.f64().unwrap(),
+                    r.i32().unwrap(),
+                )
+            })
+            .collect();
+        LodInputs {
+            inst,
+            allow_negative_z,
+            bed_ids,
+            pairs,
+            placed,
+        }
+    }
+
+    fn put(&self, p: &mut Payload) {
+        p.field("the instances' inputs");
+        for row in &self.inst {
+            for &v in row {
+                p.f64(v);
+            }
+        }
+        p.boolean(self.allow_negative_z);
+        p.field("the beds").len(self.bed_ids.len());
+        for &b in &self.bed_ids {
+            p.u64(b);
+        }
+        p.field("the settings");
+        put_pairs(p, &self.pairs);
+        p.field("the arrange results");
+        for &(bed, x, y, rot, item) in &self.placed {
+            p.i32(bed).i64(x).i64(y).f64(rot).i32(item);
+        }
+    }
+}
+
+/// cli/run.cpp's load_model after the read: each configuration cut to "extruder", the height
+/// ranges and the layer height profile dropped, the first plate, ensure_on_bed.
+fn cli_cuts(model: &mut Model) {
+    for mo in &mut model.objects {
+        for key in mo.config.keys() {
+            if key != "extruder" {
+                mo.config.erase(&key);
+            }
+        }
+        mo.layer_config_ranges.clear();
+        mo.layer_height_profile.clear();
+        for v in &mut mo.volumes {
+            for key in v.config.keys() {
+                if key != "extruder" {
+                    v.config.erase(&key);
+                }
+            }
+        }
+    }
+    model.curr_plate_index = 0;
+    for mo in &mut model.objects {
+        mo.ensure_on_bed(false);
+    }
+}
+
 fn rebuild_lod(rec: &Record, dir: &TempDir, all_beds: &[Bed]) -> (String, Payload) {
     let mut r = rec.reader();
     let label = r.str().unwrap();
@@ -727,27 +870,7 @@ fn rebuild_lod(rec: &Record, dir: &TempDir, all_beds: &[Bed]) -> (String, Payloa
     let extra: Vec<(String, Vec<u8>)> = (0..nextra)
         .map(|_| (r.str().unwrap(), bytes_str(&mut r)))
         .collect();
-    let mut inst = [[0.0f64; 12]; 2];
-    for row in &mut inst {
-        for v in row.iter_mut() {
-            *v = r.f64().unwrap();
-        }
-    }
-    let allow_negative_z = r.bool().unwrap();
-    let nbeds = r.count().unwrap();
-    let bed_ids: Vec<u64> = (0..nbeds).map(|_| r.u64().unwrap()).collect();
-    let pairs = read_pairs(&mut r);
-    let placed: Vec<Placed> = (0..3)
-        .map(|_| {
-            (
-                r.i32().unwrap(),
-                r.i64().unwrap(),
-                r.i64().unwrap(),
-                r.f64().unwrap(),
-                r.i32().unwrap(),
-            )
-        })
-        .collect();
+    let inputs = LodInputs::read(&mut r);
 
     let mut p = Payload::default();
     p.field("the label, the name and the bytes")
@@ -758,27 +881,7 @@ fn rebuild_lod(rec: &Record, dir: &TempDir, all_beds: &[Bed]) -> (String, Payloa
     for (n, b) in &extra {
         p.str(n.as_bytes()).str(b);
     }
-    p.field("the instances' inputs");
-    for row in &inst {
-        for &v in row {
-            p.f64(v);
-        }
-    }
-    p.boolean(allow_negative_z);
-    p.field("the beds").len(bed_ids.len());
-    for &b in &bed_ids {
-        p.u64(b);
-    }
-    let beds: Vec<&Bed> = bed_ids
-        .iter()
-        .map(|&b| &all_beds[usize::try_from(b).expect("a bed index")])
-        .collect();
-    p.field("the settings");
-    put_pairs(&mut p, &pairs);
-    p.field("the arrange results");
-    for &(bed, x, y, rot, item) in &placed {
-        p.i32(bed).i64(x).i64(y).f64(rot).i32(item);
-    }
+    inputs.put(&mut p);
 
     let file = dir.0.join(&name);
     std::fs::write(&file, &bytes).expect("the model file written");
@@ -802,37 +905,46 @@ fn rebuild_lod(rec: &Record, dir: &TempDir, all_beds: &[Bed]) -> (String, Payloa
         }
     };
     p.field("read").u8(0);
-    // cli/run.cpp's load_model.
-    for mo in &mut model.objects {
-        for key in mo.config.keys() {
-            if key != "extruder" {
-                mo.config.erase(&key);
-            }
-        }
-        mo.layer_config_ranges.clear();
-        mo.layer_height_profile.clear();
-        for v in &mut mo.volumes {
-            for key in v.config.keys() {
-                if key != "extruder" {
-                    v.config.erase(&key);
-                }
-            }
-        }
-    }
-    model.curr_plate_index = 0;
-    for mo in &mut model.objects {
-        mo.ensure_on_bed(false);
-    }
+    cli_cuts(&mut model);
     put_model(&mut p, &model);
+    lod_tail(&mut p, &mut model, &inputs, all_beds, &label, false);
+    (label, p)
+}
 
-    let hull_ok = model.objects[0]
-        .volumes
-        .iter()
-        .all(|v| v.try_get_convex_hull().is_some());
+/// The steps after loading, on the first object (the probe's `lod_tail`): its boxes, hulls and z,
+/// two instances added, ensure_on_bed, the print volume states, the arrange polygons of its first
+/// three instances with a result applied to each, and center_around_origin. They run only when
+/// every part has a hull (and, when `require_parts`, the object has a part).
+fn lod_tail(
+    p: &mut Payload,
+    model: &mut Model,
+    inputs: &LodInputs,
+    all_beds: &[Bed],
+    label: &str,
+    require_parts: bool,
+) {
+    let LodInputs {
+        inst,
+        allow_negative_z,
+        bed_ids,
+        pairs,
+        placed,
+    } = inputs;
+    let allow_negative_z = *allow_negative_z;
+    let first = &model.objects[0];
+    let hull_ok = (!require_parts || !first.volumes.is_empty())
+        && first
+            .volumes
+            .iter()
+            .all(|v| v.try_get_convex_hull().is_some());
     p.field("every part has a hull").boolean(hull_ok);
     if !hull_ok {
-        return (label, p);
+        return;
     }
+    let beds: Vec<&Bed> = bed_ids
+        .iter()
+        .map(|&b| &all_beds[usize::try_from(b).expect("a bed index")])
+        .collect();
     {
         let o = &mut model.objects[0];
         p.field("bounding_box_approx").bb3(&o.bounding_box_approx());
@@ -860,7 +972,7 @@ fn rebuild_lod(rec: &Record, dir: &TempDir, all_beds: &[Bed]) -> (String, Payloa
             .f64(o.get_instance_max_z(0));
         p.field("the instance's convex_hull_2d")
             .points(&o.instance_convex_hull_2d(0).points);
-        for row in &inst {
+        for row in inst {
             o.add_instance_with(
                 &Vec3d::new(row[0], row[1], row[2]),
                 &Vec3d::new(row[3], row[4], row[5]),
@@ -897,13 +1009,13 @@ fn rebuild_lod(rec: &Record, dir: &TempDir, all_beds: &[Bed]) -> (String, Payloa
             p.u8(i.print_volume_state.value());
         }
     }
-    let config = settings(&pairs);
+    let config = settings(pairs);
     let o = &mut model.objects[0];
     let n = o.instances.len();
     for (i, &(bed, x, y, rot, item)) in placed.iter().enumerate().take(n) {
         let mut ap = get_instance_arrange_poly(o, i, &config);
         p.field(&format!("instance {i}: get_instance_arrange_poly"));
-        put_ap(&mut p, &ap);
+        put_ap(p, &ap);
         ap.bed_idx = bed;
         ap.translation = Point::new(x, y);
         ap.rotation = rot;
@@ -924,7 +1036,6 @@ fn rebuild_lod(rec: &Record, dir: &TempDir, all_beds: &[Bed]) -> (String, Payloa
     }
     p.field("bounding_box_exact after center_around_origin")
         .bb3(&o.bounding_box_exact());
-    (label, p)
 }
 
 #[test]
@@ -944,6 +1055,237 @@ fn model_files_load_and_place_as_the_engine_does() {
         }
     });
     m.assert_none("MLOD");
+}
+
+// ---- M3MF ----------------------------------------------------------------------------------
+
+/// `s` with the temporary folder written `<dir>`, in either separator form (the probe's
+/// `portable`).
+fn portable(s: &str, dir: &TempDir) -> String {
+    let native = dir.0.to_str().expect("a UTF-8 path");
+    let generic = native.replace('\\', "/");
+    s.replace(native, "<dir>").replace(&generic, "<dir>")
+}
+
+/// The model's information (the probe's `put_info`): the design information (when a Designer is
+/// given), the profile information and the model information with its metadata items by name, as
+/// the root model's metadata leave them (`Model`'s `design_info`, `profile_info` and `model_info`,
+/// from piece 1 of the 3MF port).
+fn put_info(p: &mut Payload, model: &Model) {
+    p.field("the model's information: design")
+        .boolean(model.design_info.is_some());
+    if let Some(d) = &model.design_info {
+        p.str(d.design_id.as_bytes())
+            .str(d.designer.as_bytes())
+            .str(d.designer_user_id.as_bytes());
+    }
+    p.field("the model's information: profile")
+        .boolean(model.profile_info.is_some());
+    if let Some(i) = &model.profile_info {
+        p.str(i.profile_tile.as_bytes())
+            .str(i.profile_cover.as_bytes())
+            .str(i.profile_description.as_bytes())
+            .str(i.profile_user_id.as_bytes())
+            .str(i.profile_user_name.as_bytes());
+    }
+    p.field("the model's information: model")
+        .boolean(model.model_info.is_some());
+    if let Some(i) = &model.model_info {
+        p.str(i.cover_file.as_bytes())
+            .str(i.license.as_bytes())
+            .str(i.description.as_bytes())
+            .str(i.copyright.as_bytes())
+            .str(i.model_name.as_bytes())
+            .str(i.origin.as_bytes());
+        p.field("the model's information: metadata items")
+            .len(i.metadata_items.len());
+        for (k, v) in &i.metadata_items {
+            p.str(k.as_bytes()).str(v.as_bytes());
+        }
+    }
+}
+
+/// What the read leaves that the cuts drop or `put_model` leaves out (the probe's
+/// `put_as_read`): the model's information; each object's module, whole configuration, layer
+/// height profile, height ranges and brim ears; each instance's loaded id and assembly
+/// transformation (when it has one); each part's whole configuration.
+fn put_as_read(p: &mut Payload, model: &Model) {
+    put_info(p, model);
+    p.field("as read").len(model.objects.len());
+    for (oi, o) in model.objects.iter().enumerate() {
+        p.field(&format!("as read: object {oi}: module, settings"))
+            .str(o.module_name.as_bytes())
+            .str(&config_dump(&o.config));
+        p.field(&format!("as read: object {oi}: the layer height profile"))
+            .len(o.layer_height_profile.len());
+        for &z in &o.layer_height_profile {
+            p.f64(z);
+        }
+        p.field(&format!("as read: object {oi}: the height ranges"))
+            .len(o.layer_config_ranges.len());
+        for ((lo, hi), c) in &o.layer_config_ranges {
+            p.f64(*lo).f64(*hi).str(&config_dump(c));
+        }
+        p.field(&format!("as read: object {oi}: the brim ears"))
+            .len(o.brim_points.len());
+        for b in &o.brim_points {
+            p.f32(b.pos.x())
+                .f32(b.pos.y())
+                .f32(b.pos.z())
+                .f32(b.head_front_radius);
+        }
+        p.len(o.instances.len());
+        for (ii, i) in o.instances.iter().enumerate() {
+            p.field(&format!("as read: object {oi} instance {ii}"))
+                .u64(u64::try_from(i.loaded_id).expect("a loaded id in 64 bits"))
+                .boolean(i.is_assemble_initialized());
+            if i.is_assemble_initialized() {
+                p.mat(i.get_assemble_transformation().get_matrix())
+                    .vec3(&i.get_offset_to_assembly());
+            }
+        }
+        p.len(o.volumes.len());
+        for (vi, v) in o.volumes.iter().enumerate() {
+            p.field(&format!("as read: object {oi} volume {vi}: the settings"))
+                .str(&config_dump(&v.config));
+        }
+    }
+}
+
+/// An M3MF record's label and piece: the piece of the 3MF reader's port it needs last (1: the
+/// container, its relationships and the root model; 2: the config entries; 3: the sub-model
+/// files and the assembly).
+fn m3mf_piece(rec: &Record) -> (String, u8) {
+    let mut r = rec.reader();
+    let label = r.str().unwrap();
+    (label, r.u8().unwrap())
+}
+
+fn rebuild_3mf(rec: &Record, dir: &TempDir, all_beds: &[Bed]) -> (String, Payload) {
+    let mut r = rec.reader();
+    let label = r.str().unwrap();
+    let piece = r.u8().unwrap();
+    let name = r.str().unwrap();
+    let bytes = bytes_str(&mut r);
+    let steps = r.bool().unwrap();
+    let inputs = steps.then(|| LodInputs::read(&mut r));
+
+    let file = dir.0.join(&name);
+    std::fs::write(&file, &bytes).expect("the 3MF file written");
+    let path = file.to_str().expect("a UTF-8 path").to_owned();
+    let (read, log) = logged(|| {
+        read_from_file(
+            &path,
+            load_strategy::LOAD_MODEL | load_strategy::ADD_DEFAULT_INSTANCES,
+        )
+    });
+    let _ = std::fs::remove_file(&file);
+
+    let mut p = Payload::default();
+    // A file that loads needs the whole reader: piece 3.
+    p.field("the label and the piece")
+        .str(label.as_bytes())
+        .u8(if read.is_ok() { 3 } else { piece });
+    p.field("the name and the bytes")
+        .str(name.as_bytes())
+        .str(&bytes);
+    p.field("steps").boolean(steps);
+    if let Some(i) = &inputs {
+        i.put(&mut p);
+    }
+    p.field("the log").str(portable(&log, dir).as_bytes());
+    let mut model = match read {
+        Ok(m) => m,
+        Err(e) => {
+            p.field("the error")
+                .u8(1)
+                .str(portable(&e.what(), dir).as_bytes());
+            return (label, p);
+        }
+    };
+    p.field("read").u8(0);
+    put_as_read(&mut p, &model);
+    cli_cuts(&mut model);
+    put_model(&mut p, &model);
+    if let Some(i) = &inputs {
+        lod_tail(&mut p, &mut model, i, all_beds, &label, true);
+    }
+    (label, p)
+}
+
+/// The M3MF tests one at a time: the 3MF reader keeps its backup folders under the process's one
+/// temporary folder (`orca_model::utils::temporary_dir`), which each test points at its own.
+static M3MF_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Replays the M3MF records of one piece; the probe's temporary folder for the backup folders is
+/// the test's own (`model.cpp`: `set_temporary_dir(dir / "backup")`).
+fn check_3mf_piece(piece: u8) {
+    let _one_at_a_time = M3MF_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    quiet();
+    let file = model_file();
+    let dir = TempDir::new(&format!("m3mf-{piece}"));
+    let backup = dir.0.join("backup");
+    orca_model::utils::set_temporary_dir(backup.to_str().expect("a UTF-8 path"));
+    let beds = mbvl_beds(&file);
+    let mut m = Mismatches::default();
+    let mut replayed = 0usize;
+    oracle_arena().execute(|| {
+        for rec in file
+            .of_kind("M3MF")
+            .filter(|rec| m3mf_piece(rec).1 == piece)
+        {
+            let (label, p) = rebuild_3mf(rec, &dir, &beds);
+            let diff = p.first_difference(&rec.payload);
+            m.check(diff.is_none(), || {
+                format!("M3MF {label}: {}", diff.unwrap_or_default())
+            });
+            replayed += 1;
+        }
+    });
+    eprintln!(
+        "{}: {replayed} M3MF records of piece {piece} replayed",
+        file.path.display()
+    );
+    assert!(replayed > 0, "no M3MF record of piece {piece}");
+    m.assert_none("M3MF");
+}
+
+/// The file holds M3MF records of each piece, and only of the three.
+#[test]
+fn three_mf_records_are_present() {
+    let file = model_file();
+    let mut seen = [0usize; 3];
+    for rec in file.of_kind("M3MF") {
+        let (label, piece) = m3mf_piece(rec);
+        assert!(
+            (1..=3).contains(&piece),
+            "{}: M3MF {label} names piece {piece}",
+            file.path.display()
+        );
+        seen[usize::from(piece - 1)] += 1;
+    }
+    assert!(
+        seen.iter().all(|&n| n > 0),
+        "{}: M3MF records of pieces 1, 2 and 3: {seen:?}",
+        file.path.display()
+    );
+}
+
+#[test]
+fn three_mf_files_the_container_or_the_root_model_refuses() {
+    check_3mf_piece(1);
+}
+
+#[test]
+fn three_mf_files_the_config_entries_refuse() {
+    check_3mf_piece(2);
+}
+
+#[test]
+fn three_mf_files_load_and_place_as_the_engine_does() {
+    check_3mf_piece(3);
 }
 
 // ---- MARP ----------------------------------------------------------------------------------
@@ -1073,7 +1415,7 @@ fn every_record_is_replayed() {
         assert!(
             matches!(
                 rec.kind(),
-                "MXFM" | "MFAC" | "MCFG" | "MCIR" | "MBVL" | "MLOD" | "MARP" | "MTMP"
+                "MXFM" | "MFAC" | "MCFG" | "MCIR" | "MBVL" | "MLOD" | "M3MF" | "MARP" | "MTMP"
             ),
             "{}: a {} record, which nothing replays",
             file.path.display(),

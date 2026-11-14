@@ -13,7 +13,9 @@
 // them. The folders named `work` are left out: they are the jobs' work folders, where Orca keeps
 // temporary files named after the clock and its process id. The smoke checks run as well, and
 // same.json says whether each engine passed them; a failed check is recorded, not a failure of
-// the same-check.
+// the same-check. A pass may act on the case's folder once a run is recorded, before the case
+// reads it (AfterRun): parity certify goes on past a run the Rust program declined with the
+// golden C++ run's outputs (certify.ts goldenCarry); the other passes leave the folder as it is.
 
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -147,7 +149,21 @@ export interface RecordedRun {
    * run of a pass that keeps none (the engine's, or one recorded before dumps were kept) has none.
    */
   dumps?: string[]
+  /**
+   * parity certify's runs only: the program declined this run, and the case went on from the golden
+   * C++ run's outputs, put in the case's folder in place of the decline's (AfterRun, certify.ts
+   * goldenCarry). What is kept of the run here is still the decline's own.
+   */
+  carried?: boolean
 }
+
+/**
+ * What a pass may do once a run is recorded, before the smoke case reads the case's folder (see the
+ * top of this file). It gets the case, its folder, the run as recorded and the folder's files before
+ * the run. What it returns is what the case is told the run gave, and the run is marked `carried`;
+ * undefined leaves the folder and the run as they are.
+ */
+export type AfterRun = (o: { caseId: string; caseDir: string; run: RecordedRun; before: Snapshot }) => EngineRun | undefined
 
 /** Where run `index` of a case keeps its outputs: <store>/<index>/{stdout,stderr,files/,dumps/}. */
 export function runStore(store: string, index: number): { dir: string; stdout: string; stderr: string; files: string; dumps: string } {
@@ -162,9 +178,20 @@ export function portableArgs(args: string[], root: string): string[] {
 
 /**
  * The `exec` a smoke case gets: it runs the engine in the case's folder with `env` (plus what the
- * case adds), and keeps what the run wrote (see the top of this file) in `store`.
+ * case adds), and keeps what the run wrote (see the top of this file) in `store`. `after`, when
+ * given, acts on the folder once the run is kept (AfterRun, the case's id bound).
  */
-export function recordingExec(o: { exe: string; caseDir: string; root: string; store: string; env: EngineEnv; timeoutMs: number; runs: RecordedRun[]; run?: RunProcess }): (args: string[], extraEnv?: Record<string, string>) => Promise<EngineRun> {
+export function recordingExec(o: {
+  exe: string
+  caseDir: string
+  root: string
+  store: string
+  env: EngineEnv
+  timeoutMs: number
+  runs: RecordedRun[]
+  run?: RunProcess
+  after?: (x: { caseDir: string; run: RecordedRun; before: Snapshot }) => EngineRun | undefined
+}): (args: string[], extraEnv?: Record<string, string>) => Promise<EngineRun> {
   return async (args, extraEnv) => {
     const env = extraEnv ? { ...o.env, ...extraEnv } : o.env
     const problems = engineEnvProblems(env)
@@ -179,7 +206,13 @@ export function recordingExec(o: { exe: string; caseDir: string; root: string; s
     writeFileSync(s.stdout, r.stdout)
     writeFileSync(s.stderr, r.stderr)
     for (const rel of changed) copyFile(nativePath(o.caseDir, rel), nativePath(s.files, rel))
-    o.runs.push({ index, args: portableArgs(args, o.root), extraEnv: Object.keys(extraEnv ?? {}).sort(), code: r.code, timedOut: r.timedOut, files: changed, gone })
+    const recorded: RecordedRun = { index, args: portableArgs(args, o.root), extraEnv: Object.keys(extraEnv ?? {}).sort(), code: r.code, timedOut: r.timedOut, files: changed, gone }
+    o.runs.push(recorded)
+    const carried = o.after?.({ caseDir: o.caseDir, run: recorded, before })
+    if (carried) {
+      recorded.carried = true
+      return carried
+    }
     return { code: r.code, timedOut: r.timedOut, stdout: r.stdout.toString('utf8') }
   }
 }
@@ -206,6 +239,8 @@ export interface EngineCasesOptions {
   platform: Platform
   timeoutMs: number
   run?: RunProcess
+  /** Acts on a case's folder after each of its runs (AfterRun); parity certify's goldenCarry. */
+  after?: AfterRun
   log: (msg: string) => void
 }
 
@@ -234,7 +269,7 @@ export async function runEngineCases(engine: Pick<EngineUnderTest, 'exe' | 'reso
       lock: o.lock,
       sets: o.sets,
       files,
-      exec: recordingExec({ exe: engine.exe, caseDir: dir, root: o.root, store: join(o.store, c.id), env, timeoutMs: o.timeoutMs, runs, run: o.run }),
+      exec: recordingExec({ exe: engine.exe, caseDir: dir, root: o.root, store: join(o.store, c.id), env, timeoutMs: o.timeoutMs, runs, run: o.run, ...(o.after ? { after: (x) => o.after!({ caseId: c.id, ...x }) } : {}) }),
     }
     let problems: string[]
     let warnings: string[]

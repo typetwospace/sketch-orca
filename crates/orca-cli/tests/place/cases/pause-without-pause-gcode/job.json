@@ -1,0 +1,40 @@
+{
+  "format": "sketch-orca-job/1",
+  "command": "layers",
+  "resources": "<resources>",
+  "workDir": "<case>/work",
+  "model": {
+    "path": "<case>/model.stl"
+  },
+  "presets": {
+    "machine": "<presets>/generic/machine.json",
+    "process": "<presets>/generic/process.json",
+    "filaments": [
+      "<presets>/generic/filament_1.json"
+    ]
+  },
+  "overrides": {
+    "brim_type": "no_brim",
+    "skirt_loops": "0",
+    "enable_support": "0",
+    "enable_arc_fitting": "0",
+    "precise_z_height": "0",
+    "layer_height": "0.2",
+    "initial_layer_print_height": "0.25",
+    "machine_pause_gcode": ""
+  },
+  "objects": [],
+  "customGcodes": [
+    {
+      "printZ": 5.05,
+      "type": "pause"
+    }
+  ],
+  "arrange": true,
+  "orient": false,
+  "output": {
+    "gcode": "<case>/out.gcode",
+    "bambu3mf": null,
+    "stats": true
+  }
+}

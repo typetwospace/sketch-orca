@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06">
+<resources>
+ <object id="2147483648" type="model">
+  <mesh>
+   <vertices>
+    <vertex x="-0" y="0" z="+1"/>
+    <vertex x="1e1" y=" 2" z="0x1p3"/>
+    <vertex x=".5" y="10." z="3abc"/>
+    <vertex x="1e-50" y="1.00000005960464477539" z="10"/>
+   </vertices>
+   <triangles>
+    <triangle v1="+0" v2="2" v3="1.9"/>
+    <triangle v1="0" v2="1" v3="3"/>
+    <triangle v1="0" v2="3" v3="2"/>
+    <triangle v1="1" v2="2" v3="3"/>
+    <triangle v1=" 1" v2="2" v3="3"/>
+   </triangles>
+  </mesh>
+ </object>
+</resources>
+<build>
+ <item objectid="2147483648" transform="1 0 0 0 1 0 0 0 1 +5 1e1 -0" printable="2" auto_drop="0"/>
+ <item objectid="214748364" transform="1 0 0 0 1 0 0 0 1 7 8"/>
+ <item objectid="0214748364" transform="2 0 0 0 2 0 0 0 0 1 2 3"/>
+ <item objectid="2147483649x" transform="1  0 0 0 1 0 0 0 1 9 9 9" printable="x"/>
+</build>
+</model>

@@ -13,7 +13,7 @@ members = ["crates/*"]
 
 [workspace.package]
 # Equal to package.json's version and cli/CMakeLists.txt's SKETCH_ORCA_VERSION (test/repo.test.ts).
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.94"
 license = "AGPL-3.0-only"
@@ -57,6 +57,23 @@ orca-placeholder = { path = "crates/orca-placeholder" }
 orca-qhull = { path = "crates/orca-qhull" }
 orca-xml = { path = "crates/orca-xml" }
 orca-zip = { path = "crates/orca-zip" }
+
+# Phase O3's crates (orca-o3-skeleton, 2026-11-13), in their build order: each declares every
+# library crate of phase O2 and every crate before it here, so that the units that fill them side by
+# side never change this file or Cargo.lock (until orca-o3-chain).
+orca-index = { path = "crates/orca-index" }
+orca-paths = { path = "crates/orca-paths" }
+orca-voronoi = { path = "crates/orca-voronoi" }
+orca-slice = { path = "crates/orca-slice" }
+orca-layer = { path = "crates/orca-layer" }
+orca-arachne = { path = "crates/orca-arachne" }
+orca-print = { path = "crates/orca-print" }
+orca-perimeter = { path = "crates/orca-perimeter" }
+orca-surface = { path = "crates/orca-surface" }
+orca-fill = { path = "crates/orca-fill" }
+orca-support = { path = "crates/orca-support" }
+orca-plate = { path = "crates/orca-plate" }
+orca-process = { path = "crates/orca-process" }
 
 # No target-cpu: the program runs on any x64 machine and must give the same bytes on all of them.
 [profile.release]

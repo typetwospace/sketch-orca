@@ -1,0 +1,28 @@
+{
+  "format": "sketch-orca-job/1",
+  "command": "layers",
+  "resources": "<resources>",
+  "workDir": "<case>/work",
+  "model": {
+    "path": "<case>/model.stl"
+  },
+  "presets": {
+    "machine": "<presets>/generic/machine.json",
+    "process": "<presets>/generic/process.json",
+    "filaments": [
+      "<presets>/generic/filament_1.json"
+    ]
+  },
+  "overrides": {
+    "bed_exclude_area": "100x100,200x100,200x200,100x200"
+  },
+  "objects": [],
+  "customGcodes": [],
+  "arrange": true,
+  "orient": false,
+  "output": {
+    "gcode": "",
+    "bambu3mf": null,
+    "stats": true
+  }
+}

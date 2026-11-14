@@ -1,0 +1,17 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "not-printable",
+  "message": "object 0 (model.stl) is outside the printable volume: it spans x -100..-80, y -100..-80, z 0..20; the printable volume is x 0..300, y 0..300, height 275 mm",
+  "objectIndex": 0,
+  "exitCode": -50,
+  "warnings": [],
+  "command": "layers",
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.3.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

@@ -185,10 +185,11 @@ const MATRIX: Sop1Field = { fixed: 16, of: ['f64'] }
 
 /**
  * The record kinds whose strings can hold a path (parity/SOP1.md): a config's values, an object's
- * or volume's name, the knobs' values, and a custom G-code's colour and text (PCGC). The other
+ * or volume's name, the knobs' values, a custom G-code's colour and text (PCGC, and the tool
+ * ordering's TLXT, oracle patch 0007), and a step's warnings (OWRN and PWRN, patch 0007). The other
  * kinds of front-objects-<n>.sop1 (oracle patch 0006, 2026-11-07: HRNG, BRIM, PNTV) hold no
  * string; they are listed so the whole file is read as its fields, and a record that does not read
- * leaves the dump as it is. Other kinds are compared as they are.
+ * leaves the dump as it is. Other kinds hold no string and are compared as they are.
  */
 export const SOP1_STRING_FIELDS: Record<string, Sop1Field[]> = {
   HEAD: ['str', 'str', 'i64', 'u32'],
@@ -199,6 +200,9 @@ export const SOP1_STRING_FIELDS: Record<string, Sop1Field[]> = {
   HRNG: ['i64', { count: ['f64', 'f64'] }],
   BRIM: ['i64', { count: ['f32', 'f32', 'f32', 'f32'] }],
   PNTV: ['i64', 'i64', { fixed: 4, of: [{ count: ['i32', 'i32'] }, 'u64', { count: ['u8'] }, { count: ['bool'] }] }],
+  OWRN: ['i64', { count: ['u8', { count: ['u8', 'bool', 'str', 'i32'] }] }],
+  PWRN: [{ count: ['u8', { count: ['u8', 'bool', 'str', 'i32'] }] }],
+  TLXT: [{ count: [{ count: ['f64', 'i32', 'i32', 'str', 'str'] }] }],
 }
 
 const FIXED_SIZE: Record<string, number> = { u8: 1, bool: 1, u32: 4, i32: 4, f32: 4, u64: 8, i64: 8, f64: 8 }
@@ -286,7 +290,9 @@ export function portableDump(bytes: Buffer | undefined, roots: [string, string][
  * SKETCH_ORCA_ORACLE_DUMP set to a new folder per engine run: <dumps>/<case>/<n>, n counting the
  * case's runs from 0 as same.ts's run stores do. With `keep` (a dump's file name to whether it is
  * kept), every other file the run wrote there is removed as soon as the run ends, so a pass holds
- * only the boundaries it compares (record.ts KEPT_DUMPS) on disk.
+ * only the boundaries it compares (record.ts KEPT_DUMPS) on disk. That one knob sets every dump:
+ * oracle patch 0007's step boundaries (front-config's, the object and print records it adds, and
+ * print-psConflictCheck) read no knob of their own, and none changes an output.
  */
 export function knobRunner(knobs: Record<string, string>, dumps?: string, run: RunProcess = runHidden, keep?: (file: string) => boolean): RunProcess {
   const counts = new Map<string, number>()

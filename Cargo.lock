@@ -99,8 +99,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "orca-arachne"
+version = "0.3.0"
+dependencies = [
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-layer",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-placeholder",
+ "orca-probe",
+ "orca-qhull",
+ "orca-slice",
+ "orca-stl",
+ "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
 name = "orca-arrange"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-crt",
  "orca-eigen",
@@ -114,23 +142,45 @@ dependencies = [
 
 [[package]]
 name = "orca-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
+ "orca-arachne",
+ "orca-arrange",
  "orca-config",
  "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fill",
  "orca-fmt",
+ "orca-geom",
+ "orca-index",
  "orca-json",
+ "orca-layer",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-perimeter",
  "orca-placeholder",
+ "orca-plate",
+ "orca-print",
  "orca-probe",
+ "orca-process",
+ "orca-qhull",
+ "orca-slice",
  "orca-stl",
+ "orca-support",
+ "orca-surface",
  "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
  "sha2",
  "windows-sys",
 ]
 
 [[package]]
 name = "orca-config"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-crt",
  "orca-fmt",
@@ -140,14 +190,14 @@ dependencies = [
 
 [[package]]
 name = "orca-crt"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-probe",
 ]
 
 [[package]]
 name = "orca-eigen"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-crt",
  "orca-probe",
@@ -156,7 +206,7 @@ dependencies = [
 
 [[package]]
 name = "orca-exact"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-crt",
  "orca-probe",
@@ -164,15 +214,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "orca-fill"
+version = "0.3.0"
+dependencies = [
+ "orca-arachne",
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-layer",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-perimeter",
+ "orca-placeholder",
+ "orca-print",
+ "orca-probe",
+ "orca-qhull",
+ "orca-slice",
+ "orca-stl",
+ "orca-surface",
+ "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
 name = "orca-fmt"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-probe",
 ]
 
 [[package]]
 name = "orca-geom"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-crt",
  "orca-eigen",
@@ -183,16 +265,66 @@ dependencies = [
 ]
 
 [[package]]
+name = "orca-index"
+version = "0.3.0"
+dependencies = [
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-json",
+ "orca-mesh",
+ "orca-model",
+ "orca-placeholder",
+ "orca-probe",
+ "orca-qhull",
+ "orca-stl",
+ "orca-tbb",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
 name = "orca-json"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-fmt",
  "orca-stl",
 ]
 
 [[package]]
+name = "orca-layer"
+version = "0.3.0"
+dependencies = [
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-placeholder",
+ "orca-probe",
+ "orca-qhull",
+ "orca-slice",
+ "orca-stl",
+ "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
 name = "orca-mesh"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-crt",
  "orca-eigen",
@@ -206,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "orca-model"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-arrange",
  "orca-config",
@@ -226,8 +358,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "orca-paths"
+version = "0.3.0"
+dependencies = [
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-mesh",
+ "orca-model",
+ "orca-placeholder",
+ "orca-probe",
+ "orca-qhull",
+ "orca-stl",
+ "orca-tbb",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
+name = "orca-perimeter"
+version = "0.3.0"
+dependencies = [
+ "orca-arachne",
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-layer",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-placeholder",
+ "orca-print",
+ "orca-probe",
+ "orca-qhull",
+ "orca-slice",
+ "orca-stl",
+ "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
 name = "orca-placeholder"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-config",
  "orca-crt",
@@ -237,12 +423,110 @@ dependencies = [
 ]
 
 [[package]]
+name = "orca-plate"
+version = "0.3.0"
+dependencies = [
+ "orca-arachne",
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fill",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-layer",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-perimeter",
+ "orca-placeholder",
+ "orca-print",
+ "orca-probe",
+ "orca-qhull",
+ "orca-slice",
+ "orca-stl",
+ "orca-support",
+ "orca-surface",
+ "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
+name = "orca-print"
+version = "0.3.0"
+dependencies = [
+ "orca-arachne",
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-layer",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-placeholder",
+ "orca-probe",
+ "orca-qhull",
+ "orca-slice",
+ "orca-stl",
+ "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
 name = "orca-probe"
-version = "0.2.0"
+version = "0.3.0"
+
+[[package]]
+name = "orca-process"
+version = "0.3.0"
+dependencies = [
+ "orca-arachne",
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fill",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-layer",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-perimeter",
+ "orca-placeholder",
+ "orca-plate",
+ "orca-print",
+ "orca-probe",
+ "orca-qhull",
+ "orca-slice",
+ "orca-stl",
+ "orca-support",
+ "orca-surface",
+ "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
+]
 
 [[package]]
 name = "orca-qhull"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-crt",
  "orca-fmt",
@@ -251,15 +535,105 @@ dependencies = [
 ]
 
 [[package]]
+name = "orca-slice"
+version = "0.3.0"
+dependencies = [
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-placeholder",
+ "orca-probe",
+ "orca-qhull",
+ "orca-stl",
+ "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
 name = "orca-stl"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-probe",
 ]
 
 [[package]]
+name = "orca-support"
+version = "0.3.0"
+dependencies = [
+ "orca-arachne",
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fill",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-layer",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-perimeter",
+ "orca-placeholder",
+ "orca-print",
+ "orca-probe",
+ "orca-qhull",
+ "orca-slice",
+ "orca-stl",
+ "orca-surface",
+ "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
+name = "orca-surface"
+version = "0.3.0"
+dependencies = [
+ "orca-arachne",
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-layer",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-perimeter",
+ "orca-placeholder",
+ "orca-print",
+ "orca-probe",
+ "orca-qhull",
+ "orca-slice",
+ "orca-stl",
+ "orca-tbb",
+ "orca-voronoi",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
 name = "orca-tbb"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-probe",
  "rayon",
@@ -267,8 +641,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "orca-voronoi"
+version = "0.3.0"
+dependencies = [
+ "orca-arrange",
+ "orca-config",
+ "orca-crt",
+ "orca-eigen",
+ "orca-exact",
+ "orca-fmt",
+ "orca-geom",
+ "orca-index",
+ "orca-json",
+ "orca-mesh",
+ "orca-model",
+ "orca-paths",
+ "orca-placeholder",
+ "orca-probe",
+ "orca-qhull",
+ "orca-stl",
+ "orca-tbb",
+ "orca-xml",
+ "orca-zip",
+]
+
+[[package]]
 name = "orca-xml"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-crt",
  "orca-fmt",
@@ -278,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "orca-zip"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "orca-crt",
  "orca-probe",

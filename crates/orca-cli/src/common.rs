@@ -10,8 +10,8 @@
 
 //! What the parts of the program share, as cli/common.cpp gives it: the named failures with the
 //! stock Orca command line's exit code for each ([`FAILURE_TABLE`], [`exit_code_for`],
-//! [`Failure`]), and the text helpers the job's checks use ([`format_number`], [`lower`],
-//! [`ends_with_ci`]).
+//! [`Failure`]), the text helpers the job's checks use ([`format_number`], [`lower`],
+//! [`ends_with_ci`]), and a length rounded to the micrometre for a result ([`round_um`]).
 
 use orca_fmt::printf::{Arg, sprintf_string};
 
@@ -99,6 +99,16 @@ pub fn format_number(v: f64) -> String {
     sprintf_string(format, &[Arg::Double(v)]).expect("a double formats")
 }
 
+/// `round_um(v)`: a length in millimetres rounded to the micrometre (`std::round`, the UCRT's), 0
+/// for a value that is not finite.
+#[must_use]
+pub fn round_um(v: f64) -> f64 {
+    if !v.is_finite() {
+        return 0.;
+    }
+    orca_crt::round(v * 1e6) / 1e6
+}
+
 /// `lower(s)`: `std::tolower` of each byte in the "C" locale, ASCII letters only.
 #[must_use]
 pub fn lower(s: &str) -> String {
@@ -114,7 +124,7 @@ pub fn ends_with_ci(s: &str, suffix: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ends_with_ci, exit_code_for, format_number, lower};
+    use super::{ends_with_ci, exit_code_for, format_number, lower, round_um};
 
     #[test]
     fn numbers_are_written_as_orca_writes_settings() {
@@ -138,5 +148,16 @@ mod tests {
         assert_eq!(lower("Inherits_\u{e9}"), "inherits_\u{e9}");
         assert!(ends_with_ci("C:\\m\\Cube.STL", ".stl"));
         assert!(!ends_with_ci("stl", ".stl"));
+    }
+
+    #[test]
+    fn a_length_is_rounded_to_the_micrometre() {
+        assert_eq!(round_um(20.0), 20.0);
+        assert_eq!(round_um(0.123_456_7), 0.123_457);
+        assert_eq!(round_um(1.000_000_4), 1.0);
+        assert_eq!(round_um(-2.000_000_6), -2.000_001);
+        assert_eq!(round_um(2.5e-7), 0.0);
+        assert_eq!(round_um(f64::NAN), 0.0);
+        assert_eq!(round_um(f64::INFINITY), 0.0);
     }
 }

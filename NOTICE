@@ -103,8 +103,9 @@ translated into Rust. Each file that carries it says what it carries, from which
         std::from_chars, num_put and std::to_string: stl/inc/charconv, xcharconv_ryu.h,
         xcharconv_ryu_tables.h, xlocnum and string, stl/src/charconv.cpp and the
         xcharconv_*tables*.cpp files);
-      crates/orca-fmt/src/istream.rs (num_get and istream's operator>> for int and double:
-        stl/inc/xlocnum and istream, stl/src/xstol.cpp and xstoul.cpp);
+      crates/orca-fmt/src/istream.rs (num_get and istream's operator>> for int, unsigned long
+        long, float and double, and for bool under boolalpha: stl/inc/xlocnum, xlocale
+        (_Getloctxt) and istream, stl/src/xstol.cpp, xstoul.cpp and xstoull.cpp);
       crates/orca-stl/src/sort.rs, stable_sort.rs, select.rs, heap.rs, minmax.rs, unordered.rs and
         random.rs (sort, stable_sort, inplace_merge, nth_element, partial_sort, the searches and
         unique, the heaps and priority_queue, min and max, the unordered containers and std::hash,
@@ -280,6 +281,17 @@ orca-xml (filled by the o2-model task, 2026-11-08)
     tokenizer and encodings of xmltok.c, xmltok_impl.inc and xmltok_ns.inc (src/tok.rs), the tables
     of asciitab.h, iasciitab.h, latin1tab.h, utf8tab.h and nametab.h (src/tables.rs), and
     enum XML_Error with XML_ErrorString (src/error.rs).
+  - Boost.PropertyTree of Boost 1.84.0 with the rapidxml it bundles (added by orca-ptree-port,
+    2026-11-11), Copyright (C) 2002-2006, 2007 Marcin Kalicinski, Copyright (C) 2006, 2009 Marcin
+    Kalicinski (rapidxml) and Copyright (C) 2009 Sebastian Redl, with the type names of
+    Boost.Core's type_name.hpp, Copyright 2021 Peter Dimov, under the Boost Software License,
+    version 1.0 (licenses/BSL-1.0.txt): rapidxml's parser and lookup tables of
+    property_tree/detail/rapidxml.hpp (src/rapidxml.rs), and read_xml with flags 0, the tree,
+    string_path, get_child, get, the exceptions and stream_translator of ptree.hpp,
+    detail/ptree_implementation.hpp, string_path.hpp, exceptions.hpp,
+    detail/exception_implementation.hpp, stream_translator.hpp, id_translator.hpp,
+    detail/xml_parser_read_rapidxml.hpp, detail/xml_parser_utils.hpp, detail/file_parser_error.hpp
+    and detail/xml_parser_error.hpp (src/ptree.rs).
 
 orca-placeholder (filled by the o2-front task, 2026-11-07)
   - OrcaSlicer's src/libslic3r/PlaceholderParser.cpp, with its header: the boolean expressions of
@@ -335,12 +347,100 @@ orca-model (filled by the o2-model task, 2026-11-07)
     (src/config.rs), and Arrange.cpp's bed and inflation updates, PrintConfig.cpp's get_bed_shape
     and skirt distance, Print.cpp's filament temperature classes and MaterialType.cpp's table
     (src/arrange.rs), with their headers; Format/OBJ.cpp and Format/objparser.cpp, with their
-    headers (src/obj.rs, 2026-11-09). The 3MF reader (Format/bbs_3mf.cpp) is not carried yet.
+    headers (src/obj.rs, 2026-11-09). From 2026-11-10: piece 1 of the 3MF reader of
+    Format/bbs_3mf.cpp, the container, its relationships and the root model, with the names,
+    attribute getters and helpers it uses and load_bbs_3mf (src/bbs_3mf/mod.rs, names.rs and
+    attrs.rs); utils.cpp's set_temporary_dir, temporary_dir, encode_path, get_current_pid,
+    xml_unescape and save_string_file (src/utils.rs); Semver.hpp's constructors and parse
+    (src/semver.rs); and Model.cpp's get_backup_path, delete_object and the model's information
+    classes (src/model.rs). From 2026-11-11: piece 2 of the 3MF reader of Format/bbs_3mf.cpp, the
+    loop over the archive's other entries and what it reads (model_settings.config's handlers, the
+    cut information, layer heights, height ranges, brim ears and svg files, parse_int_list, and
+    TextConfigurationSerialization's reading; src/bbs_3mf/entries.rs, config.rs and text.rs);
+    ObjectID.hpp's CutObjectBase (src/model.rs, read in src/bbs_3mf/entries.rs);
+    TextConfiguration.hpp's FontProp, EmbossStyle and TextConfiguration and EmbossShape.hpp's
+    EmbossShape with its projection and svg file (src/emboss.rs); and Model.cpp's
+    ModelVolume::type_from_string and type_to_string (src/model.rs). From 2026-11-11 too: piece 3
+    of the 3MF reader, which carries Format/bbs_3mf.cpp whole as the command line's load runs it:
+    the sub-model files with ObjectImporter (src/bbs_3mf/objects.rs) and the assembly into the
+    model, _generate_current_object_list and _generate_volumes_new (src/bbs_3mf/assemble.rs;
+    release_PlateData_list is not carried: no plate list is kept); Model.cpp's read_from_file to
+    its end (src/read.rs), add_object of a copy, add_volume_with_shared_mesh, ModelInstance's copy,
+    the cut information and the parts' text and shape (src/model.rs), and
+    ModelVolume::get_extruders with the reading of TriangleSelector.cpp's deserialize and
+    get_facets (src/facets.rs).
+  - ADMesh, as orca-mesh's entry names it, under the GNU General Public License, version 2 or
+    later (licenses/GPL-2.0.txt), taken under version 3 (licenses/GPL-3.0.txt):
+    FaceProperty::from_string of deps_src/admesh/stl.h (src/bbs_3mf/assemble.rs), 2026-11-11.
   - The Microsoft C++ Standard Library, as its entry above names it (src/circle.rs).
+  - semver, Copyright (c) 2015-2017 Tomas Aparicio, as OrcaSlicer v2.4.2 bundles it in
+    deps_src/semver (with BambuStudio's fourth number), under the MIT licence
+    (licenses/MIT-semver.txt): semver_parse and its helpers of semver.c (src/semver.rs),
+    2026-11-10.
+  - fast_float, by Daniel Lemire and João Paulo Magalhaes, with contributions from Eugene
+    Golushkov, Maksim Kita, Marcin Wojdyr, Neal Richardson, Tim Paine and Fabio Pellacini, as
+    OrcaSlicer v2.4.2 bundles it in deps_src/fast_float, under the MIT licence
+    (licenses/MIT-fast_float.txt): the grammar of from_chars for a float (parse_number_string,
+    parse_infnan and fastfloat_strncasecmp of fast_float.h; src/bbs_3mf/fast_float.rs),
+    2026-11-10.
+  - Boost.Spirit of Boost 1.84.0, Copyright (c) 2001-2011 Joel de Guzman, (c) 2001-2011 Hartmut
+    Kaiser, (c) 2011 Jan Frederick Eick, (c) 2011 Christopher Jefferson and (c) 2006 Stephen
+    Nutt, under the Boost Software License, version 1.0 (licenses/BSL-1.0.txt): qi::int_ for an
+    int in base 10 (boost/spirit/home/qi/numeric/numeric_utils.hpp and
+    qi/numeric/detail/numeric_utils.hpp; src/bbs_3mf/spirit.rs), 2026-11-10.
+  - Boost.LexicalCast of Boost 1.84.0, Copyright Kevlin Henney, 2000-2005, Alexander Nasonov,
+    2006-2010, and Antony Polukhin, 2011-2023, under the Boost Software License, version 1.0
+    (licenses/BSL-1.0.txt): lexical_cast<int> from a string in the classic locale (shr_signed of
+    boost/lexical_cast/detail/converter_lexical_streams.hpp and lcast_ret_unsigned of
+    lcast_unsigned_converters.hpp; src/bbs_3mf/lexical_cast.rs), 2026-11-11.
+  - Boost.Filesystem of Boost 1.84.0, as its entry above names it: path::stem and filename with
+    their helpers (libs/filesystem/src/path.cpp) and path's operator<< (src/utils.rs); with
+    boost::io::quoted of Boost 1.84.0 (boost/io/quoted.hpp), by Beman Dawes and Glen Fernandes,
+    under the Boost Software License, version 1.0 (licenses/BSL-1.0.txt) (src/utils.rs),
+    2026-11-10.
 
-The staged engine does not carry these crates yet. Of them, sketch-orca-rs links only
-orca-placeholder until the o2-info task links the rest; the licence texts above join its
-LICENSES/sketch-orca-rs then.
+sketch-orca-rs linked only orca-placeholder of these crates until 2026-11-11, when the o2-info
+task's first unit (orca-info-load) gave its model stage orca-model, which links the other eight,
+and named all nine in orca-cli's dependencies. The licence texts above are staged with it, in
+LICENSES/sketch-orca-rs (scripts/lib/stage.ts, RUST_LICENSE_TEXTS); an engine staged before that
+date carries at most orca-placeholder of them.
+
+
+Phase O3's crates, one by one
+-----------------------------
+
+Phase O3 of the Rust translation (added 2026-11-13 by orca-o3-skeleton) runs the print through
+process() and answers for its layers. It adds thirteen crates, set up empty: each section below is
+empty until the crate's pieces land, and orca-o3-chain places their entries here, in the form of
+phase O2's sections above (the code of others each carries, and the OrcaSlicer files it
+translates, which are copyright the OrcaSlicer contributors under the GNU Affero General Public
+License, version 3). orca-cli names all thirteen in its dependencies from the same day.
+
+orca-index (filled by orca-o3-index-1 and orca-o3-index-2)
+
+orca-paths (filled by orca-o3-paths-1)
+
+orca-voronoi (filled by orca-o3-voronoi-1 to orca-o3-voronoi-4)
+
+orca-slice (filled by orca-o3-slice-1 and orca-o3-slice-2)
+
+orca-layer (filled by orca-o3-layer-1 to orca-o3-layer-3 and orca-o3-dump-1)
+
+orca-arachne (filled by orca-o3-arachne-1 to orca-o3-arachne-4)
+
+orca-print (filled by orca-o3-print-1 to orca-o3-print-3)
+
+orca-perimeter (filled by orca-o3-walls-1 to orca-o3-walls-3)
+
+orca-surface (filled by orca-o3-surfaces-1 to orca-o3-surfaces-3)
+
+orca-fill (filled by orca-o3-fill-1 to orca-o3-fill-4)
+
+orca-support (filled by orca-o3-support-1)
+
+orca-plate (filled by orca-o3-plate-1 to orca-o3-plate-3 and orca-o3-dump-2)
+
+orca-process (filled by orca-o3-process-1 and orca-o3-process-2)
 
 
 What was changed, and when
@@ -404,9 +504,20 @@ newest date of the patch headers.
                                               src/libslic3r/FlushVolPredictor.cpp,
                                               src/slic3r/Utils/ColorSpaceConvert.cpp and
                                               src/libslic3r/PrintConfig.hpp and PrintConfig.cpp)
+      crates/orca-cli/src/config.rs          (src/libslic3r/Config.hpp, src/libslic3r/Config.cpp,
+                                              src/libslic3r/PrintConfig.cpp, PrintConfig.hpp,
+                                              src/libslic3r/GCode/Thumbnails.cpp)
+      crates/orca-cli/src/run.rs             (cli/run.cpp: src/OrcaSlicer.cpp; 2026-11-11)
+      crates/orca-cli/src/model.rs           (cli/run.cpp: src/OrcaSlicer.cpp; 2026-11-11)
+      crates/orca-cli/src/log.rs             (src/libslic3r/utils.cpp; 2026-11-11)
+      crates/orca-cli/src/place.rs           (cli/run.cpp: src/OrcaSlicer.cpp,
+                                              src/slic3r/GUI/PartPlate.cpp,
+                                              src/libslic3r/GCode/WipeTower.cpp; 2026-11-11)
     On 2026-11-07 phase O2 added ten crates (orca-eigen, orca-geom, orca-exact, orca-qhull,
     orca-mesh, orca-zip, orca-xml, orca-placeholder, orca-arrange and orca-model), each described,
-    with what it carries, in "Phase O2's crates, one by one" above.
+    with what it carries, in "Phase O2's crates, one by one" above. On 2026-11-13 phase O3 added
+    thirteen more (orca-index to orca-process), empty until their pieces land, each with a section
+    in "Phase O3's crates, one by one" above.
   - parity/ holds what holds the translation to the C++ engine, added 2026-11-06: the record
     format (parity/SOP1.md), the masks of what may differ between runs (parity/masks.json), and
     the oracle (parity/oracle/): the C++ engine built with knobs that pin its clock, seeds,

@@ -1,0 +1,28 @@
+{
+  "format": "sketch-orca-job/1",
+  "command": "layers",
+  "resources": "<resources>",
+  "workDir": "<case>/work",
+  "model": {
+    "path": "<case>/two-objects.3mf"
+  },
+  "presets": {
+    "machine": "<presets>/generic/machine.json",
+    "process": "<presets>/generic/process.json",
+    "filaments": [
+      "<presets>/generic/filament_1.json"
+    ]
+  },
+  "overrides": {
+    "print_sequence": "by object"
+  },
+  "objects": [],
+  "customGcodes": [],
+  "arrange": true,
+  "orient": false,
+  "output": {
+    "gcode": "",
+    "bambu3mf": null,
+    "stats": true
+  }
+}

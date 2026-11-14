@@ -1,0 +1,28 @@
+{
+  "format": "sketch-orca-job/1",
+  "command": "layers",
+  "resources": "<resources>",
+  "workDir": "<case>/work",
+  "model": {
+    "path": "<case>/two-objects.3mf"
+  },
+  "presets": {
+    "machine": "<presets>/generic/machine.json",
+    "process": "<presets>/generic/process.json",
+    "filaments": [
+      "<presets>/generic/filament_1.json"
+    ]
+  },
+  "overrides": {
+    "printable_area": "120x0,118.1769x20.8378,112.7631x41.0424,103.923x60,91.9253x77.1345,77.1345x91.9253,60x103.923,41.0424x112.7631,20.8378x118.1769,0x120,-20.8378x118.1769,-41.0424x112.7631,-60x103.923,-77.1345x91.9253,-91.9253x77.1345,-103.923x60,-112.7631x41.0424,-118.1769x20.8378,-120x0,-118.1769x-20.8378,-112.7631x-41.0424,-103.923x-60,-91.9253x-77.1345,-77.1345x-91.9253,-60x-103.923,-41.0424x-112.7631,-20.8378x-118.1769,0x-120,20.8378x-118.1769,41.0424x-112.7631,60x-103.923,77.1345x-91.9253,91.9253x-77.1345,103.923x-60,112.7631x-41.0424,118.1769x-20.8378"
+  },
+  "objects": [],
+  "customGcodes": [],
+  "arrange": true,
+  "orient": false,
+  "output": {
+    "gcode": "",
+    "bambu3mf": null,
+    "stats": true
+  }
+}

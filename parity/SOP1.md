@@ -15,24 +15,41 @@ number of times this run has reached it (counting from 1):
 | File | Written | Records |
 | --- | --- | --- |
 | `front-objects-<n>.sop1` | in the front end, once the objects are placed (after arranging and the build volume check) | HEAD, RUN, a CONF `run`, PCGC, then for each model object: MODL, a CONF `model-object`, a CONF `model-volume` for each of its volumes, HRNG, a CONF `model-height-range` for each of its height ranges, BRIM, and a PNTV for each of its volumes; END. The CONF `run`, PCGC, HRNG, the `model-height-range` CONFs, BRIM and PNTV are oracle patch 0006's (2026-11-07) |
-| `front-config-<n>.sop1` | in the front end, once the config is resolved and applied to the print, before each slice | HEAD, RUN, CONF `job`, CONF `print-full`, CONF `print`, then for each print object a CONF `object` and a CONF `region` for each of its printing regions; END |
-| `object<i>-<step>-<n>.sop1` | after the print object `i` (its index in the print) finishes the step `<step>` (`PrintObjectBaseWithState::set_done`) | HEAD, RUN, OBJ, a LAYR for each layer, a SUPL for each support layer; END |
-| `print-<step>-<n>.sop1` | after the print finishes the step `<step>` (`PrintBaseWithState::set_done`) | HEAD, RUN, PRNT, TOOL, WIPE, STAT, CNFL; END |
+| `front-config-<n>.sop1` | in the front end, once the config is resolved and applied to the print, before each slice | HEAD, RUN, CONF `job`, CONF `print-full`, CONF `print`, then for each print object a CONF `object` and a CONF `region` for each of its printing regions; then a CONF `default-object`, a CONF `default-region`, FPRT and a FOBJ for each print object; END. The last four kinds are oracle patch 0007's (2026-11-13) |
+| `object<i>-<step>-<n>.sop1` | after the print object `i` (its index in the print) finishes the step `<step>` (`PrintObjectBaseWithState::set_done`) | HEAD, RUN, OBJ, a LAYR for each layer, a SUPL for each support layer, then OSTA, OWRN and a LEXT for each layer (patch 0007); END |
+| `print-<step>-<n>.sop1` | after the print finishes the step `<step>` (`PrintBaseWithState::set_done`); `print-psConflictCheck-<n>.sop1` at the end of `Print::process()`, after the conflict check (patch 0007: the step is never set done) | HEAD, RUN, PRNT, TOOL, WIPE, STAT, CNFL, then PWRN, PXTR and TLXT (patch 0007); END |
 
 The object steps are `posSlice`, `posPerimeters`, `posEstimateCurledExtrusions`,
 `posPrepareInfill`, `posInfill`, `posIroning`, `posContouring`, `posSupportMaterial`,
 `posSimplifyPath`, `posSimplifySupportPath`, `posDetectOverhangsForLift`, `posSimplifyWall` and
 `posSimplifyInfill`. The print steps are `psWipeTower`, `psSkirtBrim`, `psGCodeExport` and
-`psConflictCheck`. A step the engine skips writes nothing. Dumps are written one at a time, each
-whole, under one lock.
+`psConflictCheck`. A step the engine skips writes nothing, and OrcaSlicer 2.4.2 never sets some
+steps done: `posSimplifyWall` never, `posEstimateCurledExtrusions` only on an object that shares
+another's layers, and `psConflictCheck` never (patch 0007 dumps the print there itself). Dumps are
+written one at a time, each whole, under one lock.
+
+Patch 0007 makes each boundary hold every value the step after it reads, so that a crate can replay
+one step from the dump before it: the object's slicing parameters, instances, brim and skirt state
+and step warnings (OSTA, OWRN), each layer's neighbours, boxes and curled lines (LEXT), the print's
+own values and each print object as `posSlice` finds it (FPRT, FOBJ, and the default object and
+region configs), and the print's step warnings, conflict, filament statistics, fake wipe tower and
+the tool ordering's custom G-code (PWRN, PXTR, TLXT).
 
 `parity record` keeps the dumps of the boundaries in `KEPT_DUMPS` (`scripts/lib/parity/record.ts`;
-`front-objects` in phase O2) of each oracle pass beside its runs, and `parity certify` compares the
+`front-objects` in phase O2; from phase O3 also `front-config`, each object step of `OBJECT_STEPS`
+there, `psWipeTower`, `psSkirtBrim` and the end-of-process `print-psConflictCheck`, never
+`psGCodeExport`) of each oracle pass beside its runs, and `parity certify` compares the
 Rust program's dumps of those boundaries with them byte for byte. Paths differ between the folders
 a dump is written in, so before two dumps are compared each side's folders are written as
-`<case>`, `<cases>`, `<resources>` and `<work>` inside the strings of HEAD, RUN, CONF, MODL and PCGC,
-each string's length and its record's length written again (`neutral.ts` `portableDump`); the
+`<case>`, `<cases>`, `<resources>` and `<work>` inside the strings of HEAD, RUN, CONF, MODL, PCGC,
+OWRN, PWRN and TLXT, each string's length and its record's length written again (`neutral.ts`
+`portableDump`); the
 kinds without a string field that can hold a path are compared as they are.
+
+From 0.3.0 (2026-11-11) `sketch-orca-rs` writes `front-objects-<n>.sop1` itself under the same
+knob, every record above as `OracleDump.cpp` writes it, its CONF values through orca-config's
+serialisation (`crates/orca-cli/src/oracle.rs`). It writes no other file of this table yet, as it
+declines a job at the front-objects boundary.
 
 ## The container
 
@@ -44,8 +61,8 @@ END       record   kind "END ", payload one u64: the number of records before it
 ```
 
 A kind is four ASCII letters, padded with spaces: `HEAD`, `RUN `, `CONF`, `MODL`, `PCGC`, `HRNG`,
-`BRIM`, `PNTV`, `OBJ `, `LAYR`, `SUPL`, `PRNT`, `TOOL`, `WIPE`, `STAT`, `CNFL`, `END `. Nothing follows END. A reader refuses a file
-whose magic, version, lengths or END count do not hold.
+`BRIM`, `PNTV`, `OBJ `, `LAYR`, `SUPL`, `PRNT`, `TOOL`, `WIPE`, `STAT`, `CNFL`, and patch 0007's
+`OSTA`, `OWRN`, `LEXT`, `FPRT`, `FOBJ`, `PWRN`, `PXTR`, `TLXT`; then `END `. Nothing follows END. A reader refuses a file whose magic, version, lengths or END count do not hold.
 
 ## Values
 
@@ -135,6 +152,8 @@ and no floats.
 | `print` | `Print::config()` | -1 | -1 |
 | `object` | `PrintObject::config()` | print object | -1 |
 | `region` | a printing region's config | print object | region |
+| `default-object` | `Print::default_object_config()`, the defaults `Print::apply` made the objects' configs from (patch 0007) | -1 | -1 |
+| `default-region` | `Print::default_region_config()`, the defaults of the regions' configs (patch 0007) | -1 | -1 |
 
 ### MODL
 
@@ -201,10 +220,10 @@ One support layer, in order: `u64` position, `u64` id, `f64` slice z, `f64` prin
 The print's skirt and brims: `entity` skirt; a `vec` of skirt and brim groups, each: `entity`
 skirt, `vec<i64>` object indices, a `vec` of brims (`entity` brim, `vec<i64>` object indices);
 `bool` has a shared per-object skirt; the brim map and then the support brim map, each a `vec` of
-(`i64` object index, `entity`) sorted by object index; `polygon` first layer convex hull; `vec<point>`
-skirt convex hull; `vec<u32>` the filaments used, then `vec<u32>` those used on the first layer;
-`bool` support is used. Objects are written as their index in the print, never as an `ObjectID`,
-whose values depend on what was made before.
+(`i64` object index, `entity`) sorted by object index; `polygon` first layer convex hull;
+`vec<point>` skirt convex hull; `vec<u32>` the filaments used, then `vec<u32>` those used on the
+first layer; `bool` support is used. Objects are written as their index in the print, never as an
+`ObjectID`, whose values depend on what was made before.
 
 ### TOOL
 
@@ -242,6 +261,93 @@ tool, a `vec` of (`u64` filament, `f64` used).
 The conflict check: `bool` has a conflict and, when it has, `str` first object's name, `str`
 second object's name, `f64` height, `i32` layer.
 
+### OSTA
+
+What a print object holds besides its layers (patch 0007, after its SUPLs): `i64` index, `i64` the
+index of the object whose layers it shares (`Print::process()`'s `is_print_object_the_same`; -1
+for none), its slicing parameters, a `vec` of instances (`u64` unique id, `i64` its model
+instance's index, `point` shift without the plate offset), `vec<i32>` first layer wall extruders
+(the tool ordering's), `bbox` first layer brim box (`make_brim`), `entity` the object's own skirt,
+a `vec` of first layer slices by volume (`i64` volume index, a `vec` of `vec<expolygon>`), and a
+`vec` of first layer volume groups (`i32` group id, `vec<i64>` volume indices, `vec<expolygon>`
+slices), as `posSlice` made them for the brim. `PrintObject::get_id` is not written: the command
+line never sets it, so it holds whatever the memory held.
+
+A `bbox` is `bool` defined, `point` min, `point` max. The slicing parameters are
+`SlicingParameters` (`Slicing.hpp`), every field in its order: `bool` valid, `u64` base raft
+layers, `u64` interface raft layers, `f64` base raft layer height, interface raft layer height,
+contact raft layer height, layer height, min layer height, max layer height, max support layer
+height, first print layer height, first object layer height, `bool` first object layer bridging,
+zero gap interface top, zero gap interface bottom, zero gap interface raft, `f64` gap raft object,
+gap object support, gap support object, raft base top z, raft interface top z, raft contact top z,
+object print z min, object print z max, object print z uncompensated max, object shrinkage
+compensation z. A volume is written as its index in its model object's volumes (-1 when it is not
+there).
+
+### OWRN
+
+A print object's step states (patch 0007): `i64` index, then a `vec` with one entry per
+`PrintObjectStep` in `Print.hpp`'s order (`posCount` of them), each: `u8` state
+(`PrintStateBase::State`), then a `vec` of warnings, each `u8` level, `bool` current, `str`
+message, `i32` message id. The support check's warning is kept here. The time stamps are not
+written: they count every state change of the run, not of this object.
+
+### LEXT
+
+One layer's values that LAYR does not hold (patch 0007), one for each layer in order: `u64`
+position, `i64` the position of the layer below and `i64` that of the layer above (-1 for none),
+`vec<bbox>` the lslices' boxes, `bbox` the overhangs' box (`posDetectOverhangsForLift`), and a
+`vec` of curled lines (`point` a, `point` b, `f32` curled height), which the curled extrusions step
+leaves on the layer.
+
+### FPRT
+
+The print's own values that `process()` reads besides its configs (patch 0007, front-config): `i32`
+plate index, `bool` no check, `bool` a Bambu Lab printer, `f64` plate origin x, y and z, `vec<i32>`
+filament maps, a `vec` of print regions (`i32` print region id), `bool` has a wipe tower, `bool`
+has a skirt, `bool` has an infinite skirt, `bool` has a brim.
+
+### FOBJ
+
+One print object as `posSlice` finds it (patch 0007, front-config, one per print object): `i64`
+index, `i64` its model object's index in the print's model, size as three `i64`, `point` centre
+offset, `matrix` transformation, `f64` max z, a `vec` of instances (`point` shift, `u64` id, `u64`
+unique id, `i64` model instance index), its slicing parameters, a `vec` of its model object's
+volumes (`i32` type, `matrix`, `u64` vertex count, `u64` triangle count; the meshes are
+front-objects' MODL), then `bool` has regions and, when it has: `matrix` the regions' box
+transformation, a `vec` of all regions (`i32` print region id, `i32` print object region id), and
+a `vec` of layer ranges, each: `f64` from, `f64` to, `bool` has a config of its own, a `vec` of
+volumes (`i64` volume index, `f32` box min x, y, z and max x, y, z), a `vec` of volume regions
+(`i64` volume index, `i32` parent, `i32` the region's print object region id or -1), a `vec` of
+painted regions (`u32` extruder, `i32` parent, `i32` region id) and a `vec` of fuzzy skin painted
+regions (`u8` parent type, `i32` parent, `i32` region id).
+
+### PWRN
+
+The print's step states (patch 0007, after CNFL): a `vec` with one entry per `PrintStep` in
+`Print.hpp`'s order (`psCount` of them), each as in OWRN: `u8` state, then a `vec` of warnings
+(`u8` level, `bool` current, `str` message, `i32` message id).
+
+### PXTR
+
+What the print steps leave that PRNT, TOOL, WIPE, STAT and CNFL do not hold (patch 0007): `bool`
+has a conflict, then the two instances it names, first and second, each `i64` object index and
+`i64` instance index (-1 and -1 for none, the prime tower; -2 and -2 for one that is not the
+print's); a `vec` of objects (`i64` index, `vec<i32>` first layer wall extruders, `bbox` first
+layer brim box, `entity` the object's own skirt); a `vec` of geometric unprintable filaments per
+extruder (a `vec<i32>` each); `vec<i32>` filament maps; the filament change statistics for a
+single extruder, the best multi-extruder and the current multi-extruder, each `i32` flush weight,
+`i32` change count, `i32` extruder change count; and the fake wipe tower the conflict check reads:
+`f32` x, y, width, height, layer height, depth, a `vec` of (`f32` z, `f32` depth), `f32` brim
+width, rotation angle, cone angle, `f64` plate origin x and y, `f32` rib offset x and y, and a
+`vec` of outer walls (`f32` z, `vec<polyline>`).
+
+### TLXT
+
+The tool ordering's custom G-code (patch 0007), layer by layer as TOOL lists the layers: for each,
+a `vec` of what is placed there (none or one: `f64` print z, `i32` type (`CustomGCode::Type`),
+`i32` extruder, `str` colour, `str` extra), which TOOL gives only as a `bool`.
+
 ### END
 
 `u64`: the number of records before it.
@@ -273,12 +379,30 @@ records below, END.
 | `cstdio.sop1` | o2-mesh | CSCN, CFIL (`orca-fmt`'s `stdio` and `scanf`) |
 | `zip.sop1` | o2-model | ZCRC, ZINF, ZARC, ZERR (`orca-zip`) |
 | `xml.sop1` | o2-model | XPRS, XERR (`orca-xml`) |
-| `model.sop1` | o2-model | MXFM, MFAC, MCFG, MCIR, MBVL, MLOD, MARP, MTMP (`orca-model`) |
+| `ptree.sop1` | orca-ptree-probe | PTXR, PTGT (`orca-xml`'s `read_xml` and `get<T>`) |
+| `model.sop1` | o2-model, M3MF orca-3mf-probe | MXFM, MFAC, MCFG, MCIR, MBVL, MLOD, M3MF, MARP, MTMP (`orca-model`) |
 | `arrange.sop1` | o2-arrange | XI28, XRAT (`orca-exact`); NLOP, NOPT, RTRE, NFPC, NGEO, ARNG (`orca-arrange`) |
 | `placeholder.sop1` | o2-front | PHCF, PHEV (`orca-placeholder`) |
+| `layer.sop1` | orca-o3-probe-layer | kinds starting LY, on `parity/sop1/layer.md` (`orca-config`, `orca-layer`) |
+| `index.sop1` | orca-o3-probe-index | kinds starting IX, on `parity/sop1/index.md` (`orca-index`) |
+| `paths.sop1` | orca-o3-probe-paths | kinds starting PS, on `parity/sop1/paths.md` (`orca-geom`, `orca-paths`) |
+| `slice.sop1` | orca-o3-probe-slice | kinds starting SL, on `parity/sop1/slice.md` (`orca-model`, `orca-slice`) |
+| `voronoi.sop1` | orca-o3-probe-voronoi | kinds starting VR, on `parity/sop1/voronoi.md` (`orca-voronoi`) |
+| `arachne.sop1` | orca-o3-probe-arachne | kinds starting AN, on `parity/sop1/arachne.md` (`orca-arachne`) |
+| `walls.sop1` | orca-o3-probe-walls | kinds starting WL, on `parity/sop1/walls.md` (`orca-perimeter`) |
+| `surfaces.sop1` | orca-o3-probe-surfaces | kinds starting SF, on `parity/sop1/surfaces.md` (`orca-surface`) |
+| `fill.sop1` | orca-o3-probe-fill | kinds starting FL, on `parity/sop1/fill.md` (`orca-fill`) |
 
 A stub is HEAD, PRUN and END: the task that fills it adds its records here, and the crate's probe
 test fails as soon as the file holds a record it does not replay.
+
+Phase O3's nine probes (the last nine rows, stubs from 2026-11-13, orca-o3-skeleton) are recorded
+side by side, so each keeps to files of its own: its registry entry
+(`scripts/lib/parity/probes/<name>.ts`), its program, its committed file and its page
+`parity/sop1/<name>.md`, where its kinds' `### KIND` sections go instead of this page. Each has a
+kind prefix that every kind of its file starts with and no kind of this page does, and no kind is
+defined on two pages (`probeKindProblems` in `scripts/lib/parity/probe.ts`, held by
+`test/parity-probe.test.ts`). The harness reads this page and those pages together.
 
 Inputs come from generators with fixed seeds, so two runs write the same bytes (`parity probe
 --check`): the splitmix64 of `probe.hpp`, or a `std::mt19937` in the Clipper and Geometry records
@@ -583,8 +707,8 @@ added 2026-11-07). As in CCLP, a point is `i64` x and y and a path a `u32` count
 here a `Vec2d` is two `f64`, a `Vec3d` three, and "a point if" is `u8` the call's result and the
 point it gave, `(0, 0)` when it returned false. Inputs: points p, a, b, c, d and center, `f64`
 angle and `f64` dmax; l is `Line(a, b)`, m `Line(c, d)`. Results: p after `rotate(angle)`, then p
-after `rotate(angle, center)`; `f64` `p.ccw(a, b)` and `p.ccw_angle(a, b)`; `p.projection_onto(l)`; `f64`
-`l.distance_to(p)`, `Line::distance_to_infinite(p, a, b)` and `l.perp_distance_to(p)`;
+after `rotate(angle, center)`; `f64` `p.ccw(a, b)` and `p.ccw_angle(a, b)`; `p.projection_onto(l)`;
+`f64` `l.distance_to(p)`, `Line::distance_to_infinite(p, a, b)` and `l.perp_distance_to(p)`;
 `l.intersection(m)` and `l.intersection_infinite(m)` as points if; `f64` `l.direction()`,
 `orientation()` and `atan2_()`; `u8` `l.parallel_to(m)`, `perpendicular_to(m)`,
 `parallel_to(angle)` and `perpendicular_to(angle)`; `l.midpoint()`, `l.normal()`; a and b of l
@@ -661,9 +785,9 @@ The transform builders and the hulls. Inputs: `Vec3d` t, r, s and m (each of m Â
 its matrix row by row; `extract_euler_angles(tr)` (the `Transform3d` overload) and
 `extract_euler_angles` of `rotation_transform(r)`'s 3x3 block; the min and max of
 `BoundingBoxf3(list).transformed(tr)`; `Geometry::convex_hull(list)`, the hull in x and y (a
-list of `Vec3d`); `make_circle(radius, error)`'s points; `f64` `rad2deg_dir(angle)`; the points of ha =
-`convex_hull(sa)` and hb = `convex_hull(sb)`; `u8` `convex_polygons_intersect(ha, hb)` when both
-have 3 points or more (0 otherwise); the bottom and the top chain of
+list of `Vec3d`); `make_circle(radius, error)`'s points; `f64` `rad2deg_dir(angle)`; the points of
+ha = `convex_hull(sa)` and hb = `convex_hull(sb)`; `u8` `convex_polygons_intersect(ha, hb)` when
+both have 3 points or more (0 otherwise); the bottom and the top chain of
 `decompose_convex_polygon_top_bottom` of ha's points unscaled (`double(x) * SCALING_FACTOR`), each
 a `u32` count and its `Vec2d`s; then for each point of sb, no count, `u8` `inside_convex_polygon`
 of it unscaled (0 when the bottom chain is empty). 2 hand-made cases (the identity with
@@ -1091,6 +1215,92 @@ seeded mutations of each; generated model and configuration files, the larger in
 `u64` 46, then for each code from -1 to 44 `i32` the code, `bool` `XML_ErrorString` is not `NULL`
 and `str` it.
 
+### ptree.sop1's values
+
+The records of `ptree.sop1` (`parity/oracle/probe/ptree.cpp`, added 2026-11-10 by
+orca-ptree-probe) come from Boost 1.84's `property_tree` as the engine compiles it, called as
+`bbs_3mf.cpp` calls it for the cut information and the height ranges (`:2559-2616`,
+`:2885-2945`): `read_xml` of a `std::istringstream` with flags 0 (rapidxml's
+`parse<parse_comment_nodes>`), then `get_child`, `get<T>` through `stream_translator` (MSVC
+14.42's `num_get` for `long`, `unsigned long long`, `float` and `double`, in the classic locale the
+engine keeps), `get<T>` with a default, `data()` and the children in order. A `str` holds the
+bytes as they are, NULs included. `orca-xml`'s `tests/ptree.rs` rebuilds every record and
+compares it whole.
+
+### PTXR
+
+`str` label, `str` the document. Then `u8` 1 and `str` the `what()` of what `read_xml` threw
+(`<unspecified file>(<line>): <message>`), or `u8` 0 and the tree in document order: the root
+(its key empty), then for each node `str` key, `str` data, `u64` the number of its children, and
+each child the same way.
+
+The documents: 70 trees written by hand (empty input, white space only, the declaration in its
+forms, instructions, doctypes with and without a subset, comments, CDATA, attributes in either
+quote, with no space between them, repeated, empty, of odd names, mixed content, white space kept,
+the five entities, decimal and hexadecimal references at each UTF-8 length, past 32 bits (they
+wrap), to surrogates and to 0, hexadecimal letters in a decimal reference, unknown entities, bytes
+past ASCII, control bytes, a byte order mark, NULs, two roots, a closing tag of another name or of
+none, nesting 200 deep, 300 children, a long name, value and text); then 69 that fail: every
+message rapidxml can throw under flags 0, from each place that throws it (the label names the line
+of `rapidxml.hpp`), "expected <", "unexpected end of data" and "expected >" at lines 1, 2 and a
+later one, and 15 on the line count (labels starting `line:`): where rapidxml has rewritten the
+buffer in place before it stops the line differs from a count of the document's own line feeds,
+and the rest are controls where it does not. The full set adds 30 seeded mutations (splitmix64,
+seed `0x50545245`) of each document of 2000 bytes or fewer: 4249 records; the committed set holds
+the 139 written by hand.
+
+No record holds rapidxml's messages that flags 0 cannot reach: "expected ?>" (it needs
+`parse_declaration_node`), "expected PI target" and the end of data in an instruction kept as a
+node (`parse_pi_nodes`), "invalid closing tag name" (`parse_validate_closing_tags`), the end of
+data in a skipped comment (comments off) and in data with `parse_no_data_nodes`, and "expected
+attribute name" (its test follows a step that has already taken a name character), nor
+`read_xml`'s "read error" (a `std::istringstream` does not fail).
+
+### PTGT
+
+`str` label, `str` the document. Then `u8` 1 and `str` what `read_xml` threw (the record ends
+there), or `u8` 0, `u64` the number of queries and each query: `vec<u64>` the child indexes from the
+root to the node the call is made on (none: the root), `u8` the call, `str` its path (empty for
+calls 11 and 12), for a call with a default the default (6 `i32`, 7 `u64`, 8 `f32`, 9 `f64`, 10
+`str`), then `u8` 0 and the answer, or `u8` 1 and `str` the `what()` of the `ptree_error` it threw
+(`No such node (<path>)`, `conversion of data to type "<type>" failed`).
+
+| Call | The C++ | Answer |
+| --- | --- | --- |
+| 0 | `get_child(path)` | `vec<u64>` the child indexes from the call's node to the node it returned (none: the node itself) |
+| 1 | `get<int>(path)` | `i32` |
+| 2 | `get<size_t>(path)` | `u64` |
+| 3 | `get<float>(path)` | `f32` |
+| 4 | `get<double>(path)` | `f64` |
+| 5 | `get<std::string>(path)` | `str` |
+| 6 to 10 | calls 1 to 5 with a default: `get<T>(path, default)` | as 1 to 5 |
+| 11 | `data()` | `str` |
+| 12 | the children: `for (const auto &c : node)` | `u64` the number of children, then each `str` key, `str` data and `u64` the number of its children |
+
+The documents, each written by hand: paths (`.` separators; an empty path; a trailing, leading or
+doubled `.`; `<xmlattr>` and `<xmlcomment>`; a key holding `.`; a key past ASCII; missing nodes; the
+first of several children of one name; the top level; calls on leaves and inner nodes; an empty
+document and one `read_xml` refuses); `get<std::string>`, and every type with a default on a missing
+node and on a failed conversion; data around children, CDATA, references and a NUL; numbers in 15
+groups (plain, white space, signs, leading zeros, points, exponents, hexadecimal, infinity and nan,
+not numbers, two numbers, the limits of `int`, `size_t`, `float` and `double` (`double`'s top also
+written out in full, 309 digits and signed both ways: `DBL_MAX`, the rounding boundary 2^1024 -
+2^970 past it and that boundary minus 1), and long fields: 768 significant digits with ties and a
+digit past them, an exponent of more digits than a `ptrdiff_t` holds, a field longer than 792
+characters), each text an attribute `x` of a `<v>` asked as all four types, then numbers as an
+element's text, and defaults; and the reader's own calls (`get_child("objects")`, the children, each
+child's `get<int>("<xmlattr>.id", -1)`, a `cut_id`'s three `get<size_t>`, a connector's two
+`get<int>` and two `get<float>`, a range's two `get<double>`, an option's
+`get<std::string>("<xmlattr>.opt_key")` and `data()`) made on every node they reach in
+3mf-2-numbers' cut information and height ranges, in each of its 25 variants (`model.cpp`'s
+`number_variants`, in its order), in the cut information or height ranges of 3mf-3-bambu,
+3mf-2-cut-bad-number, 3mf-2-cut-missing-attr, 3mf-2-ranges-bad-xml, 3mf-2-ranges-bad-z,
+3mf-2-ranges-no-objects and 3mf-2-ranges-bad-option, and in two files with comments, attributes and
+other elements among the objects. A call that throws does not stop the ones after it. The full set
+adds 10 records of 200 seeded number texts each (seed `0x5054474E`) and 12 generated cut information
+and height ranges files (seed `0x50544733`, up to 200 objects): 82 records; the committed set holds
+the 60 written by hand.
+
 ### model.sop1's values
 
 The records of `model.sop1` (`parity/oracle/probe/model.cpp`, added 2026-11-07) run under the
@@ -1198,7 +1408,7 @@ taller than the bed, two in a file, a triangle, a flat square, a tetrahedron, AS
 CRLF, an `.oltp` file, an upper-case extension, empty, no triangles, cut short, `.step`, no
 extension), 30 seeded boxes (rotated, some with a second), OrcaSlicer's test STL files but
 `20mmbox-CR.stl`, its 21 OBJ meshes as binary STL as Sketch writes `model.stl`
-(`parity/CORPUS.md`) and as they are, the fixtures of `parity/oracle/probe/fixtures/model/` (a
+(`parity/CORPUS.md`) and as they are, the OBJ fixtures of `parity/oracle/probe/fixtures/model/` (a
 folder each, `model.*` and the files beside it: OBJ files with quads, texture coordinates, normals
 and a material library, vertex colours and negative indices, a refused face, five corners, index
 0, an index past the vertices, no faces, a library that is not there), 26 OBJ files made by the
@@ -1207,10 +1417,99 @@ probe (LF, CRLF and CR line ends, no line end at the end, NULs, Ctrl-Z, lines of
 index past a `long`, a negative index before the first vertex, two corners, a lone `f`, inside
 out, empty, comments only, materials without a library, an upper-case extension, a library with a
 line of 140000 bytes, a library of CRLF lines cut by Ctrl-Z), and in the full set only the
-corpus's model files (`<work>/parity/corpus/meshes`) but the CR box, each under its folder's name.
-The committed set: the files of 4000 bytes or fewer with the files beside them, of the seeded boxes
-the first 8, and each of OrcaSlicer's OBJ meshes once (as STL when that is 1500 bytes or fewer,
-otherwise as OBJ; the pyramid both ways).
+corpus's model files (`<work>/parity/corpus/meshes`) but the CR box, each under its folder's name
+and read alone, without the files beside it: 26 STL files, 27 OBJ files and 2 material libraries
+(its 19 3MF files are M3MF's). The committed set: the files of 4000 bytes or fewer with the
+files beside them, of the seeded boxes the first 8, and each of OrcaSlicer's OBJ meshes once (as
+STL when that is 1500 bytes or fewer, otherwise as OBJ; the pyramid both ways).
+
+### M3MF
+
+One 3MF file as the command line loads it (`cli/run.cpp`, `load_model`, which asks for the plate
+data, presets, BBL flag and version and releases them unread; added 2026-11-10 by
+orca-3mf-probe): `str` label, `u8` the piece of the 3MF reader's port the record needs last (1:
+the container, its relationships and the root `3D/3dmodel.model`; 2: the config entries; 3: the
+sub-model files and the assembly; 3 for every file that loads), `str` the file's name, `str` its
+bytes, `bool` steps and, with steps, MLOD's inputs of the steps after loading, drawn from a
+generator of their own (seed `0x30DE9000`, so MLOD's records keep theirs). The file is written
+and read as MLOD's. Then `str` the engine's log of the read as the command line prints it on
+stderr (`cli/main.cpp`, `log_to_stderr`, at its default level 1): each Boost.Log record of error
+or fatal as `[<severity>] <message>` and a line feed unless the message ends with one, the
+importer's `add_error` texts among them. Then `u8` 1 and `str` the exception's `what()`, or `u8`
+0 and what the read leaves that the cuts drop or MLOD's model leaves out: the model's information
+(`bool` it has design information, then `str` `DesignId`, `Designer` and `DesignerUserId`;
+`bool` it has profile information, then `str` `ProfileTile`, `ProfileCover`,
+`ProfileDescription`, `ProfileUserId` and `ProfileUserName`; `bool` it has model information,
+then `str` `cover_file`, `license`, `description`, `copyright`, `model_name` and `origin`, `u64`
+the number of metadata items and each one's `str` name and `str` value, in name order); `u64`
+the number of objects, each `str` `module_name`, the configuration dump of its whole
+configuration, `u64` the length of its layer height profile and each `f64`, `u64` the number of
+height ranges and each one's `f64` low and high z and configuration dump, `u64` the number of
+brim ears and each one's three `f32` position and `f32` `head_front_radius`, `u64` the number of
+instances and each one's `u64` `loaded_id`, `bool` `is_assemble_initialized()` and, when true,
+the matrix of `get_assemble_transformation()` and three `f64` `get_offset_to_assembly()`, `u64`
+the number of parts and each one's configuration dump. Then MLOD's cuts and its model, and with
+steps MLOD's steps from `bool` every part of the first object has a hull (false too when the
+object has no part), with the arrange polygons of that object's first three instances only. The
+temporary folder is written `<dir>` (in either separator form) in the log and the error.
+
+The files: the fixtures of `parity/oracle/probe/fixtures/model/` named `3mf-<piece>-<what>`, each a
+folder `model.3mf/` of the archive's entries that the probe packs itself (in the order of their
+paths, deflated with tdefl at level 6 or stored when empty, a fixed date; a marker file beside
+`model.3mf/`, a line per entry and `#` for a comment, packs an entry differently: `wrong-crc` names
+entries packed with a CRC one bit off, `claimed-size` gives an entry and the uncompressed size its
+headers claim (a stored entry's compressed size claims the same; an empty entry's stays 0; `end` for
+a stored entry is the largest claim miniz opens the archive with, which runs past its end by the
+entry's name, and `past` one more), `stored` names entries stored rather than deflated, `duplicate`
+gives an entry and a file beside `model.3mf/` whose bytes are packed as a second entry of that name
+right after it): 13 of piece 1 (no relationships, relationships without the model, a missing model,
+broken relationships and model XML, an empty model, a build item of no object, a duplicate object,
+an invalid object type, relationships with a wrong CRC and relationships that claim 2 GiB; added
+2026-11-11 by orca-3mf-probe-3, which miniz refuses to open: layer heights of no compressed data
+that claim 30 bytes, and stored layer heights that claim `past`), 43 of piece 2 (a BBL file's
+`model_settings.config` broken and stopped, a bad brim ears version, cut information with a bad
+number and without an attribute, a plate's sequence count not a number and out of range, height
+ranges with a bad option, bad XML, a bad z and no objects, and a file that loads with the number
+forms `num_get` takes in its height ranges and cut information and the errors it logs for ids that
+are not one or repeat and a connector of no part; added 2026-11-11 by orca-3mf-errors, each a BBL
+file that a failed `model_settings.config` refuses after the texts it records: an svg shape, brim
+ears, cut information, height ranges, layer heights and `model_settings.config` each with a wrong
+CRC; brim ears and layer heights with an id that is not one and a repeated id; in
+`model_settings.config` a text configuration, a shape, a mesh statistic and a text info each outside
+an object and in an object with no part, a text info after a part's text configuration and then a
+metadata outside an object, a plate inside a plate, a model instance outside a plate and one whose
+plate an inner plate closed, an assembly item of an object that does not exist and of one no build
+item builds; added 2026-11-11 by orca-3mf-probe-3: cut information whose `cut_id` lacks two of its
+three attributes, for each pair, and lacks one with another not a number (no `id` and
+`connectors_cnt` not a number, `check_sum` not a number and no `connectors_cnt`, no `id` and
+`check_sum` not a number), so the records show the order MSVC reads them in; and, each a BBL file
+that a failed `model_settings.config` refuses after them, layer heights and cut information that
+claim 4 bytes more than they inflate to, stored layer heights that claim 4 bytes more and that claim
+`end`, two layer heights entries, and two cut information entries: the longer first, the longer
+second, an empty one first and an empty one second) and 21 of piece 3 (a plain file of components
+and three build items; a Bambu project with a sub-model of a painted box and a modifier, object and
+part settings, a plate, an assembly item, layer heights, a height range, brim ears and cut
+information; inches, with the model's information in every metadata the reader names, entities and a
+nameless one; centimeters with a sub-model in meters; colour groups; the numbers the attribute
+getters read, an object id past `int`'s range among them; the OrcaSlicer tag with a version and with
+text that is not one; a non-BBL file's `model_settings.config` broken, stopped and with an unknown
+key; a bad value; a vertex index out of range; no build items; a sub-model of bad XML and a missing
+one; added 2026-11-11 by orca-3mf-errors: a plate index past the number of plates, and a sub-model
+that is empty, has a wrong CRC, an object of an invalid type and a repeated object id); 6 archives
+made from the plain fixture's entries (not an archive, empty, cut in half, no end of central
+directory record, the root model's CRC one bit off, its deflate stream with a byte changed); 25
+variants of the piece-2 number fixture, each with one number in another form (`0x1p-1`, `inf`,
+`nan`, `1e999`, `1e-999`, `4.9e-324`, empty, blank, `0,5`, `0.5x`, `- 0.5`, `--0.5`, `5e`, `.`,
+`+.5`, two numbers and white space as character references for a z; an object id past `int`'s range
+and `01`; `-1`, a `size_t` past its range and `0x10` for a check sum; an `int` past its range for a
+part; a `float` past and below its range for a tolerance); and in the full set only the corpus's 19
+3MF files, each under its folder's name, and OrcaSlicer's own 3MF projects
+(`<exe>/../src/resources`). Steps for the Bambu fixture and the full set's corpus files and
+projects; each of those names piece 3, whatever refuses it. The committed set, each file of 4000
+bytes or fewer: the fixtures but those whose folder holds a file named `full-only` (four that load:
+`3mf-3-orca-bad-version`, `3mf-3-settings-broken`, `3mf-3-settings-stop`, `3mf-3-unknown-key`; the
+23 of orca-3mf-errors and the 17 of orca-3mf-probe-3), the archives but the two cut ones, and two
+variants (`volume_id="2147483648"`, `r_tolerance="1e39"`).
 
 ### MARP
 
@@ -1236,4 +1535,5 @@ classes and `i32` `Print::get_compatible_filament_type`.
 ## Versions
 
 A change to any record, its fields or their order is a new version. The reader refuses a version it
-does not know.
+does not know. Oracle patch 0007 added kinds and put their records after the existing ones of each
+file, changing no record that was there, so the files stay version 1.

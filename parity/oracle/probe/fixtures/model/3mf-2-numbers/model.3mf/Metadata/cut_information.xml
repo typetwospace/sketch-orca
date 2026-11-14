@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<objects>
+ <object id="1">
+  <cut_id id=" 5" check_sum="+1" connectors_cnt="2 "/>
+  <connectors>
+   <connector volume_id=" 0" type="+1" r_tolerance=".5" h_tolerance="1e-1"/>
+   <connector volume_id="+3" type="0" r_tolerance="0" h_tolerance="0"/>
+  </connectors>
+ </object>
+ <object id="0"/>
+ <object id="1"/>
+</objects>

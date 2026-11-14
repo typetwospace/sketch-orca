@@ -62,17 +62,30 @@
 //                    printer, an override value the setting does not take, a nozzle_volume past what the
 //                    flushing volumes take, settings Orca's check refuses (layer_height 0), a resources folder
 //                    without profiles and a work folder that cannot be made; and a missing model on presets
-//                    that give the stage's warnings gets them, in order
+//                    that give the stage's warnings gets them, in order; and the refusals of the
+//                    model's reading and of placement (MODEL_REFUSE): an empty file, a binary STL of
+//                    no triangles, one cut short, an ASCII facet with a vertex that is not a number,
+//                    an OBJ face past its vertices, an object index past the model's, per-object
+//                    settings and height ranges in each setting-invalid form, each custom-gcode-invalid
+//                    form and custom G-code when printing by object (unsupported), a prime tower set
+//                    past the bed and one that fits nowhere, and a cube off the bed with arrange off
 // The Rust program's cases (RUST_SMOKE_CASES; `stage` runs them on the staged folder, each held to
 // the C++ engine beside it):
 //   rs-version       sketch-orca-rs version: the C++ program's fields, plus implementation rust
 //   rs-config-def    sketch-orca-rs config-def: the C++ program's file, byte for byte
-//   rs-intake        the refusals (and a file that is not JSON, and a job with a field of the wrong
-//                    type): the C++ result, exit code and progress file, or not-ported for a job the
-//                    C++ took past what sketch-orca-rs does itself (reading the job, the presets and
-//                    the model's file: endedWithinRust); those it refuses itself in the presets
-//                    stage, its folders and at the model's file (RUST_OWN_REFUSALS) are never declined
-//   rs-decline       a slice job: not-ported, exit -8 (low byte 248), the missing steps, no output
+//   rs-intake        the refusals but those of RUST_MODEL_REFUSALS (and a file that is not JSON, and a
+//                    job with a field of the wrong type): the C++ result, exit code and progress file,
+//                    or not-ported for a job the C++ took past what sketch-orca-rs does itself
+//                    (RUST_STAGES: the job, the presets, the model and placement; endedWithinRust);
+//                    those it refuses itself in the presets stage, its folders and at the model's
+//                    file (RUST_OWN_REFUSALS) are never declined
+//   rs-info          info jobs (the cube as binary STL and as OBJ, a lone triangle): the C++ result,
+//                    exit code and progress file, never declined (from 0.3.0)
+//   rs-model-refusals the refusals of the model's reading and of placement (RUST_MODEL_REFUSALS):
+//                    the C++ result, exit code and progress file, never declined (from 0.3.0)
+//   rs-decline       a slice job: not-ported, exit -8 (low byte 248), the steps past placement as
+//                    missing and none it does itself, its progress the C++ run's lines up to
+//                    `arrange` (the decline point of 0.3.0: after the build volume check), no output
 // Every run's exit code must be the one its result gives (exitCode). The engine is run hidden, with
 // a timeout; on Windows its libraries are checked first, so a missing DLL fails the case instead of
 // raising a system dialog. `stage` runs some of these cases again on the staged copy (runCases).
@@ -93,7 +106,7 @@ import { hashTree } from './files.ts'
 import { commandsAfter, configValue, extrusions, featureLengths, firstExtrusionLine, layerAtLine, layerBounds, layerHitsRect, scanGcode, segmentHitsRect, type Extrusion, type GcodeScan, type Rect } from './gcode.ts'
 import { isEngineAbsolute, parseProgress, readResult, validateJob, writeJob, type CustomGcode, type Job, type JobObject, type JobResult, type Overrides } from './job.ts'
 import type { OrcaLock } from './lock.ts'
-import { boxTriangles, boxWithPocket, cube, meshBounds, uvSphere, writeStl, type Mesh } from './models.ts'
+import { boxTriangles, boxWithPocket, cube, encodeBinaryStl, meshBounds, triangleNormal, uvSphere, writeStl, type Mesh, type Triangle, type Vec3 } from './models.ts'
 import { checkPresetSet, loadProfileTree, presetSet, serializePreset, settingList, settingNumber, writePresetSet, type PresetFiles, type PresetSet } from './profiles.ts'
 import { readStamp, sha256File, sha256Text, writeStamp, type WorkPaths } from './paths.ts'
 import { resolveRuntime, windowsRuntimeIo, type RuntimeIo } from './pe.ts'
@@ -102,7 +115,7 @@ import { currentPlatform } from './toolchain.ts'
 import { extractZipEntry, readZipEntries } from './zip.ts'
 
 /** Bump when the cases or their expectations change: a passed stamp of an older version does not count. */
-export const SMOKE_VERSION = 12
+export const SMOKE_VERSION = 13
 /** Folders of Orca's resources/ that libslic3r reads (resources_dir()): presets, nozzle tables, flush volumes. */
 export const ENGINE_RESOURCES = ['profiles', 'info', 'flush'] as const
 
@@ -1035,6 +1048,50 @@ export function loneTriangleObj(size = 20): string {
   return `v 0 0 0\nv ${size} 0 0\nv 0 0 ${size}\nf 1 2 3\n`
 }
 
+/** A mesh as an ASCII STL (`solid <name>`, a facet per triangle with its normal, `endsolid`), LF line ends. */
+export function asciiStl(mesh: Mesh, name: string): string {
+  const facet = (t: Triangle) => {
+    const n = triangleNormal(t)
+    return `facet normal ${n.join(' ')}\n outer loop\n${t.map((p) => `  vertex ${p.join(' ')}\n`).join('')} endloop\nendfacet\n`
+  }
+  return `solid ${name}\n${mesh.triangles.map(facet).join('')}endsolid ${name}\n`
+}
+
+/**
+ * What the refused jobs of the model's reading and of placement use (REFUSALS, RUST_MODEL_REFUSALS):
+ * a binary STL cut inside its sixth triangle while its count says 12; an ASCII STL whose fourth
+ * facet has a vertex that is not a number; an OBJ whose last face names vertex 9 of 4; a cube on
+ * the bed's far side of 0,0, which arrange off leaves there; settings an object or a height range
+ * does not take; a filament past the job's; and a place for the prime tower past the bed.
+ */
+export const MODEL_REFUSE = {
+  truncatedAt: 84 + 50 * 5 + 25,
+  badVertex: 'zz',
+  objOutOfRange: 'v 0 0 0\nv 20 0 0\nv 0 20 0\nv 0 0 20\nf 1 3 2\nf 1 2 4\nf 1 4 3\nf 2 3 9\n',
+  offBed: { min: [-100, -100, 0] as Vec3, max: [-80, -80, 20] as Vec3 },
+  wholePlateSetting: { key: 'nozzle_diameter', value: '0.6' },
+  objectOnlySetting: { key: 'enable_support', value: '1' },
+  pastFilaments: '3',
+} as const
+
+/** A job of REFUSALS that writes its own model file (`file`, its bytes) into `dir`, else the 20 mm cube as model.stl. */
+function modelFileJob(dir: string, file: string, bytes: Buffer | string, spec: Omit<JobSpec, 'dir'>): { job: Job } {
+  mkdirSync(dir, { recursive: true })
+  const path = join(dir, file)
+  writeFileSync(path, bytes)
+  return { job: { ...smokeJob({ ...spec, dir }), model: { path } } }
+}
+
+/** The generic presets with its one filament twice: a job of two filaments. */
+function twoFilaments(presets: PresetFiles): PresetFiles {
+  return { ...presets, filaments: [presets.filaments[0]!, presets.filaments[0]!] }
+}
+
+/** An object of a job (objects[]) with its overrides and height ranges, fixed layers. */
+function jobObject(o: Partial<JobObject>): JobObject {
+  return { index: 0, overrides: {}, layerHeights: { mode: 'fixed' }, heightRanges: [], ...o }
+}
+
 /** Jobs the engine must refuse; each is run in `<case>/<id>`. */
 export const REFUSALS: Refusal[] = [
   {
@@ -1367,7 +1424,234 @@ export const REFUSALS: Refusal[] = [
       return { job: { ...smokeJob({ command: 'slice', dir, resources, presets: { ...presets, process, filaments: [filament] }, overrides: cubeOverrides }), model: { path: join(dir, 'missing.stl') } } }
     },
   },
+  // The refusals of the model's reading (cli/run.cpp load_model and the objects index check), one
+  // for each way a reader fails on a file; the 3MF reader's are corpus cases (corpus.ts made files).
+  {
+    id: 'empty-model-file',
+    code: 'model-unreadable',
+    exitCode: -6,
+    mentions: 'cannot read the model',
+    make: (dir, resources, presets) => modelFileJob(dir, 'model.stl', Buffer.alloc(0), { command: 'slice', resources, presets, overrides: cubeOverrides }),
+  },
+  {
+    // A binary STL whose count is 0: a file of no triangles.
+    id: 'stl-no-triangles',
+    code: 'model-unreadable',
+    exitCode: -6,
+    mentions: 'cannot read the model',
+    make: (dir, resources, presets) => modelFileJob(dir, 'model.stl', encodeBinaryStl({ triangles: [] }, 'no triangles'), { command: 'slice', resources, presets, overrides: cubeOverrides }),
+  },
+  {
+    id: 'stl-truncated',
+    code: 'model-unreadable',
+    exitCode: -6,
+    mentions: 'cannot read the model',
+    make: (dir, resources, presets) => modelFileJob(dir, 'model.stl', encodeBinaryStl(cube(CUBE.size), 'truncated').subarray(0, MODEL_REFUSE.truncatedAt), { command: 'slice', resources, presets, overrides: cubeOverrides }),
+  },
+  {
+    id: 'stl-ascii-bad-facet',
+    code: 'model-unreadable',
+    exitCode: -6,
+    mentions: 'cannot read the model',
+    make: (dir, resources, presets) => {
+      const lines = asciiStl(cube(CUBE.size), 'bad facet').split('\n')
+      // The fourth facet's first vertex (after the solid line, three facets of seven lines, and the
+      // facet's normal and outer loop lines): its z is not a number.
+      const at = 1 + 3 * 7 + 2
+      lines[at] = lines[at]!.replace(/ \S+$/, ` ${MODEL_REFUSE.badVertex}`)
+      return modelFileJob(dir, 'model.stl', lines.join('\n'), { command: 'slice', resources, presets, overrides: cubeOverrides })
+    },
+  },
+  {
+    id: 'obj-face-out-of-range',
+    code: 'model-unreadable',
+    exitCode: -6,
+    mentions: 'cannot read the model',
+    make: (dir, resources, presets) => modelFileJob(dir, 'model.obj', MODEL_REFUSE.objOutOfRange, { command: 'slice', resources, presets, overrides: cubeOverrides }),
+  },
+  {
+    // An object the job lists that the model does not have.
+    id: 'object-index-past-model',
+    code: 'job-invalid',
+    exitCode: -2,
+    mentions: 'objects[0].index is 1, but the model has 1 object(s)',
+    make: (dir, resources, presets) => ({ job: smokeJob({ command: 'layers', dir, resources, presets, overrides: cubeOverrides, objects: [jobObject({ index: 1 })] }), model: cube(CUBE.size) }),
+  },
+  // The refusals of placement (cli/run.cpp apply_object_settings, set_custom_gcodes,
+  // place_prime_tower, arrange_objects and check_build_volume), each in a layers job: it reaches
+  // the boundary without slicing.
+  {
+    id: 'object-whole-plate-setting',
+    code: 'setting-invalid',
+    exitCode: -2,
+    objectIndex: 0,
+    mentions: `${MODEL_REFUSE.wholePlateSetting.key} is a printer, filament or whole-plate setting`,
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'layers', dir, resources, presets, overrides: cubeOverrides, objects: [jobObject({ overrides: { [MODEL_REFUSE.wholePlateSetting.key]: MODEL_REFUSE.wholePlateSetting.value } })] }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    id: 'object-unknown-setting',
+    code: 'setting-invalid',
+    exitCode: -2,
+    objectIndex: 0,
+    mentions: REFUSE.unknownSetting,
+    make: (dir, resources, presets) => ({ job: smokeJob({ command: 'layers', dir, resources, presets, overrides: cubeOverrides, objects: [jobObject({ overrides: { [REFUSE.unknownSetting]: '1' } })] }), model: cube(CUBE.size) }),
+  },
+  {
+    id: 'object-extruder-past-filaments',
+    code: 'setting-invalid',
+    exitCode: -2,
+    objectIndex: 0,
+    mentions: `extruder ${MODEL_REFUSE.pastFilaments} is not one of the job's 1 filament(s)`,
+    make: (dir, resources, presets) => ({ job: smokeJob({ command: 'layers', dir, resources, presets, overrides: cubeOverrides, objects: [jobObject({ overrides: { extruder: MODEL_REFUSE.pastFilaments } })] }), model: cube(CUBE.size) }),
+  },
+  {
+    id: 'range-object-setting',
+    code: 'setting-invalid',
+    exitCode: -2,
+    objectIndex: 0,
+    mentions: `${MODEL_REFUSE.objectOnlySetting.key} cannot change over a height range`,
+    make: (dir, resources, presets) => ({
+      job: smokeJob({
+        command: 'layers',
+        dir,
+        resources,
+        presets,
+        overrides: cubeOverrides,
+        objects: [jobObject({ heightRanges: [{ from: 5, to: 10, overrides: { [MODEL_REFUSE.objectOnlySetting.key]: MODEL_REFUSE.objectOnlySetting.value } }] })],
+      }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    id: 'range-zero-layer-height',
+    code: 'setting-invalid',
+    exitCode: -2,
+    objectIndex: 0,
+    mentions: 'heightRanges[0].overrides.layer_height must be above 0',
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'layers', dir, resources, presets, overrides: cubeOverrides, objects: [jobObject({ heightRanges: [{ from: 5, to: 10, overrides: { layer_height: '0' } }] })] }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    id: 'range-extruder-past-filaments',
+    code: 'setting-invalid',
+    exitCode: -2,
+    objectIndex: 0,
+    mentions: `extruder ${MODEL_REFUSE.pastFilaments} is not one of the job's 1 filament(s)`,
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'layers', dir, resources, presets, overrides: cubeOverrides, objects: [jobObject({ heightRanges: [{ from: 5, to: 10, overrides: { extruder: MODEL_REFUSE.pastFilaments } }] })] }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    // Two filaments: a color change must say which one.
+    id: 'color-change-without-extruder',
+    code: 'custom-gcode-invalid',
+    exitCode: -2,
+    mentions: 'needs the extruder',
+    make: (dir, resources, presets) => ({ job: smokeJob({ command: 'layers', dir, resources, presets: twoFilaments(presets), overrides: cubeOverrides, customGcodes: [{ printZ: 5.05, type: 'color', color: '#c03030' }] }), model: cube(CUBE.size) }),
+  },
+  {
+    id: 'filament-change-one-filament',
+    code: 'custom-gcode-invalid',
+    exitCode: -2,
+    mentions: 'needs at least two filaments',
+    make: (dir, resources, presets) => ({ job: smokeJob({ command: 'layers', dir, resources, presets, overrides: cubeOverrides, customGcodes: [{ printZ: 5.05, type: 'filament', extruder: 2 }] }), model: cube(CUBE.size) }),
+  },
+  {
+    id: 'filament-change-past-filaments',
+    code: 'custom-gcode-invalid',
+    exitCode: -2,
+    mentions: `filament ${MODEL_REFUSE.pastFilaments} is not one of the job's 2 filaments`,
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'layers', dir, resources, presets: twoFilaments(presets), overrides: cubeOverrides, customGcodes: [{ printZ: 5.05, type: 'filament', extruder: Number(MODEL_REFUSE.pastFilaments) }] }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    id: 'pause-without-pause-gcode',
+    code: 'custom-gcode-invalid',
+    exitCode: -2,
+    mentions: 'machine_pause_gcode is empty',
+    make: (dir, resources, presets) => ({ job: smokeJob({ command: 'layers', dir, resources, presets, overrides: { ...cubeOverrides, machine_pause_gcode: '' }, customGcodes: [{ printZ: 5.05, type: 'pause' }] }), model: cube(CUBE.size) }),
+  },
+  {
+    id: 'custom-gcode-by-object',
+    code: 'unsupported',
+    exitCode: -8,
+    mentions: 'print_sequence "by object"',
+    make: (dir, resources, presets) => ({ job: smokeJob({ command: 'layers', dir, resources, presets, overrides: { ...cubeOverrides, print_sequence: 'by object' }, customGcodes: [{ printZ: 5.05, type: 'pause' }] }), model: cube(CUBE.size) }),
+  },
+  {
+    // One filament and smooth timelapse put the prime tower on; the job sets its place past the bed.
+    id: 'tower-set-past-the-bed',
+    code: 'config-invalid',
+    exitCode: -18,
+    mentions: 'wipe_tower_x',
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'layers', dir, resources, presets, overrides: { ...cubeOverrides, enable_prime_tower: '1', timelapse_type: '1', wipe_tower_x: String(TOWER_OFF_BED), wipe_tower_y: String(TOWER_OFF_BED) } }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    id: 'tower-fits-nowhere',
+    code: 'arrange-failed',
+    exitCode: -21,
+    mentions: 'fits nowhere',
+    make: (dir, resources, presets) => ({
+      job: smokeJob({ command: 'layers', dir, resources, presets, overrides: { ...cubeOverrides, enable_prime_tower: '1', timelapse_type: '1', prime_tower_width: String(TOWER_TOO_WIDE) } }),
+      model: cube(CUBE.size),
+    }),
+  },
+  {
+    // Arrange off leaves the cube where its file puts it, off the bed: no object is inside (-50).
+    id: 'off-the-bed',
+    code: 'not-printable',
+    exitCode: -50,
+    objectIndex: 0,
+    mentions: 'is outside the printable volume',
+    make: (dir, resources, presets) => ({
+      job: { ...smokeJob({ command: 'layers', dir, resources, presets, overrides: cubeOverrides }), arrange: false },
+      model: { triangles: boxTriangles(MODEL_REFUSE.offBed.min, MODEL_REFUSE.offBed.max) },
+    }),
+  },
 ]
+
+/**
+ * The refusals of REFUSALS that the C++ engine makes while it reads the model and places the
+ * objects, past the model's file check (REFUSAL_FAMILIES in corpus.ts: model-load and placement):
+ * sketch-orca-rs makes them itself from 0.3.0, so rs-model-refusals compares each with the C++
+ * result and a decline fails it.
+ */
+export const RUST_MODEL_REFUSALS = [
+  'too-big-for-the-bed',
+  'flat-model',
+  'lone-triangle',
+  'empty-model-file',
+  'stl-no-triangles',
+  'stl-truncated',
+  'stl-ascii-bad-facet',
+  'obj-face-out-of-range',
+  'object-index-past-model',
+  'object-whole-plate-setting',
+  'object-unknown-setting',
+  'object-extruder-past-filaments',
+  'range-object-setting',
+  'range-zero-layer-height',
+  'range-extruder-past-filaments',
+  'color-change-without-extruder',
+  'filament-change-one-filament',
+  'filament-change-past-filaments',
+  'pause-without-pause-gcode',
+  'custom-gcode-by-object',
+  'tower-set-past-the-bed',
+  'tower-fits-nowhere',
+  'off-the-bed',
+] as const
 
 /**
  * outOfRange: a volume past the largest flushing volume Orca computes (20000 mm³), which its int()
@@ -2386,22 +2670,32 @@ function stagesOf(text: string): string[] {
 }
 
 /**
- * The progress stages sketch-orca-rs goes through itself (crates/orca-cli/src/run.rs): reading the
- * job, then the presets. Of the stage `model` it does the model's file check alone.
+ * The progress stages sketch-orca-rs goes through itself (crates/orca-cli/src/run.rs), from 0.3.0:
+ * reading the job, the presets, the model (its reading, the objects' checks and an info job's
+ * answer) and the placement of the objects (`arrange`, and the steps before and after it up to the
+ * build volume check, which an arrange-off job does under `model`). `orient` is not one of them:
+ * a job that orients its objects is declined there.
  */
-export const RUST_STAGES = ['job', 'presets'] as const
+export const RUST_STAGES = ['job', 'presets', 'model', 'arrange'] as const
 
 /**
  * Whether a C++ run ended within what sketch-orca-rs does itself: its progress (`stages`, none
- * when it wrote no progress file) shows no stage past RUST_STAGES, or it failed in `model` with
- * file-not-found (`code`, its result's), the model's file check. sketch-orca-rs must then do what
- * the C++ run did, never decline (rs-intake here, and parity certify).
+ * when it wrote no progress file) shows no stage past RUST_STAGES, and a run whose last stage is
+ * `model` or `arrange` ended there with its `failed` or `done` line. A run that stopped after such a
+ * line without one crashed somewhere before the next line, which may be past the build volume
+ * check (cli/run.cpp writes `slice` only after the plate's configuration), so it is not counted.
+ * No fail() of cli/run.cpp sits between the build volume check and the `slice` line, so a
+ * `failed` after `arrange` is placement's. sketch-orca-rs must then do what the C++ run did, never
+ * decline (rs-intake, rs-info and rs-model-refusals here, and parity certify). `code`, the C++
+ * result's, is taken for the callers; no stage depends on it since the model's reading joined
+ * RUST_STAGES (0.3.0).
  */
-export function endedWithinRust(stages: string[], code: string | undefined): boolean {
+export function endedWithinRust(stages: string[], _code?: string): boolean {
   const own = (s: string) => (RUST_STAGES as readonly string[]).includes(s)
   const work = stages.filter((s) => s !== 'failed' && s !== 'done')
-  if (work.every(own)) return true
-  return work.length > 0 && work[work.length - 1] === 'model' && work.slice(0, -1).every(own) && stages.includes('failed') && code === 'file-not-found'
+  if (!work.every(own)) return false
+  const last = work[work.length - 1]
+  return !(last === 'model' || last === 'arrange') || stages.includes('failed') || stages.includes('done')
 }
 
 /**
@@ -2461,7 +2755,7 @@ async function compareIntake(env: RustCaseEnv, dir: string, jobPath: string): Pr
     if (lowByte(rs.code) !== 248 || rsResult.exitCode !== -8) problems.push(`a decline exited with ${rs.code} (result ${JSON.stringify(rsResult.exitCode)}), not -8`)
     const cppResult = withoutImplementation(cpp.result) as Record<string, unknown>
     if (endedWithinRust(stagesOf(cpp.progress), typeof cppResult.code === 'string' ? cppResult.code : undefined)) {
-      problems.push(`the Rust program declined a job the C++ refused within what the Rust program does itself (reading the job, the presets and the model's file): ${JSON.stringify(cppResult.message)}`)
+      problems.push(`the Rust program declined a job the C++ ended within what the Rust program does itself (reading the job, the presets and the model, and placing the objects): ${JSON.stringify(cppResult.message)}`)
     }
     return { problems, declined: true }
   }
@@ -2516,7 +2810,8 @@ export const RUST_SMOKE_CASES: RustSmokeCase[] = [
     async run(env) {
       const problems: string[] = []
       let compared = 0
-      for (const want of REFUSALS) {
+      // The refusals of the model's reading and of placement are rs-model-refusals'.
+      for (const want of REFUSALS.filter((r) => !(RUST_MODEL_REFUSALS as readonly string[]).includes(r.id))) {
         const dir = join(env.dir, want.id)
         mkdirSync(dir, { recursive: true })
         const { job, model } = want.make(dir, env.resources, env.files)
@@ -2548,16 +2843,73 @@ export const RUST_SMOKE_CASES: RustSmokeCase[] = [
     },
   },
   {
-    id: 'rs-decline',
-    title: 'sketch-orca-rs declines a slice job: not-ported, exit -8, the missing steps, and no output',
+    id: 'rs-info',
+    title: 'sketch-orca-rs answers info jobs with the C++ result, exit code and progress file, and declines none: the 20 mm cube as a binary STL and as an OBJ of quads, and a lone triangle (an info job checks no solid)',
     async run(env) {
-      const job = smokeJob({ command: 'slice', dir: env.dir, resources: env.resources, presets: env.files, overrides: cubeOverrides })
-      writeStl(job.model.path, cube(CUBE.size), 'cube 20 mm')
-      mkdirSync(job.workDir, { recursive: true })
-      const jobPath = join(env.dir, 'job.json')
-      writeJob(jobPath, job)
+      const problems: string[] = []
+      const jobs: [string, string, Buffer | string][] = [
+        ['cube-stl', 'model.stl', encodeBinaryStl(cube(CUBE.size), 'cube 20 mm')],
+        ['cube-obj', 'model.obj', RS_INFO_CUBE_OBJ],
+        ['lone-triangle', 'model.obj', loneTriangleObj()],
+      ]
+      for (const [id, file, bytes] of jobs) {
+        const dir = join(env.dir, id)
+        const { job } = modelFileJob(dir, file, bytes, { command: 'info', resources: env.resources, presets: env.files })
+        mkdirSync(job.workDir, { recursive: true })
+        const jobPath = join(dir, 'job.json')
+        writeJob(jobPath, job)
+        const r = await compareIntake(env, dir, jobPath)
+        problems.push(...r.problems.map((p) => `${id}: ${p}`))
+        if (r.declined) problems.push(`${id}: declined; sketch-orca-rs answers info jobs itself`)
+      }
+      return { problems, warnings: [] }
+    },
+  },
+  {
+    id: 'rs-model-refusals',
+    title: 'sketch-orca-rs refuses the jobs the C++ refuses while it reads the model and places the objects (RUST_MODEL_REFUSALS) with the C++ results, and declines none of them',
+    async run(env) {
+      const problems: string[] = []
+      for (const id of RUST_MODEL_REFUSALS) {
+        const want = REFUSALS.find((r) => r.id === id)!
+        const dir = join(env.dir, id)
+        mkdirSync(dir, { recursive: true })
+        const { job, model } = want.make(dir, env.resources, env.files)
+        if (model) writeStl(job.model.path, model, want.id)
+        mkdirSync(job.workDir, { recursive: true })
+        const jobPath = join(dir, 'job.json')
+        if (want.unchecked) writeFileSync(jobPath, JSON.stringify(job, null, 2) + '\n')
+        else writeJob(jobPath, job)
+        const r = await compareIntake(env, dir, jobPath)
+        problems.push(...r.problems.map((p) => `${id}: ${p}`))
+        if (r.declined) problems.push(`${id}: declined; sketch-orca-rs makes this refusal itself`)
+      }
+      return { problems, warnings: [] }
+    },
+  },
+  {
+    id: 'rs-decline',
+    title: 'sketch-orca-rs declines a slice job once the objects are placed: not-ported, exit -8, the steps past placement, the C++ progress lines up to there, and no output',
+    async run(env) {
+      const make = (dir: string) => {
+        const job = smokeJob({ command: 'slice', dir, resources: env.resources, presets: env.files, overrides: cubeOverrides })
+        writeStl(job.model.path, cube(CUBE.size), 'cube 20 mm')
+        mkdirSync(job.workDir, { recursive: true })
+        const jobPath = join(dir, 'job.json')
+        writeJob(jobPath, job)
+        return { job, jobPath }
+      }
+      // The C++ engine in a folder of its own (it slices and writes G-code), for its progress lines.
+      const cppDir = join(env.dir, 'cpp')
+      mkdirSync(cppDir, { recursive: true })
+      const cpp = make(cppDir)
+      const cppProgress = join(cppDir, 'progress.ndjson')
+      const c = await env.exec(env.cpp, ['run', '--job', cpp.jobPath, '--out', join(cppDir, 'result.json'), '--progress', cppProgress])
+      if (c.timedOut) return { problems: ['the C++ run did not finish in time'], warnings: [] }
+      const { job, jobPath } = make(env.dir)
       const out = join(env.dir, 'result.json')
-      const r = await env.exec(env.rust, ['run', '--job', jobPath, '--out', out, '--progress', join(env.dir, 'progress.ndjson')])
+      const progress = join(env.dir, 'progress.ndjson')
+      const r = await env.exec(env.rust, ['run', '--job', jobPath, '--out', out, '--progress', progress])
       if (r.timedOut) return { problems: ['the run did not finish in time'], warnings: [] }
       const problems: string[] = []
       if (lowByte(r.code) !== 248) problems.push(`it exited with ${r.code}; a decline exits with -8 (248)`)
@@ -2566,6 +2918,17 @@ export const RUST_SMOKE_CASES: RustSmokeCase[] = [
       const v = JSON.parse(readFileSync(out, 'utf8')) as Record<string, unknown>
       if (v.ok !== false || v.code !== 'not-ported' || v.exitCode !== -8) problems.push(`its result is ${JSON.stringify(v.code)} with exit code ${JSON.stringify(v.exitCode)}, not not-ported and -8`)
       if (!Array.isArray(v.missing) || v.missing.length === 0 || !v.missing.every((m) => typeof m === 'string')) problems.push('its result names no missing steps')
+      else {
+        const done = v.missing.filter((m) => (RS_DECLINE_DONE as readonly string[]).includes(m))
+        if (done.length > 0) problems.push(`it names ${done.join(', ')} as missing; sketch-orca-rs does those itself`)
+        if (!v.missing.includes('slice-mesh')) problems.push('it does not name slice-mesh, the first step past placement')
+      }
+      // The new decline point: after the build volume check, with the C++ run's lines up to there.
+      const lines = existsSync(progress) ? readFileSync(progress, 'utf8').split('\n').filter((l) => l !== '') : []
+      const cppLines = existsSync(cppProgress) ? readFileSync(cppProgress, 'utf8').split('\n').filter((l) => l !== '') : []
+      const reached = lines.filter((l) => !l.startsWith('{"stage":"failed"'))
+      if (!stagesOf(reached.join('\n')).includes('arrange')) problems.push(`its progress stops before the objects are placed: ${JSON.stringify(stagesOf(lines.join('\n')))}`)
+      if (JSON.stringify(reached) !== JSON.stringify(cppLines.slice(0, reached.length))) problems.push(`its progress lines are not the C++ run's first lines: ${JSON.stringify(reached)}, C++ ${JSON.stringify(cppLines.slice(0, reached.length + 1))}`)
       const gcodeDir = dirname(job.output.gcode!)
       const left = existsSync(gcodeDir) ? readdirSync(gcodeDir).filter((f) => f.startsWith(basename(job.output.gcode!))) : []
       if (left.length > 0) problems.push(`it left ${left.join(', ')}`)
@@ -2573,6 +2936,12 @@ export const RUST_SMOKE_CASES: RustSmokeCase[] = [
     },
   },
 ]
+
+/** rs-info's OBJ: the 20 mm cube, its eight corners and six quads. */
+export const RS_INFO_CUBE_OBJ = 'v 0 0 0\nv 20 0 0\nv 20 20 0\nv 0 20 0\nv 0 0 20\nv 20 0 20\nv 20 20 20\nv 0 20 20\nf 1 4 3 2\nf 5 6 7 8\nf 1 2 6 5\nf 2 3 7 6\nf 3 4 8 7\nf 4 1 5 8\n'
+
+/** The families a decline names as missing never once sketch-orca-rs does them itself (0.3.0): the front families and those up to the front-objects boundary. */
+export const RS_DECLINE_DONE = ['version', 'config-def', 'intake', 'preset-conditions', 'model-load', 'placement', 'info'] as const
 
 /** Runs the Rust program's cases one after the other, logging as runCases does. */
 export async function runRustCases(cases: RustSmokeCase[], o: { rust: string; cpp: string; resources: string; env: Record<string, string>; root: string; lock: OrcaLock; sets: SmokePresetSets; timeoutMs: number }, log: Log, label = 'stage'): Promise<CaseReport[]> {

@@ -1,0 +1,12 @@
+{
+    "name": "Voron",
+    "version": "02.04.00.02",
+    "force_update": "0",
+    "description": "Voron configurations (OrcaSlicer v2.4.2's resources/profiles/Voron.json, reduced to the printer model the generic presets name)",
+    "machine_model_list": [
+        {
+            "name": "Voron 2.4 300",
+            "sub_path": "machine/Voron 2.4 300.json"
+        }
+    ]
+}

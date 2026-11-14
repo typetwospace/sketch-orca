@@ -10,15 +10,21 @@
 
 // Carries OrcaSlicer code: namespace Slic3r::Geometry of src/libslic3r/Geometry.hpp and
 // Geometry.cpp of OrcaSlicer v2.4.2 (the 2D predicates, angles and transform builders), translated
-// on 2026-11-07. Copyright the OrcaSlicer authors, the BambuStudio authors (Bambu Lab) and the
-// PrusaSlicer authors (Prusa Research), under the GNU Affero General Public License, version 3
-// (AGPL-3.0; LICENSE).
+// on 2026-11-07; and Geometry.cpp 754-776 and 863-907 (rotation_xyz_diff, rotation_diff_z and
+// is_point_inside_polygon_corner) with src/libslic3r/Geometry/Circle.hpp 153-183
+// (ray_circle_intersections_r2_lv2_c), translated on 2026-11-13. Copyright the OrcaSlicer authors,
+// the BambuStudio authors (Bambu Lab) and the PrusaSlicer authors (Prusa Research), under the GNU
+// Affero General Public License, version 3 (AGPL-3.0; LICENSE).
 
-//! `Slic3r::Geometry`: orientation and intersection predicates, angle helpers and the transform
-//! builders (`assemble_transform`, `rotation_transform`, `extract_euler_angles`).
+//! `Slic3r::Geometry`: orientation and intersection predicates, angle helpers, the transform
+//! builders (`assemble_transform`, `rotation_transform`, `extract_euler_angles`), the rotation
+//! difference of two sets of Euler angles (`rotation_xyz_diff`, `rotation_diff_z`), the corner test
+//! `is_point_inside_polygon_corner` and the line and circle crossing
+//! `ray_circle_intersections_r2_lv2_c`.
 //!
 //! The class `Transformation`, `arrange` (the grid arrangement of `Geometry.cpp`) and the string
-//! and quaternion helpers are not here yet; the convex hulls are in [`crate::convex_hull`].
+//! helpers are not here yet, nor are the two templates of Geometry.cpp 287-306, which nothing
+//! instantiates; the convex hulls are in [`crate::convex_hull`].
 
 use orca_eigen::rotation::{AngleAxis, Quaternion, euler_angles};
 use orca_eigen::{Matrix3d, Transform3d, Vec2d, Vec3d, Vector};
@@ -27,7 +33,7 @@ use crate::bounding_box::BoundingBoxf;
 use crate::expolygon::ExPolygon;
 use crate::line::Line;
 use crate::multi_point;
-use crate::point::{EPSILON, PI, Point};
+use crate::point::{EPSILON, PI, Point, perp};
 use crate::polygon::{Polygon, Polygons};
 
 /// `Orientation`.
@@ -461,4 +467,86 @@ pub fn extract_euler_angles_of(transform: &Transform3d) -> Vec3d {
         m.set_col(c, m.col(c).normalized());
     }
     extract_euler_angles(&m)
+}
+
+/// `rotation_xyz_diff(rot_xyz_from, rot_xyz_to)`: the rotation from the first set of X Y Z angles
+/// to the second, `Z(to) Y(to) X(to)` then `X(-from) Y(-from) Z(-from)`, multiplied left to right
+/// as Eigen does (the first two angle-axes into a quaternion, each later one onto it).
+#[must_use]
+pub fn rotation_xyz_diff(rot_xyz_from: &Vec3d, rot_xyz_to: &Vec3d) -> Quaternion<f64> {
+    // From the current coordinate system to the world.
+    AngleAxis::new(rot_xyz_to[2], unit(2))
+        .mul(&AngleAxis::new(rot_xyz_to[1], unit(1)))
+        .mul_angle_axis(&AngleAxis::new(rot_xyz_to[0], unit(0)))
+        // From the world to the initial coordinate system.
+        .mul_angle_axis(&AngleAxis::new(-rot_xyz_from[0], unit(0)))
+        .mul_angle_axis(&AngleAxis::new(-rot_xyz_from[1], unit(1)))
+        .mul_angle_axis(&AngleAxis::new(-rot_xyz_from[2], unit(2)))
+}
+
+/// `rotation_diff_z(rot_xyz_from, rot_xyz_to)`: the angle of [`rotation_xyz_diff`] as an
+/// angle-axis, negated when its axis points down. Meant for rotations that differ only about Z
+/// (the C++ asserts it in its debug build only).
+#[must_use]
+pub fn rotation_diff_z(rot_xyz_from: &Vec3d, rot_xyz_to: &Vec3d) -> f64 {
+    let angle_axis = AngleAxis::from_quaternion(&rotation_xyz_diff(rot_xyz_from, rot_xyz_to));
+    let axis = angle_axis.axis;
+    let angle = angle_axis.angle;
+    if axis[2] < 0.0 { -angle } else { angle }
+}
+
+/// `is_point_inside_polygon_corner(a, b, c, query_point)`: whether `query_point` is inside the
+/// corner `a b c` of a counter-clockwise contour, from the unit vectors from `b` (the differences
+/// in 64-bit integers) and their projections on `b q` and its left normal. `a` and `c` must
+/// differ (the C++ asserts it in its debug build only).
+#[must_use]
+pub fn is_point_inside_polygon_corner(a: Point, b: Point, c: Point, query_point: Point) -> bool {
+    // Based at B, and normalized so that the vectors end on the unit circle.
+    let ba = (a - b).cast_f64().normalized();
+    let bc = (c - b).cast_f64().normalized();
+    let bq = (query_point - b).cast_f64().normalized();
+
+    // The normal of BQ on its left side.
+    let bq_left_normal = perp(bq);
+
+    let proj_a_on_bq_normal = ba.dot(&bq_left_normal);
+    let proj_c_on_bq_normal = bc.dot(&bq_left_normal);
+    if (proj_a_on_bq_normal > 0. && proj_c_on_bq_normal <= 0.)
+        || (proj_a_on_bq_normal <= 0. && proj_c_on_bq_normal > 0.)
+    {
+        // Q between A and C, or on BA or BC: inside when A is on the normal's side.
+        proj_a_on_bq_normal > 0.
+    } else {
+        // Q not between A and C, but maybe still inside the corner: right of BA and right of the
+        // bisector of ABC, or left of both.
+        let proj_a_on_bq = ba.dot(&bq);
+        let proj_c_on_bq = bc.dot(&bq);
+        (proj_a_on_bq_normal > 0. && proj_c_on_bq < proj_a_on_bq)
+            || (proj_a_on_bq_normal <= 0. && proj_c_on_bq >= proj_a_on_bq)
+    }
+}
+
+/// `ray_circle_intersections_r2_lv2_c<double>(r2, a, b, lv2, c, out)` (Geometry/Circle.hpp):
+/// where the line `a x + b y + c = 0` (`lv2 = a² + b²`) meets the circle of squared radius `r2`
+/// about the origin. Returns 0 (and leaves `out`), 1 for a tangent or 2.
+pub fn ray_circle_intersections_r2_lv2_c(
+    r2: f64,
+    a: f64,
+    b: f64,
+    lv2: f64,
+    c: f64,
+    out: &mut (Vec2d, Vec2d),
+) -> i32 {
+    let x0 = -a * c;
+    let y0 = -b * c;
+    let d2 = r2 * lv2 - c * c;
+    if d2 < 0.0 {
+        return 0;
+    }
+    let d = orca_crt::sqrt(d2);
+    out.0[0] = (x0 + b * d) / lv2;
+    out.0[1] = (y0 - a * d) / lv2;
+    out.1[0] = (x0 - b * d) / lv2;
+    out.1[1] = (y0 + a * d) / lv2;
+    if d == 0.0 { 1 } else { 2 }
 }

@@ -1,0 +1,2 @@
+# The relationships entry's stored CRC is one bit off: miniz refuses to extract it (bbs_3mf.cpp:2476-2479).
+_rels/.rels

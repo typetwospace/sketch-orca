@@ -1,0 +1,16 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "unsupported",
+  "message": "custom G-code per layer is not available with print_sequence \"by object\"; Orca runs it only for prints by layer",
+  "exitCode": -8,
+  "warnings": [],
+  "command": "layers",
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.3.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

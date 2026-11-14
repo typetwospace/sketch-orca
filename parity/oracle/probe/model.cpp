@@ -30,6 +30,18 @@
 //         instances added, ensure_on_bed, the print volume states against five beds (named by
 //         their index among MBVL's, which hold them), each instance's arrange polygon
 //         (get_instance_arrange_poly) and a result applied, and center_around_origin.
+//   M3MF  Model::read_from_file of a 3MF file as the command line loads it (load_bbs_3mf; the plate
+//         data, presets, BBL flag and version it asks for are released unread): the engine's
+//         log of the read as stderr gets it (ReadLog: error and fatal, the importer's add_error
+//         texts among them), then the error, or what the read leaves that the cuts drop or
+//         MLOD's model leaves out (the model's design, profile and model information, each
+//         object's module, whole configuration, layer height profile, height ranges and brim
+//         ears, each instance's loaded id and assembly transformation, each part's whole
+//         configuration) and the model as MLOD records it after the cuts; for some files MLOD's
+//         steps after it. The temporary folder is written <dir> in the log and the error. Each
+//         names the piece of the 3MF reader's port it needs last (1: the container, its
+//         relationships and the root model; 2: the config entries; 3: the sub-model files and
+//         the assembly; a file that loads needs piece 3).
 //   MARP  get_bed_shape, update_arrange_params, get_shrink_bedpts and the items' inflation.
 //   MTMP  Print::get_filament_temp_type and get_compatible_filament_type.
 //
@@ -47,11 +59,23 @@
 // sets to the system's temporary folder; here it is the probe's own temporary folder. The tasks
 // run under the oracle's threading: global_control(max_allowed_parallelism, 1) inside a
 // task_arena (parity/oracle/README.md).
+//
+// The 3MF files: the fixtures of fixtures/model/ named 3mf-<piece>-<what>, each a folder model.3mf/
+// of the archive's entries that pack_zip packs here (marker files beside it can give an entry a CRC
+// one bit off or an uncompressed size it does not have, store it rather than deflate it, or pack a
+// second entry of its name); archives the reader refuses, made from the plain fixture's entries;
+// variants of the 3mf-2-numbers fixture with one number in another form; and, in the full set only,
+// the corpus's 3MF and OrcaSlicer's own 3MF projects (<exe>/../src/resources). The committed set
+// takes the fixtures (but those with a full-only file), the refused archives (but the two cut ones)
+// and the variants marked committed, each of 4000 bytes or fewer, for the committed file's budget.
+// MLOD's steps run for the Bambu fixture and the full set's files, from their own generator
+// (0x30DE9000), so MLOD's records stay as they were.
 #include "probe.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -59,11 +83,22 @@
 #include <fstream>
 #include <iterator>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <process.h>
+
+#include <boost/core/null_deleter.hpp>
+#include <boost/log/core.hpp>
+#include <boost/log/expressions.hpp>
+#include <boost/log/sinks/sync_frontend.hpp>
+#include <boost/log/sinks/text_ostream_backend.hpp>
+#include <boost/log/trivial.hpp>
+#include <boost/make_shared.hpp>
+#include <boost/shared_ptr.hpp>
 
 #include <oneapi/tbb/global_control.h>
 #include <oneapi/tbb/task_arena.h>
@@ -74,9 +109,13 @@
 #include <libslic3r/Geometry/Circle.hpp>
 #include <libslic3r/Model.hpp>
 #include <libslic3r/ModelArrange.hpp>
+#include <libslic3r/Format/bbs_3mf.hpp>
+#include <libslic3r/Preset.hpp>
 #include <libslic3r/Print.hpp>
 #include <libslic3r/PrintConfig.hpp>
+#include <libslic3r/Semver.hpp>
 #include <libslic3r/Utils.hpp>
+#include <libslic3r/miniz_extension.hpp>
 
 namespace probe {
 
@@ -606,6 +645,20 @@ void rotate_all(std::vector<Tri> &tris, double ax, double ay, double az)
         }
 }
 
+// An entry of a zip archive: its name and its bytes; a fixture's marker files (fixture_3mf) can
+// have it packed with a CRC one bit off, with an uncompressed size its data does not have, or
+// stored rather than deflated.
+struct ZipEntry
+{
+    std::string name, data;
+    bool        wrong_crc    = false;
+    uint32_t    claimed_size = 0; // 0: the data's own size
+    // A stored entry's claim set from the archive's size (pack_zip): 1 the largest claim miniz's
+    // reader opens the archive with, 2 one byte more.
+    int  claim_end = 0;
+    bool stored    = false;
+};
+
 struct ModelCase
 {
     std::string label;
@@ -615,7 +668,122 @@ struct ModelCase
     std::vector<std::pair<std::string, std::string>> extra;
     // Recorded in the full set only.
     bool full_only = false;
+    // A 3MF file (M3MF): the piece of the reader's port it tests (1 to 3), the entries a fixture
+    // packs, and whether MLOD's steps run after the read.
+    int                   piece = 0;
+    std::vector<ZipEntry> entries;
+    bool                  steps = false;
 };
+
+void put16(std::string &s, uint32_t v)
+{
+    s.push_back(char(v & 0xFF));
+    s.push_back(char((v >> 8) & 0xFF));
+}
+void put32(std::string &s, uint32_t v)
+{
+    put16(s, v & 0xFFFF);
+    put16(s, v >> 16);
+}
+
+void set32(std::string &s, size_t at, uint32_t v)
+{
+    for (int k = 0; k < 4; ++k)
+        s[at + k] = char((v >> (8 * k)) & 0xFF);
+}
+
+// A zip archive of the entries in their order: each deflated (miniz's tdefl at level 6, raw), or
+// stored when empty or marked stored; version 20, no flags, extra fields or comments, and a fixed
+// date (2026-11-10, 00:00). miniz's own writer is not used: it stamps entries with the local time.
+// `spans`, when given, gets where each entry's data starts in the archive and its length; the
+// entry numbered `wrong_crc`, and each entry marked wrong_crc, gets a CRC one bit off; an entry's
+// claimed_size, when set, is written as its uncompressed size in both headers, and a stored
+// entry's as its compressed size too (miniz refuses the archive of a stored entry whose two sizes
+// differ; an empty entry keeps compressed size 0, which miniz refuses with a claim). An entry's
+// claim_end sets both sizes once the archive is packed: to the archive's size less the entry's
+// local header offset and the header's 30 bytes, the largest claim miniz's central directory
+// check passes (its data then runs past the archive by the length of the entry's name), or one
+// more (added 2026-11-11 by orca-3mf-probe-3).
+std::string pack_zip(const std::vector<ZipEntry> &entries, std::vector<std::pair<size_t, size_t>> *spans = nullptr, size_t wrong_crc = SIZE_MAX)
+{
+    const uint32_t date = ((2026 - 1980) << 9) | (11 << 5) | 10;
+    std::string    out, central;
+    // Each entry with a claim_end: the entry and the offsets of its local and central headers.
+    std::vector<std::tuple<const ZipEntry *, uint32_t, size_t>> ends;
+    for (const ZipEntry &e : entries) {
+        const size_t   index  = size_t(&e - entries.data());
+        const uint32_t crc    = uint32_t(mz_crc32(MZ_CRC32_INIT, reinterpret_cast<const mz_uint8 *>(e.data.data()), e.data.size())) ^
+                             (index == wrong_crc || e.wrong_crc ? 1u : 0u);
+        const uint32_t size   = e.claimed_size != 0 ? e.claimed_size : uint32_t(e.data.size());
+        std::string    body   = e.data;
+        uint32_t       method = 0;
+        if (!e.data.empty() && !e.stored) {
+            size_t len  = 0;
+            void  *heap = tdefl_compress_mem_to_heap(e.data.data(), e.data.size(), &len, int(tdefl_create_comp_flags_from_zip_params(6, -15, 0)));
+            if (heap == nullptr)
+                throw std::runtime_error("cannot deflate " + e.name);
+            body.assign(static_cast<const char *>(heap), len);
+            mz_free(heap);
+            method = 8;
+        }
+        const uint32_t offset = uint32_t(out.size());
+        const uint32_t comp   = e.stored && e.claimed_size != 0 ? size : uint32_t(body.size());
+        if (e.claim_end != 0)
+            ends.emplace_back(&e, offset, central.size());
+        put32(out, 0x04034b50);
+        put16(out, 20);
+        put16(out, 0);
+        put16(out, method);
+        put16(out, 0);
+        put16(out, date);
+        put32(out, crc);
+        put32(out, comp);
+        put32(out, size);
+        put16(out, uint32_t(e.name.size()));
+        put16(out, 0);
+        out += e.name;
+        if (spans)
+            spans->emplace_back(out.size(), body.size());
+        out += body;
+        put32(central, 0x02014b50);
+        put16(central, 20);
+        put16(central, 20);
+        put16(central, 0);
+        put16(central, method);
+        put16(central, 0);
+        put16(central, date);
+        put32(central, crc);
+        put32(central, comp);
+        put32(central, size);
+        put16(central, uint32_t(e.name.size()));
+        put16(central, 0);
+        put16(central, 0);
+        put16(central, 0);
+        put16(central, 0);
+        put32(central, 0);
+        put32(central, offset);
+        central += e.name;
+    }
+    const size_t archive_size = out.size() + central.size() + 22;
+    for (const auto &[e, offset, at] : ends) {
+        const uint32_t claim = uint32_t(archive_size - offset - 30 + (e->claim_end == 2 ? 1 : 0));
+        set32(out, offset + 18, claim);
+        set32(out, offset + 22, claim);
+        set32(central, at + 20, claim);
+        set32(central, at + 24, claim);
+    }
+    const uint32_t central_at = uint32_t(out.size());
+    out += central;
+    put32(out, 0x06054b50);
+    put16(out, 0);
+    put16(out, 0);
+    put16(out, uint32_t(entries.size()));
+    put16(out, uint32_t(entries.size()));
+    put32(out, uint32_t(central.size()));
+    put32(out, central_at);
+    put16(out, 0);
+    return out;
+}
 
 bool read_bytes(const std::filesystem::path &file, std::string &bytes)
 {
@@ -624,6 +792,16 @@ bool read_bytes(const std::filesystem::path &file, std::string &bytes)
         return false;
     bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     return true;
+}
+
+// A file's extension in lower case ASCII.
+std::string lower_ext(const std::filesystem::path &file)
+{
+    std::string ext = file.extension().string();
+    for (char &ch : ext)
+        if (ch >= 'A' && ch <= 'Z')
+            ch = char(ch - 'A' + 'a');
+    return ext;
 }
 
 // The folder of the probe's own program (<work>/oracle/probe-build).
@@ -833,13 +1011,163 @@ bool orca_files(std::vector<ModelCase> &out, std::string &error)
     return true;
 }
 
-// The fixtures of parity/oracle/probe/fixtures/model/ (found from the committed set's folder,
-// parity/probes: the build trims __FILE__), a folder each, in name order: the file named model.*
-// is the model, written under the folder's name, and the others are written beside it under their
-// own names.
-bool fixture_files(const Options &options, std::vector<ModelCase> &out, std::string &error)
+// A 3MF fixture: the folder model.3mf/ of its archive's entries, packed by pack_zip in the order
+// of their paths; the folder's name, 3mf-<piece>-<what>, gives the piece of the port it tests. A
+// file named full-only beside model.3mf/ (its text says why) keeps the fixture out of the
+// committed set, for the committed file's budget. More marker files beside it change how entries
+// are packed, each a line per entry ('#' starts a comment line): wrong-crc names entries packed
+// with a CRC one bit off, claimed-size gives an entry's path and the uncompressed size its headers
+// claim (added 2026-11-11 by orca-3mf-errors, for the reader's texts of an entry that cannot be
+// extracted or read into the parser's buffer). Added 2026-11-11 by orca-3mf-probe-3, for the
+// claims a reader allocates a string of before it extracts: stored names entries stored rather
+// than deflated; claimed-size's size may be `end` or `past` for a stored entry (pack_zip's
+// claim_end), and may be given for an empty entry (its compressed size stays 0); duplicate gives
+// an entry's path and a file of the fixture's folder (outside model.3mf/), whose bytes are packed
+// as another entry of that name right after it.
+bool marker_lines(const std::filesystem::path &file, std::vector<std::string> &lines, std::string &error)
 {
-    const std::filesystem::path root = std::filesystem::path(options.committed).parent_path() / "oracle" / "probe" / "fixtures" / "model";
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(file, ec))
+        return true;
+    std::string text;
+    if (!read_bytes(file, text)) {
+        error = "cannot read " + file.string();
+        return false;
+    }
+    std::istringstream in(text);
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+        if (!line.empty() && line[0] != '#')
+            lines.push_back(line);
+    }
+    return true;
+}
+
+bool fixture_3mf(const std::filesystem::path &d, const std::string &tag, std::vector<ModelCase> &out, std::string &error)
+{
+    if (tag.size() < 7 || tag.compare(0, 4, "3mf-") != 0 || tag[4] < '1' || tag[4] > '3' || tag[5] != '-') {
+        error = "a 3MF fixture's folder is named 3mf-<1 to 3>-<what>, not " + d.string();
+        return false;
+    }
+    const std::filesystem::path                                root = d / "model.3mf";
+    std::error_code                                            ec;
+    std::vector<std::pair<std::string, std::filesystem::path>> files;
+    for (const auto &e : std::filesystem::recursive_directory_iterator(root, ec))
+        if (e.is_regular_file())
+            files.emplace_back(e.path().lexically_relative(root).generic_string(), e.path());
+    if (ec || files.empty()) {
+        error = "cannot list the entries under " + root.string();
+        return false;
+    }
+    std::sort(files.begin(), files.end());
+    ModelCase c{"fixture:" + tag, tag + ".3mf", {}};
+    c.piece     = tag[4] - '0';
+    c.steps     = tag == "3mf-3-bambu";
+    c.full_only = std::filesystem::is_regular_file(d / "full-only", ec);
+    for (const auto &f : files) {
+        ZipEntry e{f.first, {}};
+        if (!read_bytes(f.second, e.data)) {
+            error = "cannot read " + f.second.string();
+            return false;
+        }
+        c.entries.push_back(std::move(e));
+    }
+    auto entry = [&](const std::string &name) -> ZipEntry * {
+        for (ZipEntry &e : c.entries)
+            if (e.name == name)
+                return &e;
+        error = "no entry " + name + " under " + root.string();
+        return nullptr;
+    };
+    std::vector<std::string> wrong_crc, claimed, stored, duplicate;
+    if (!marker_lines(d / "wrong-crc", wrong_crc, error) || !marker_lines(d / "claimed-size", claimed, error) ||
+        !marker_lines(d / "stored", stored, error) || !marker_lines(d / "duplicate", duplicate, error))
+        return false;
+    for (const std::string &name : wrong_crc) {
+        ZipEntry *e = entry(name);
+        if (e == nullptr)
+            return false;
+        e->wrong_crc = true;
+    }
+    for (const std::string &name : stored) {
+        ZipEntry *e = entry(name);
+        if (e == nullptr)
+            return false;
+        e->stored = true;
+    }
+    for (const std::string &line : claimed) {
+        const size_t        at    = line.rfind(' ');
+        ZipEntry           *e     = at == std::string::npos ? nullptr : entry(line.substr(0, at));
+        const std::string   value = at == std::string::npos ? std::string() : line.substr(at + 1);
+        const int           end   = value == "end" ? 1 : value == "past" ? 2 : 0;
+        const unsigned long size  = end != 0 ? 0 : std::strtoul(value.c_str(), nullptr, 10);
+        if (e == nullptr || (end == 0 && size == 0) || (end != 0 && !e->stored)) {
+            if (error.empty())
+                error = "a claimed-size line is '<entry> <size>', or '<entry> end' or '<entry> past' of a stored entry, not '" + line +
+                        "' in " + d.string();
+            return false;
+        }
+        e->claimed_size = uint32_t(size);
+        e->claim_end    = end;
+    }
+    for (const std::string &line : duplicate) {
+        const size_t at = line.rfind(' ');
+        if (at == std::string::npos || entry(line.substr(0, at)) == nullptr) {
+            if (error.empty())
+                error = "a duplicate line is '<entry> <file>', not '" + line + "' in " + d.string();
+            return false;
+        }
+        ZipEntry copy{line.substr(0, at), {}};
+        if (!read_bytes(d / std::filesystem::u8path(line.substr(at + 1)), copy.data)) {
+            error = "cannot read " + (d / std::filesystem::u8path(line.substr(at + 1))).string();
+            return false;
+        }
+        const auto after = std::find_if(c.entries.rbegin(), c.entries.rend(), [&](const ZipEntry &e) { return e.name == copy.name; });
+        c.entries.insert(after.base(), std::move(copy));
+    }
+    c.bytes = pack_zip(c.entries);
+    out.push_back(std::move(c));
+    return true;
+}
+
+// The probe's source folder (parity/oracle/probe), as the build folder's CMakeCache.txt names it
+// (CMAKE_HOME_DIRECTORY): the build trims __FILE__, and the committed set's folder is not under
+// the repository in a check run (parity probe --check, <work>/parity/runs/probe-check; until
+// 2026-11-10 the fixtures were looked for from it, so the model probe's check could not run).
+bool probe_source(std::filesystem::path &dir, std::string &error)
+{
+    std::filesystem::path exe;
+    if (!program_dir(exe, error))
+        return false;
+    std::string cache;
+    if (!read_bytes(exe / "CMakeCache.txt", cache)) {
+        error = "cannot read " + (exe / "CMakeCache.txt").string();
+        return false;
+    }
+    const std::string key = "\nCMAKE_HOME_DIRECTORY:INTERNAL=";
+    const size_t      at  = cache.find(key);
+    if (at == std::string::npos) {
+        error = "no CMAKE_HOME_DIRECTORY in " + (exe / "CMakeCache.txt").string();
+        return false;
+    }
+    std::string value = cache.substr(at + key.size(), cache.find('\n', at + key.size()) - (at + key.size()));
+    if (!value.empty() && value.back() == '\r')
+        value.pop_back();
+    dir = std::filesystem::u8path(value);
+    return true;
+}
+
+// The fixtures of parity/oracle/probe/fixtures/model/ (found from the probe's source folder,
+// probe_source), a folder each, in name order: a 3MF fixture (fixture_3mf), or the file named
+// model.* as the model, written under the folder's name, with the others written beside it under
+// their own names.
+bool fixture_files(std::vector<ModelCase> &out, std::string &error)
+{
+    std::filesystem::path source;
+    if (!probe_source(source, error))
+        return false;
+    const std::filesystem::path        root = source / "fixtures" / "model";
     std::error_code                    ec;
     std::vector<std::filesystem::path> dirs;
     for (const auto &e : std::filesystem::directory_iterator(root, ec))
@@ -851,7 +1179,12 @@ bool fixture_files(const Options &options, std::vector<ModelCase> &out, std::str
     }
     std::sort(dirs.begin(), dirs.end());
     for (const std::filesystem::path &d : dirs) {
-        const std::string                  tag = d.filename().string();
+        const std::string tag = d.filename().string();
+        if (std::filesystem::is_directory(d / "model.3mf", ec)) {
+            if (!fixture_3mf(d, tag, out, error))
+                return false;
+            continue;
+        }
         ModelCase                          c{"fixture:" + tag, {}, {}};
         std::vector<std::filesystem::path> files;
         for (const auto &e : std::filesystem::directory_iterator(d, ec))
@@ -943,7 +1276,8 @@ std::vector<ModelCase> obj_variants()
 }
 
 // The corpus's model files (<work>/parity/corpus/meshes/<case>/) but the CR box (it ends the
-// engine, parity/CORPUS.md), each under its folder's name: the full set only.
+// engine, parity/CORPUS.md), each under its folder's name: the full set only. A 3MF goes to M3MF,
+// with MLOD's steps.
 bool corpus_files(std::vector<ModelCase> &out, std::string &error)
 {
     std::filesystem::path exe;
@@ -974,8 +1308,147 @@ bool corpus_files(std::vector<ModelCase> &out, std::string &error)
                 error = "cannot read a file under " + d.string();
                 return false;
             }
+            if (lower_ext(f) == ".3mf") {
+                c.piece = 3;
+                c.steps = true;
+            }
             out.push_back(c);
         }
+    }
+    return true;
+}
+
+// OrcaSlicer's own 3MF projects (its calibration and handy models, from the oracle's source tree,
+// <exe>/../src/resources), in the order of their paths, each under its own name: the full set
+// only, with MLOD's steps.
+bool resource_3mfs(std::vector<ModelCase> &out, std::string &error)
+{
+    std::filesystem::path exe;
+    if (!program_dir(exe, error))
+        return false;
+    const std::filesystem::path                                root = exe.parent_path() / "src" / "resources";
+    std::error_code                                            ec;
+    std::vector<std::pair<std::string, std::filesystem::path>> files;
+    for (const auto &e : std::filesystem::recursive_directory_iterator(root, ec))
+        if (e.is_regular_file() && lower_ext(e.path()) == ".3mf")
+            files.emplace_back(e.path().lexically_relative(root).generic_string(), e.path());
+    if (ec || files.empty()) {
+        error = "cannot list the 3MF files under " + root.string();
+        return false;
+    }
+    std::sort(files.begin(), files.end());
+    for (const auto &f : files) {
+        ModelCase c{"orca:resources/" + f.first, f.second.filename().string(), {}};
+        c.full_only = true;
+        c.piece     = 3;
+        c.steps     = true;
+        if (!read_bytes(f.second, c.bytes)) {
+            error = "cannot read " + f.second.string();
+            return false;
+        }
+        out.push_back(std::move(c));
+    }
+    return true;
+}
+
+// Archives the reader refuses, made from the plain fixture's entries: not an archive, an empty
+// file, the archive cut in half, without its end of central directory record, the root model's
+// CRC one bit off, and its deflate stream with a byte changed. The cut ones log and throw what
+// the first does (miniz cannot open them): the full set only, for the committed file's budget.
+bool broken_archives(const std::vector<ModelCase> &fixtures, std::vector<ModelCase> &out, std::string &error)
+{
+    const ModelCase *plain = nullptr;
+    for (const ModelCase &c : fixtures)
+        if (c.label == "fixture:3mf-3-plain")
+            plain = &c;
+    size_t model_at = 0;
+    while (plain != nullptr && model_at < plain->entries.size() && plain->entries[model_at].name != "3D/3dmodel.model")
+        ++model_at;
+    if (plain == nullptr || model_at == plain->entries.size()) {
+        error = "no fixture 3mf-3-plain with a 3D/3dmodel.model";
+        return false;
+    }
+    auto push = [&](const std::string &label, std::string bytes, bool full_only = false) {
+        ModelCase c{"broken archive: " + label, "broken-" + std::to_string(out.size()) + ".3mf", std::move(bytes)};
+        c.piece     = 1;
+        c.full_only = full_only;
+        out.push_back(std::move(c));
+    };
+    push("not an archive", "this is not a zip archive\n");
+    push("an empty file", std::string());
+    push("cut in half", plain->bytes.substr(0, plain->bytes.size() / 2), true);
+    push("no end of central directory record", plain->bytes.substr(0, plain->bytes.size() - 22), true);
+    push("the root model's CRC one bit off", pack_zip(plain->entries, nullptr, model_at));
+    {
+        std::vector<std::pair<size_t, size_t>> spans;
+        std::string                            s = pack_zip(plain->entries, &spans);
+        s[spans[model_at].first + spans[model_at].second / 2] ^= 0x55;
+        push("a deflate stream with a byte changed", s);
+    }
+    return true;
+}
+
+// Variants of the 3mf-2-numbers fixture, each with one number of its height ranges or cut
+// information in another form: the forms num_get (through property_tree's stream_translator)
+// refuses, and those at the edge of what it takes (hexadecimal, infinities, numbers past a type's
+// range, denormals, white space as character references). Each is piece 2 and named
+// numbers-<n>.3mf; the full set only, but those marked committed.
+bool number_variants(const std::vector<ModelCase> &fixtures, std::vector<ModelCase> &out, std::string &error)
+{
+    const ModelCase *numbers = nullptr;
+    for (const ModelCase &c : fixtures)
+        if (c.label == "fixture:3mf-2-numbers")
+            numbers = &c;
+    if (numbers == nullptr) {
+        error = "no fixture 3mf-2-numbers";
+        return false;
+    }
+    struct Variant
+    {
+        const char *entry, *from, *to;
+        bool        committed;
+    };
+    const char *const ranges = "Metadata/layer_config_ranges.xml", *const cut = "Metadata/cut_information.xml";
+    const Variant     variants[] = {
+        {ranges, "min_z=\" 0.5\"", "min_z=\"0x1p-1\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"inf\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"nan\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"1e999\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"1e-999\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"4.9e-324\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"  \"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"0,5\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"0.5x\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"- 0.5\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"--0.5\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"5e\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\".\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"+.5\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"0.5 0.6\"", false},
+        {ranges, "min_z=\" 0.5\"", "min_z=\"&#9;0.5&#10;\"", false},
+        {ranges, "id=\" 1 \"", "id=\"2147483648\"", false},
+        {ranges, "id=\" 1 \"", "id=\"01\"", false},
+        {cut, "check_sum=\"+1\"", "check_sum=\"-1\"", false},
+        {cut, "check_sum=\"+1\"", "check_sum=\"18446744073709551616\"", false},
+        {cut, "check_sum=\"+1\"", "check_sum=\"0x10\"", false},
+        {cut, "volume_id=\" 0\"", "volume_id=\"2147483648\"", true},
+        {cut, "r_tolerance=\".5\"", "r_tolerance=\"1e39\"", true},
+        {cut, "r_tolerance=\".5\"", "r_tolerance=\"1e-46\"", false},
+    };
+    for (const Variant &v : variants) {
+        std::vector<ZipEntry> entries = numbers->entries;
+        const auto            e  = std::find_if(entries.begin(), entries.end(), [&](const ZipEntry &z) { return z.name == v.entry; });
+        const size_t          at = e == entries.end() ? std::string::npos : e->data.find(v.from);
+        if (at == std::string::npos || e->data.find(v.from, at + 1) != std::string::npos) {
+            error = std::string("the fixture 3mf-2-numbers has no single ") + v.from + " in " + v.entry;
+            return false;
+        }
+        e->data.replace(at, std::strlen(v.from), v.to);
+        ModelCase c{std::string("3mf-2-numbers with ") + v.to, "numbers-" + std::to_string(out.size()) + ".3mf", pack_zip(entries)};
+        c.piece     = 2;
+        c.full_only = !v.committed;
+        out.push_back(std::move(c));
     }
     return true;
 }
@@ -1063,17 +1536,28 @@ void put_model(Payload &p, const Model &model)
     }
 }
 
-void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c, SplitMix &g, bool committed)
+// The inputs of the steps after loading: two instances (offset, scale, rotation, mirror),
+// allow_negative_z, the beds, the print settings and three arrange results.
+struct LodInputs
 {
-    Payload p;
-    p.str(c.label).str(c.name).str(c.bytes);
-    p.u64(c.extra.size());
-    for (const auto &x : c.extra)
-        p.str(x.first).str(x.second);
-    // The inputs of the steps after loading: two instances (offset, scale, rotation, mirror),
-    // allow_negative_z, the beds, the print settings and three arrange results.
-    double inst[2][12];
-    for (auto &row : inst) {
+    double              inst[2][12] = {};
+    bool                allow_negative_z = false;
+    std::vector<size_t> bed_ids;
+    std::vector<Pair>   cfg;
+    struct Placed
+    {
+        int32_t bed;
+        int64_t x, y;
+        double  rot;
+        int32_t item;
+    } placed[3] = {};
+};
+
+// Draws the inputs from g and writes them to p.
+LodInputs lod_inputs(Payload &p, SplitMix &g)
+{
+    LodInputs in;
+    for (auto &row : in.inst) {
         for (int k = 0; k < 3; ++k)
             row[k] = real(g, -150, 150);
         for (int k = 3; k < 6; ++k)
@@ -1085,26 +1569,18 @@ void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c
         for (double d : row)
             p.f64(d);
     }
-    const bool allow_negative_z = g.below(2) != 0;
-    p.boolean(allow_negative_z);
+    in.allow_negative_z = g.below(2) != 0;
+    p.boolean(in.allow_negative_z);
     // The beds, by their index in beds(): MBVL's records hold them, in that order.
-    const std::vector<Bed> all_beds  = beds();
-    const size_t           bed_ids[] = {0, 1, 2, 3, 4};
-    p.u64(std::size(bed_ids));
-    for (size_t b : bed_ids)
+    in.bed_ids = {0, 1, 2, 3, 4};
+    p.u64(in.bed_ids.size());
+    for (size_t b : in.bed_ids)
         p.u64(b);
-    const std::vector<Pair> cfg = arrange_config(g);
-    p.u64(cfg.size());
-    for (const Pair &kv : cfg)
+    in.cfg = arrange_config(g);
+    p.u64(in.cfg.size());
+    for (const Pair &kv : in.cfg)
         p.str(kv.key).str(kv.value);
-    struct Placed
-    {
-        int32_t bed;
-        int64_t x, y;
-        double  rot;
-        int32_t item;
-    } placed[3];
-    for (Placed &pl : placed) {
+    for (LodInputs::Placed &pl : in.placed) {
         pl.bed  = g.below(4) == 0 ? -1 : int32_t(g.below(2));
         pl.x    = int64_t(g.below(300000000)) - 50000000;
         pl.y    = int64_t(g.below(300000000)) - 50000000;
@@ -1112,39 +1588,21 @@ void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c
         pl.item = int32_t(g.below(10));
         p.i32(pl.bed).i64(pl.x).i64(pl.y).f64(pl.rot).i32(pl.item);
     }
+    return in;
+}
 
-    const std::filesystem::path file  = dir / c.name;
-    auto                        write = [](const std::filesystem::path &to, const std::string &bytes) {
-        std::ofstream out(to, std::ios::binary);
-        out.write(bytes.data(), std::streamsize(bytes.size()));
-        if (!out)
-            throw std::runtime_error("cannot write the temporary file");
-    };
-    write(file, c.bytes);
-    for (const auto &x : c.extra)
-        write(dir / x.first, x.second);
-    Model       model;
-    std::string error;
-    try {
-        DynamicPrintConfig        config;
-        ConfigSubstitutionContext substitutions(ForwardCompatibilitySubstitutionRule::EnableSilent);
-        model = Model::read_from_file(file.string(), &config, &substitutions, LoadStrategy::LoadModel | LoadStrategy::AddDefaultInstances);
-    } catch (const std::exception &e) {
-        error = e.what();
-        if (error.empty())
-            error = "unknown error";
-    }
-    std::error_code ec;
-    std::filesystem::remove(file, ec);
-    for (const auto &x : c.extra)
-        std::filesystem::remove(dir / x.first, ec);
-    if (!error.empty()) {
-        p.u8(1).str(error);
-        add(sets, "MLOD", p, committed);
-        return;
-    }
-    p.u8(0);
-    // cli/run.cpp's load_model.
+void write_file(const std::filesystem::path &to, const std::string &bytes)
+{
+    std::ofstream out(to, std::ios::binary);
+    out.write(bytes.data(), std::streamsize(bytes.size()));
+    if (!out)
+        throw std::runtime_error("cannot write the temporary file");
+}
+
+// cli/run.cpp's load_model after the read: each configuration cut to "extruder", the height ranges
+// and the layer height profile dropped, the first plate, ensure_on_bed.
+void cli_cuts(Model &model)
+{
     for (ModelObject *mo : model.objects) {
         for (const std::string &key : mo->config.keys())
             if (key != "extruder")
@@ -1159,19 +1617,29 @@ void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c
     model.curr_plate_index = 0;
     for (ModelObject *mo : model.objects)
         mo->ensure_on_bed();
-    put_model(p, model);
+}
 
+// The steps after loading, on the first object: its boxes, hulls and z, two instances added,
+// ensure_on_bed, the print volume states, the arrange polygons of its first three instances with a
+// result applied to each, and center_around_origin. They run only when every part has a hull (and,
+// when `require_parts`, the object has a part).
+void lod_tail(Payload &p, Model &model, const LodInputs &in, bool require_parts)
+{
     // Past here the command line has refused a part of fewer than 4 facets or a flat box
     // (check_solid_objects); a part without a hull would be dereferenced.
     ModelObject *o       = model.objects.front();
-    bool         hull_ok = true;
+    bool         hull_ok = !require_parts || !o->volumes.empty();
     for (const ModelVolume *v : o->volumes)
         hull_ok = hull_ok && v->get_convex_hull_shared_ptr() != nullptr;
     p.boolean(hull_ok);
-    if (!hull_ok) {
-        add(sets, "MLOD", p, committed);
+    if (!hull_ok)
         return;
-    }
+    const auto &inst             = in.inst;
+    const bool  allow_negative_z = in.allow_negative_z;
+    const auto &bed_ids          = in.bed_ids;
+    const auto &cfg              = in.cfg;
+    const auto &placed           = in.placed;
+    const auto  all_beds         = beds();
     put_bb3(p, o->bounding_box_approx());
     put_bb3(p, o->bounding_box_exact());
     p.f64(o->min_z()).f64(o->max_z());
@@ -1208,7 +1676,7 @@ void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c
     DynamicPrintConfig config;
     for (const Pair &kv : cfg)
         config.set_deserialize_strict(kv.key, kv.value);
-    for (size_t i = 0; i < o->instances.size(); ++i) {
+    for (size_t i = 0; i < o->instances.size() && i < std::size(placed); ++i) {
         arrangement::ArrangePolygon ap = get_instance_arrange_poly(o->instances[i], config);
         put_ap(p, ap);
         ap.bed_idx     = placed[i].bed;
@@ -1226,7 +1694,204 @@ void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c
     for (const ModelVolume *v : o->volumes)
         put_vec3(p, v->get_offset());
     put_bb3(p, o->bounding_box_exact());
+}
+
+void record_lod(Sets &sets, const std::filesystem::path &dir, const ModelCase &c, SplitMix &g, bool committed)
+{
+    Payload p;
+    p.str(c.label).str(c.name).str(c.bytes);
+    p.u64(c.extra.size());
+    for (const auto &x : c.extra)
+        p.str(x.first).str(x.second);
+    const LodInputs in = lod_inputs(p, g);
+
+    const std::filesystem::path file = dir / c.name;
+    write_file(file, c.bytes);
+    for (const auto &x : c.extra)
+        write_file(dir / x.first, x.second);
+    Model       model;
+    std::string error;
+    try {
+        DynamicPrintConfig        config;
+        ConfigSubstitutionContext substitutions(ForwardCompatibilitySubstitutionRule::EnableSilent);
+        model = Model::read_from_file(file.string(), &config, &substitutions, LoadStrategy::LoadModel | LoadStrategy::AddDefaultInstances);
+    } catch (const std::exception &e) {
+        error = e.what();
+        if (error.empty())
+            error = "unknown error";
+    }
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
+    for (const auto &x : c.extra)
+        std::filesystem::remove(dir / x.first, ec);
+    if (!error.empty()) {
+        p.u8(1).str(error);
+        add(sets, "MLOD", p, committed);
+        return;
+    }
+    p.u8(0);
+    cli_cuts(model);
+    put_model(p, model);
+    lod_tail(p, model, in, false);
     add(sets, "MLOD", p, committed);
+}
+
+// ---- M3MF ----------------------------------------------------------------------------------
+
+// s with the temporary folder written <dir>, in either separator form.
+std::string portable(std::string s, const std::filesystem::path &dir)
+{
+    s = replace_all(s, dir.string(), "<dir>");
+    return replace_all(s, dir.generic_string(), "<dir>");
+}
+
+// The engine's log of one read, as the command line prints it on stderr (cli/main.cpp,
+// log_to_stderr, at its default level 1): the Boost.Log records at error and fatal, each
+// "[<severity>] <message>" and a line feed unless the message ends with one. The importer's
+// add_error texts reach it through log_errors (bbs_3mf.cpp, load_bbs_3mf), each at error. While
+// this sink is held Boost.Log's default sink (stdout, every level the core lets through) is off.
+class ReadLog
+{
+public:
+    ReadLog()
+    {
+        namespace logging = boost::log;
+        namespace sinks   = boost::log::sinks;
+        namespace expr    = boost::log::expressions;
+        auto backend      = boost::make_shared<sinks::text_ostream_backend>();
+        backend->add_stream(boost::shared_ptr<std::ostream>(&text_, boost::null_deleter()));
+        backend->auto_flush(true);
+        sink_ = boost::make_shared<sinks::synchronous_sink<sinks::text_ostream_backend>>(backend);
+        sink_->set_filter(logging::trivial::severity >= logging::trivial::error);
+        sink_->set_formatter(expr::stream << "[" << logging::trivial::severity << "] " << expr::smessage);
+        logging::core::get()->add_sink(sink_);
+    }
+    ReadLog(const ReadLog &)            = delete;
+    ReadLog &operator=(const ReadLog &) = delete;
+    ~ReadLog() { boost::log::core::get()->remove_sink(sink_); }
+    std::string text()
+    {
+        sink_->flush();
+        return text_.str();
+    }
+
+private:
+    std::ostringstream                                                                               text_;
+    boost::shared_ptr<boost::log::sinks::synchronous_sink<boost::log::sinks::text_ostream_backend>> sink_;
+};
+
+// The model's information as the root model's metadata leave it (bbs_3mf.cpp, _handle_end_metadata
+// and load_model_from_file; each value through xml_unescape after expat's own unescaping): the
+// design information (set only when a Designer is given), the profile information and the model
+// information with every metadata item by name. The exporter writes it into a 3MF again.
+void put_info(Payload &p, const Model &model)
+{
+    p.boolean(model.design_info != nullptr);
+    if (model.design_info)
+        p.str(model.design_info->DesignId).str(model.design_info->Designer).str(model.design_info->DesignerUserId);
+    p.boolean(model.profile_info != nullptr);
+    if (model.profile_info) {
+        const ModelProfileInfo &i = *model.profile_info;
+        p.str(i.ProfileTile).str(i.ProfileCover).str(i.ProfileDescription).str(i.ProfileUserId).str(i.ProfileUserName);
+    }
+    p.boolean(model.model_info != nullptr);
+    if (model.model_info) {
+        const ModelInfo &i = *model.model_info;
+        p.str(i.cover_file).str(i.license).str(i.description).str(i.copyright).str(i.model_name).str(i.origin);
+        p.u64(i.metadata_items.size());
+        for (const auto &kv : i.metadata_items)
+            p.str(kv.first).str(kv.second);
+    }
+}
+
+// What read_from_file leaves that the command line's cuts drop or put_model leaves out: the
+// model's information (put_info); each object's module, whole configuration, layer height
+// profile, height ranges and brim ears; each instance's loaded id and assembly transformation
+// (when it has one); each part's whole configuration. A part's source (file, units,
+// transformation) only the GUI reads: not recorded.
+void put_as_read(Payload &p, Model &model)
+{
+    put_info(p, model);
+    p.u64(model.objects.size());
+    for (ModelObject *o : model.objects) {
+        p.str(o->module_name).str(config_dump(o->config));
+        const std::vector<coordf_t> profile = o->layer_height_profile.get();
+        p.u64(profile.size());
+        for (double z : profile)
+            p.f64(z);
+        p.u64(o->layer_config_ranges.size());
+        for (const auto &r : o->layer_config_ranges)
+            p.f64(r.first.first).f64(r.first.second).str(config_dump(r.second));
+        p.u64(o->brim_points.size());
+        for (const BrimPoint &b : o->brim_points)
+            p.f32(b.pos.x()).f32(b.pos.y()).f32(b.pos.z()).f32(b.head_front_radius);
+        p.u64(o->instances.size());
+        for (ModelInstance *i : o->instances) {
+            p.u64(i->loaded_id).boolean(i->is_assemble_initialized());
+            if (i->is_assemble_initialized()) {
+                put_mat(p, i->get_assemble_transformation().get_matrix());
+                put_vec3(p, i->get_offset_to_assembly());
+            }
+        }
+        p.u64(o->volumes.size());
+        for (const ModelVolume *v : o->volumes)
+            p.str(config_dump(v->config));
+    }
+}
+
+void record_3mf(Sets &sets, const std::filesystem::path &dir, const ModelCase &c, SplitMix &g, bool committed)
+{
+    Payload body;
+    body.str(c.name).str(c.bytes).boolean(c.steps);
+    LodInputs in;
+    if (c.steps)
+        in = lod_inputs(body, g);
+
+    const std::filesystem::path file = dir / c.name;
+    write_file(file, c.bytes);
+    Model       model;
+    std::string error, log;
+    {
+        // As cli/run.cpp's load_model asks: the plate data, presets, BBL flag and version are
+        // released unread.
+        DynamicPrintConfig        config;
+        ConfigSubstitutionContext substitutions(ForwardCompatibilitySubstitutionRule::EnableSilent);
+        PlateDataPtrs             plates;
+        std::vector<Preset *>     presets;
+        bool                      is_bbl_3mf = false;
+        Semver                    version;
+        ReadLog                   read_log;
+        try {
+            model = Model::read_from_file(file.string(), &config, &substitutions, LoadStrategy::LoadModel | LoadStrategy::AddDefaultInstances, &plates,
+                                          &presets, &is_bbl_3mf, &version);
+        } catch (const std::exception &e) {
+            error = e.what();
+            if (error.empty())
+                error = "unknown error";
+        }
+        log = read_log.text();
+        release_PlateData_list(plates);
+        for (Preset *preset : presets)
+            delete preset;
+    }
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
+    Payload p;
+    p.str(c.label).u8(uint8_t(error.empty() ? 3 : c.piece));
+    p.bytes += body.bytes;
+    p.str(portable(log, dir));
+    if (!error.empty()) {
+        p.u8(1).str(portable(error, dir));
+        add(sets, "M3MF", p, committed);
+        return;
+    }
+    p.u8(0);
+    put_as_read(p, model);
+    cli_cuts(model);
+    put_model(p, model);
+    if (c.steps)
+        lod_tail(p, model, in, true);
+    add(sets, "M3MF", p, committed);
 }
 
 // ---- MARP ----------------------------------------------------------------------------------
@@ -1369,12 +2034,26 @@ bool run_model(const Options &options, std::string &error)
             record_bvl(sets);
             std::vector<ModelCase> files = generated_files();
             std::vector<ModelCase> more;
-            if (!(ok = orca_files(more, error) && fixture_files(options, more, error)))
+            if (!(ok = orca_files(more, error) && fixture_files(more, error)))
                 return;
             for (ModelCase &c : obj_variants())
                 more.push_back(std::move(c));
             if (!(ok = corpus_files(more, error)))
                 return;
+            // The 3MF files go to M3MF: the fixtures, the refused archives, the corpus's and
+            // OrcaSlicer's own.
+            std::vector<ModelCase> three;
+            for (ModelCase &c : more)
+                if (c.piece != 0)
+                    three.push_back(c);
+            more.erase(std::remove_if(more.begin(), more.end(), [](const ModelCase &c) { return c.piece != 0; }), more.end());
+            std::vector<ModelCase> broken, numbers;
+            if (!(ok = broken_archives(three, broken, error) && number_variants(three, numbers, error) && resource_3mfs(three, error)))
+                return;
+            // After the fixtures: the refused archives, then the number variants.
+            broken.insert(broken.end(), numbers.begin(), numbers.end());
+            const auto made = std::find_if(three.begin(), three.end(), [](const ModelCase &c) { return c.label.rfind("fixture:", 0) != 0; });
+            three.insert(made, broken.begin(), broken.end());
             files.insert(files.end(), more.begin(), more.end());
             SplitMix g(0x30DE8000u);
             int generated = 0;
@@ -1388,6 +2067,9 @@ bool run_model(const Options &options, std::string &error)
                 record_lod(sets, dir, c, g, !c.full_only && size <= 4000 && (!random || generated < 8));
                 generated += random ? 1 : 0;
             }
+            SplitMix g3(0x30DE9000u);
+            for (const ModelCase &c : three)
+                record_3mf(sets, dir, c, g3, !c.full_only && c.bytes.size() <= 4000);
             record_arp(sets);
             record_tmp(sets);
         } catch (const std::exception &e) {

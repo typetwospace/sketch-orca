@@ -1,0 +1,4 @@
+{"stage":"job","percent":1.0,"message":"reading the job"}
+{"stage":"presets","percent":3.0,"message":"reading the presets"}
+{"stage":"model","percent":8.0,"message":"reading the model"}
+{"stage":"failed","percent":8.0,"message":"the color at printZ 5.05 needs the extruder: the job has 2 filaments, so a color change switches to the filament of that color"}

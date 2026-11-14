@@ -1,0 +1,2 @@
+# The sub-model's stored CRC is one bit off: its XML parses, then the extraction fails (bbs_3mf.cpp:5759, :5774-5777).
+3D/Objects/object_1.model

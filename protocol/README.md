@@ -236,20 +236,34 @@ OrcaSlicer's code still writes an `internal-error` result, and the process ends 
 
 `sketch-orca-rs`, the Rust translation of the engine, does only the steps its parity record
 certifies. It reads the command line and the job as the C++ program does, then reads, checks and
-merges the presets with the job's overrides and checks that the model's file is there: a command
-line, job, preset or setting that the C++ program refuses up to there gets the same result,
-warnings and progress. The repository's parity record holds it to the C++ program's result
-(`parity/goldens/front/intake/`) for the invalid examples, an unknown setting or a value a
-setting does not take, a preset file that is missing, not JSON, not an object, of the wrong type,
-from elsewhere, with a value OrcaSlicer cannot read or for a resin printer, a process made for
-another printer, settings OrcaSlicer refuses, a resources folder with no profiles, a work folder
-that cannot be made, and a missing model, also after the presets' warnings (a skipped value, a
-substituted one, a filament made for another printer). A refusal the C++ program makes later,
-from the reading of the model on (a model it cannot read, a model bigger than the bed and the
-like), comes from a step the Rust program does not do yet, so such a job gets `not-ported` like
-any job that reaches such a step: exit code -8, the same class as `unsupported`, before any output
-is written (`examples/result-not-ported.json`). So does a job with a preset whose compatibility
-condition the Rust program cannot work out yet (`missing` names `preset-conditions`). A client
+merges the presets with the job's overrides, working out their compatibility conditions, and
+checks that the model's file is there: a command line, job, preset or setting that the C++
+program refuses up to there gets the same result, warnings and progress. The repository's parity
+record holds it to the C++ program's result (`parity/goldens/front/intake/`) for the invalid
+examples, an unknown setting or a value a setting does not take, a preset file that is missing,
+not JSON, not an object, of the wrong type, from elsewhere, with a value OrcaSlicer cannot read or
+for a resin printer, a process made for another printer, settings OrcaSlicer refuses, a resources
+folder with no profiles, a work folder that cannot be made, and a missing model, also after the
+presets' warnings (a skipped value, a substituted one, a filament made for another printer).
+
+From 0.3.0 it also reads the model (STL, OBJ and 3MF) and places the objects, as the C++ program
+does up to its build volume check. An `info` job gets its whole answer. A refusal made there gets
+the C++ program's result: a model it cannot read (`model-unreadable`), an object the model does
+not have, an object's or a height range's setting it does not take, custom G-code it refuses, a
+prime tower set past the bed or with no room, objects that do not fit (`arrange-failed`),
+filaments too far apart (`temperature-difference`), an object outside the printable volume
+(`not-printable`, -50 when none is inside), and `empty-plate` when every object is marked not
+printable and none is inside. Where the C++ program's own reading is undefined (a
+CR-only ASCII STL whose first line overruns its 256-byte buffer, an OBJ's material library whose
+path is shorter than 16 bytes, read through a freed path and failing), the Rust program gives a
+defined answer instead: it refuses the first as `model-unreadable` and reads the library the
+second names.
+
+A job that needs a later step gets `not-ported`: exit code -8, the same class as `unsupported`,
+before any output is written (`examples/result-not-ported.json`). A `layers` or `slice` job gets
+it once its objects are placed, `missing` naming the steps after that (`slice-mesh` and the rest);
+a job with `orient` on gets it where orientation would start, `missing` naming `orient` and the
+steps after it that are not ported. A client
 that gets `not-ported` can run the same job with the C++ program, which gives its own result.
 
 Process exit codes reach a client in different forms: Node on Windows reports -3 as 4294967293,

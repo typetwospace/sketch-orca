@@ -1,6 +1,6 @@
 // privacy-fixtures: /home/me /Users/me /home/李 /Users/李 /Users/PreviousBuilder D:/build-cache/orca me@example.org
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { listPatches } from '../scripts/lib/checkout.ts'
@@ -13,6 +13,7 @@ import {
   buildManifest,
   buildRecordProblems,
   builtDependencies,
+  checkoutParityFile,
   cliChangedSinceBuild,
   dependencySourceDir,
   DEPS_SRC_NOTICES,
@@ -35,6 +36,7 @@ import {
   parseOtoolL,
   parseVersionOutput,
   personalPathNeedles,
+  readCheckoutParityJson,
   readManifest,
   requiredLicenses,
   resourceCopies,
@@ -45,6 +47,7 @@ import {
   serializeManifest,
   STAGED_CASES,
   stagedEnv,
+  stagedParityProblem,
   stageInputs,
   STAGE_VERSION,
   unlicensedDependencies,
@@ -163,6 +166,13 @@ describe('manifest', () => {
     const own = join(import.meta.dir, '..', 'licenses')
     expect(rustLicenseCopies(own).map((c) => c.to)).toEqual(RUST_LICENSE_TEXTS.map((f) => `LICENSES/sketch-orca-rs/${f}`))
     for (const c of rustLicenseCopies(own)) expect(existsSync(c.from)).toBe(true)
+    // The code the model's reading and the placement carry: Eigen (MPL-2.0), Qhull, miniz, expat and NLopt.
+    for (const f of ['MPL-2.0.txt', 'Qhull.txt', 'MIT-miniz.txt', 'MIT-expat.txt', 'MIT-NLopt.txt']) expect(RUST_LICENSE_TEXTS as readonly string[]).toContain(f)
+    // ADMesh (orca-mesh: GPL-2.0 or later, taken under GPL-3.0) and libnest2d (orca-arrange: LGPL-3.0 on GPL-3.0).
+    for (const f of ['GPL-2.0.txt', 'GPL-3.0.txt', 'LGPL-3.0.txt']) expect(RUST_LICENSE_TEXTS as readonly string[]).toContain(f)
+    // The 3MF reader (orca-model): semver and fast_float, each under its MIT licence.
+    for (const f of ['MIT-semver.txt', 'MIT-fast_float.txt']) expect(RUST_LICENSE_TEXTS as readonly string[]).toContain(f)
+    expect(new Set(RUST_LICENSE_TEXTS).size).toBe(RUST_LICENSE_TEXTS.length)
     const good = JSON.parse(serializeManifest(m)) as Record<string, unknown>
     const rust = good.rust as Record<string, unknown>
     const bad: [Record<string, unknown>, RegExp][] = [
@@ -680,6 +690,51 @@ describe('runtime libraries', () => {
       expect(refusal).toContain(crt)
     }
     expect(rustRuntimeRefusal('/t/sketch-orca-rs.exe', io(['KERNEL32.dll', 'zlib1.dll']))).toContain('Windows does not have: zlib1.dll')
+  })
+
+  test("stagedParityProblem: sketch-orca-rs must hold the checkout's parity.json as it is now, byte for byte", () => {
+    const now = Buffer.from('{\n  "format": "sketch-orca-parity/1",\n  "families": [{ "name": "model-load", "certified": true }]\n}\n')
+    const older = Buffer.from('{\n  "format": "sketch-orca-parity/1",\n  "families": [{ "name": "model-load", "certified": false }]\n}\n')
+    const program = (inside: Uint8Array) => Buffer.concat([Buffer.from('MZ\u0000\u0090 code and rodata '), inside, Buffer.from(' more rodata\u0000')])
+    const exe = join(dir, 'bin', 'sketch-orca-rs.exe')
+    mkdirSync(join(dir, 'bin'), { recursive: true })
+    // A program holding the bytes, anywhere in it, passes.
+    writeFileSync(exe, program(now))
+    expect(stagedParityProblem(exe, now)).toBeUndefined()
+    // One built with an older parity.json is refused, and says to run stage.
+    writeFileSync(exe, program(older))
+    expect(stagedParityProblem(exe, now)).toBe(`${exe} does not hold parity/parity.json as the checkout has it now (it was built with another one, or none); run stage`)
+    // So is one holding none, and one whose copy differs only in its line ends.
+    writeFileSync(exe, program(Buffer.alloc(0)))
+    expect(stagedParityProblem(exe, now)).toContain('run stage')
+    writeFileSync(exe, program(Buffer.from(now.toString('utf8').replaceAll('\n', '\r\n'))))
+    expect(stagedParityProblem(exe, now)).toContain('run stage')
+    // A missing program, and an empty parity.json, which every program would hold.
+    expect(stagedParityProblem(join(dir, 'none.exe'), now)).toBe(`${join(dir, 'none.exe')} is missing; run stage`)
+    expect(stagedParityProblem(exe, Buffer.alloc(0))).toContain('parity/parity.json is empty')
+    // The checkout's file: parity/parity.json; a checkout without one stops the step.
+    expect(checkoutParityFile(dir)).toBe(join(dir, 'parity', 'parity.json'))
+    expect(() => readCheckoutParityJson(dir)).toThrow(`${join(dir, 'parity', 'parity.json')} is missing`)
+    writeText(join(dir, 'parity', 'parity.json'), now.toString('utf8'))
+    expect(readCheckoutParityJson(dir).equals(now)).toBe(true)
+  })
+
+  test("stage checks the program cargo gave, before it may skip as current, and the staged copy, against the checkout's parity.json; no manifest change", () => {
+    const run = readFileSync(join(import.meta.dir, '..', 'scripts', 'lib', 'stage.ts'), 'utf8').split('export async function runStage(')[1]!
+    const built = run.indexOf('stagedParityProblem(rustExe, readCheckoutParityJson(ctx.engine.engine))')
+    const skip = run.indexOf('is current (')
+    const staged = run.indexOf('stagedParityProblem(stagedRust, readCheckoutParityJson(ctx.engine.engine))')
+    expect(built).toBeGreaterThan(run.indexOf('buildRustRelease('))
+    expect(skip).toBeGreaterThan(built)
+    expect(staged).toBeGreaterThan(run.indexOf("runEngine(stagedRust, ['version']"))
+    // Both refuse the stage before anything is swapped in.
+    expect(run.indexOf('renameSync(tmp, dist)')).toBeGreaterThan(staged)
+    expect(run.slice(built, built + 300)).toContain('throw new StepError(')
+    // The refusal after cargo names cargo's log and says to rebuild orca-cli, as running stage again alone gives it again.
+    expect(run.slice(built, built + 700)).toMatch(/\(cargo's log: \$\{join\(w\.logs, 'stage-cargo\.log'\)\}\)\..*cargo clean -p orca-cli.*stage alone gives the same program again/)
+    expect(run.slice(staged, staged + 300)).toContain('throw new StepError(')
+    // The staged 0.3.0 stays accepted: the stage version is the one it was staged with.
+    expect(STAGE_VERSION).toBe(4)
   })
 
   test('ldd output: resolved, not found, and the lines without =>', () => {

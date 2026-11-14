@@ -1,0 +1,4 @@
+{"stage":"job","percent":1.0,"message":"reading the job"}
+{"stage":"presets","percent":3.0,"message":"reading the presets"}
+{"stage":"model","percent":8.0,"message":"reading the model"}
+{"stage":"failed","percent":8.0,"message":"object 1 (over the edge) is partly outside the printable volume: it spans x 290..310, y 50..70, z 0..20; the printable volume is x 0..300, y 0..300, height 275 mm"}

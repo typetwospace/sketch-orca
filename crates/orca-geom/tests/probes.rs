@@ -29,8 +29,14 @@
 //!   `BoundingBoxf3::transformed`, the convex hull of `Vec3d`s in x and y, `make_circle`,
 //!   `rad2deg_dir`, `convex_polygons_intersect` and the top and bottom chains of a convex polygon.
 //!
+//! The records of `paths.sop1` that name the piece geom-1 (ClipperLib_Z, `Circle`, `ArcSegment`,
+//! `ArcFitter`, `Polyline`'s fitting results, `ThickPolyline` and the 2D helpers) are replayed by
+//! the module [`paths_sop1`] (added 2026-11-13), with this file's readers.
+//!
 //! The committed subset (`parity/probes/`) runs by default; `SKETCH_ORCA_PROBES_DEEP=<folder>`
 //! replays the full set from that folder (`<work>/parity/probes`).
+
+mod paths_sop1;
 
 use std::fmt::{self, Debug, Formatter};
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};

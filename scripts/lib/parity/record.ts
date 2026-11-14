@@ -9,15 +9,23 @@
 // front end's goldens are written into the repository (parity/goldens/front/); and parity.json lists
 // every family (corpus.ts FAMILIES) with the classes of the outputs of its cases, certified false.
 // The oracle's passes run with SKETCH_ORCA_ORACLE_DUMP set to a fresh folder per engine run
-// (neutral.ts knobRunner) and keep the dumps of the boundaries in KEPT_DUMPS (front-objects-<n>.sop1
-// in phase O2; O3 adds its own), each beside its run as <pass>/<case>/<n>/dumps/<file> and named in
-// the run's record (RecordedRun.dumps); every other dump is removed as soon as its run ends. Each
-// kept dump gets a class across the thread counts (classifyDumps: B when it is the same at every
-// count, its RUN record left out, T when not), which goldens.json lists (GoldensIndex.dumps), and
-// the goldens keep the one-thread pass's dumps with its outputs. Goldens recorded before dumps were
-// kept have no `dumps`, and certify reads them as before.
+// (neutral.ts knobRunner) and keep the dumps of the boundaries in KEPT_DUMPS, each beside its run as
+// <pass>/<case>/<n>/dumps/<file> and named in the run's record (RecordedRun.dumps); every other dump
+// (the G-code export's, phase O4's) is removed as soon as its run ends. KEPT_DUMPS is every boundary
+// of the front end and of Print::process() that domain A reaches, in the order process() writes
+// them: front-objects (phase O2), front-config, each PrintObject step the oracle dumps
+// (object<i>-<step>-<n>.sop1, one boundary per step for every object i: dumpBoundary), the tool
+// ordering and the skirt and brim (print-psWipeTower, print-psSkirtBrim), and the end of process(),
+// print-psConflictCheck (oracle patch 0007). Each kept dump gets a class across the thread counts
+// (classifyDumps: B when it is the same at every count, its RUN record left out, T when not), which
+// goldens.json lists (GoldensIndex.dumps), and the goldens keep the one-thread pass's dumps with its
+// outputs. When the goldens would pass GOLDENS_MAX_BYTES (8 GiB), each dump of a run outside domain A
+// (a case with a family of corpus.ts MARKER_FAMILIES) that would take them past it is kept as its
+// SHA-256 instead (<file>.sha256, the hash of its portable bytes; GoldensIndex.hashedDumps), which
+// certify compares by hash; the runs of domain A, which the replays read, keep their bytes. Goldens
+// recorded before dumps were kept have no `dumps`, and certify reads them as before.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { copyTree, nativePath, sha256Bytes } from '../files.ts'
 import type { OrcaLock } from '../lock.ts'
@@ -26,7 +34,7 @@ import type { Platform } from '../env.ts'
 import { StepError } from '../run.ts'
 import { SMOKE_VERSION, type SmokeCase, type SmokePresetSets } from '../smoke.ts'
 import { classesOf, classify, portableBytes, type OutputClass } from './classes.ts'
-import type { CorpusDocument } from './corpus.ts'
+import { corpusFile, MARKER_FAMILIES, readCorpus, type CorpusDocument } from './corpus.ts'
 import type { Mask } from './masks.ts'
 import { knobRunner, PINNED_KNOBS, portableDump, readSop1, sop1Differences } from './neutral.ts'
 import { ORACLE_KNOBS, type OracleUnderTest } from './oracle.ts'
@@ -86,16 +94,66 @@ export function passKey(o: { exeSha256: string; knobs: Record<string, string>; c
 // ---------------------------------------------------------------- the dumps a pass keeps
 
 /**
- * The boundaries whose dumps parity record keeps of the oracle's passes and certify compares, by
- * the name part of the dump's file (<boundary>-<n>.sop1, parity/SOP1.md "Files"). Phase O2 keeps
- * front-objects, the model once the objects are placed; O3 adds its boundaries here.
+ * The PrintObject steps whose dumps domain A reaches in Print::process(), in the order it runs them
+ * (Print.cpp process: slicing and walls, the curled extrusions, the infill, ironing, Z contouring,
+ * the supports, the overhangs for lift, then, after the tool ordering and the skirt and brim, the
+ * three simplifications). posEstimateCurledExtrusions is dumped only for an object that shares
+ * another's layers (PrintObject::estimate_curled_extrusions never sets its step done; the curled
+ * lines are in the next dump's LEXT records), and posSimplifyWall never, so it is not one.
  */
-export const KEPT_DUMPS: readonly string[] = ['front-objects']
+export const OBJECT_STEPS = [
+  'posSlice',
+  'posPerimeters',
+  'posEstimateCurledExtrusions',
+  'posPrepareInfill',
+  'posInfill',
+  'posIroning',
+  'posContouring',
+  'posSupportMaterial',
+  'posDetectOverhangsForLift',
+  'posSimplifyPath',
+  'posSimplifyInfill',
+  'posSimplifySupportPath',
+] as const
 
-/** The boundary a dump's file is of (front-objects for front-objects-1.sop1), or undefined for a file that is no dump. */
+const objectBoundary = (step: string) => `object-${step}`
+
+/**
+ * The boundaries whose dumps parity record keeps of the oracle's passes and certify compares, by
+ * the name part of the dump's file (<boundary>-<n>.sop1, parity/SOP1.md "Files"; an object's
+ * object<i>-<step>-<n>.sop1 is the boundary object-<step>), in the order Print::process() writes
+ * them: front-objects, the model once the objects are placed (phase O2); front-config, the configs
+ * once applied, before process(); every object step of OBJECT_STEPS up to the overhangs for lift;
+ * the tool ordering (print-psWipeTower) and the skirt and brim (print-psSkirtBrim); the three
+ * simplifications; and the end of process(), print-psConflictCheck, which oracle patch 0007 writes
+ * after the conflict check. The G-code export's dump (print-psGCodeExport) is phase O4's.
+ */
+export const KEPT_DUMPS: readonly string[] = [
+  'front-objects',
+  'front-config',
+  ...OBJECT_STEPS.slice(0, OBJECT_STEPS.indexOf('posDetectOverhangsForLift') + 1).map(objectBoundary),
+  'print-psWipeTower',
+  'print-psSkirtBrim',
+  ...OBJECT_STEPS.slice(OBJECT_STEPS.indexOf('posSimplifyPath')).map(objectBoundary),
+  'print-psConflictCheck',
+]
+
+/**
+ * The boundary a dump's file is of, or undefined for a file that is no dump: front-objects for
+ * front-objects-1.sop1, print-psSkirtBrim for print-psSkirtBrim-1.sop1, and object-<step> for
+ * object<i>-<step>-<n>.sop1, that step's boundary for object i (dumpObject gives i).
+ */
 export function dumpBoundary(file: string): string | undefined {
+  const o = /^object(\d+)-(.+)-(\d+)\.sop1$/.exec(file)
+  if (o) return objectBoundary(o[2]!)
   const m = /^(.+)-(\d+)\.sop1$/.exec(file)
   return m ? m[1] : undefined
+}
+
+/** The object an object dump's file is of (2 for object2-posSlice-1.sop1), or undefined for another file. */
+export function dumpObject(file: string): number | undefined {
+  const o = /^object(\d+)-(.+)-(\d+)\.sop1$/.exec(file)
+  return o ? Number(o[1]) : undefined
 }
 
 /** Whether a dump's file is of a boundary in `kept`. */
@@ -134,10 +192,29 @@ export function dumpNames(runs: (CaseRecord['runs'][number] | undefined)[]): str
   return [...new Set(runs.flatMap((r) => r?.dumps ?? []))].sort()
 }
 
-/** The bytes of a kept dump of one run in a pass's store, or undefined when the run did not keep it. */
+/**
+ * The bytes of a kept dump of one run in a pass's store, or undefined when the run did not keep it
+ * or the goldens keep it as its SHA-256 alone (dumpSha256).
+ */
 export function dumpBytes(store: string, caseId: string, run: CaseRecord['runs'][number] | undefined, file: string): Buffer | undefined {
   if (!run || !(run.dumps ?? []).includes(file)) return undefined
-  return readFileSync(join(runStore(join(store, caseId), run.index).dumps, file))
+  const path = join(runStore(join(store, caseId), run.index).dumps, file)
+  if (!existsSync(path) && existsSync(`${path}${HASHED_DUMP}`)) return undefined
+  return readFileSync(path)
+}
+
+/** What a dump kept as its SHA-256 is written as, beside where its bytes would be: <file>.sha256. */
+export const HASHED_DUMP = '.sha256'
+
+/**
+ * The SHA-256 (hex) of the portable bytes of a dump the goldens keep as its hash alone
+ * (keepGoldens, past GOLDENS_MAX_BYTES), or undefined when the run did not keep it or keeps its
+ * bytes.
+ */
+export function dumpSha256(store: string, caseId: string, run: CaseRecord['runs'][number] | undefined, file: string): string | undefined {
+  if (!run || !(run.dumps ?? []).includes(file)) return undefined
+  const path = `${join(runStore(join(store, caseId), run.index).dumps, file)}${HASHED_DUMP}`
+  return existsSync(path) ? readFileSync(path, 'utf8').trim() : undefined
 }
 
 /** A kept dump with its side's paths portable (neutral.ts portableDump, portableRoots). */
@@ -462,7 +539,68 @@ export interface GoldensIndex {
    * Goldens recorded before dumps were kept have none, and certify compares no dumps against them.
    */
   dumps?: DumpClass[]
+  /**
+   * The dumps kept as their SHA-256 alone (<case>/<run>/<file>), each in its run's dumps/ as
+   * <file>.sha256: those of runs outside domain A that would have taken the goldens past
+   * GOLDENS_MAX_BYTES (hashedDumps). None when the goldens fit.
+   */
+  hashedDumps?: string[]
   cases: CaseRecord[]
+}
+
+/** The most the goldens hold before a dump of a run outside domain A is kept as its SHA-256 alone: 8 GiB. */
+export const GOLDENS_MAX_BYTES = 8 * 1024 ** 3
+
+/** The bytes of every file under `dir` (none when it does not exist). */
+function treeBytes(dir: string): number {
+  if (!existsSync(dir)) return 0
+  let total = 0
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name)
+    total += e.isDirectory() ? treeBytes(p) : statSync(p).size
+  }
+  return total
+}
+
+/**
+ * The dumps of a pass's runs that the goldens keep as their SHA-256 alone (see the top of this
+ * file), as { case, run, dump }: none when the pass's store (every output and dump) fits in
+ * `maxBytes`. Otherwise the outputs and the dumps of the runs of domain A count first, as they are
+ * always kept whole; then each dump of a run outside domain A (`outsideDomainA` of its case), in the
+ * pass's order of cases and runs and each run's dumps sorted, is kept whole while it fits and as its
+ * hash once it would take the goldens past `maxBytes`.
+ */
+export function hashedDumps(o: { pass: Pass; store: string; maxBytes: number; outsideDomainA: (caseId: string) => boolean }): { case: string; run: number; dump: string }[] {
+  if (treeBytes(o.store) <= o.maxBytes) return []
+  const dumpSize = (c: CaseRecord, r: CaseRecord['runs'][number], d: string) => {
+    const p = join(runStore(join(o.store, c.id), r.index).dumps, d)
+    return existsSync(p) ? statSync(p).size : 0
+  }
+  let kept = 0
+  const candidates: { case: string; run: number; dump: string; size: number }[] = []
+  for (const c of o.pass.cases) {
+    kept += treeBytes(join(o.store, c.id))
+    if (!o.outsideDomainA(c.id)) continue
+    for (const r of c.runs) {
+      for (const d of [...(r.dumps ?? [])].sort()) {
+        const size = dumpSize(c, r, d)
+        kept -= size
+        candidates.push({ case: c.id, run: r.index, dump: d, size })
+      }
+    }
+  }
+  const out: { case: string; run: number; dump: string }[] = []
+  for (const x of candidates) {
+    if (kept + x.size <= o.maxBytes) kept += x.size
+    else out.push({ case: x.case, run: x.run, dump: x.dump })
+  }
+  return out
+}
+
+/** Whether a corpus case is outside domain A: one of its families is a marker (corpus.ts MARKER_FAMILIES). */
+export function outsideDomainAOf(doc: Pick<CorpusDocument, 'cases'>): (caseId: string) => boolean {
+  const outside = new Set(doc.cases.filter((c) => c.families.some((f) => MARKER_FAMILIES.includes(f))).map((c) => c.id))
+  return (id) => outside.has(id)
 }
 
 export interface GoldensOracle {
@@ -471,16 +609,58 @@ export interface GoldensOracle {
   cli: string
 }
 
-/** Keeps a pass's store as the goldens: <goldens>/cases/<case>/<n>/ (its dumps/ too) and <goldens>/goldens.json. */
-export function keepGoldens(o: { pass: Pass; store: string; goldens: string; corpusSha256: string; root: string; resources: string; work: string; oracle: GoldensOracle; dumps?: DumpClass[] }): GoldensIndex {
+/**
+ * Keeps a pass's store as the goldens: <goldens>/cases/<case>/<n>/ (its dumps/ too) and
+ * <goldens>/goldens.json. Past `maxBytes` (GOLDENS_MAX_BYTES), the dumps hashedDumps names are kept
+ * as <file>.sha256, the SHA-256 of their portable bytes (portableDump with the goldens' roots), and
+ * listed in GoldensIndex.hashedDumps; the pass's store keeps their bytes. `outsideDomainA` tells a
+ * case outside domain A, by default from the repository's parity/corpus.json.
+ */
+export function keepGoldens(o: {
+  pass: Pass
+  store: string
+  goldens: string
+  corpusSha256: string
+  root: string
+  resources: string
+  work: string
+  oracle: GoldensOracle
+  dumps?: DumpClass[]
+  maxBytes?: number
+  outsideDomainA?: (caseId: string) => boolean
+}): GoldensIndex {
   rmSync(o.goldens, { recursive: true, force: true })
   const cases = join(o.goldens, 'cases')
   mkdirSync(cases, { recursive: true })
   for (const c of o.pass.cases) if (existsSync(join(o.store, c.id))) copyTree(join(o.store, c.id), join(cases, c.id), undefined, { link: true })
-  const index: GoldensIndex = { format: GOLDENS_FORMAT, pass: o.pass.label, knobs: o.pass.knobs, corpusSha256: o.corpusSha256, root: o.root, resources: o.resources, work: o.work, oracle: o.oracle, ...(o.dumps ? { dumps: o.dumps } : {}), cases: o.pass.cases }
+  const outside = o.outsideDomainA ?? ((id: string) => outsideDomainAOf(readCorpus(corpusFile(REPOSITORY)))(id))
+  const hashed = hashedDumps({ pass: o.pass, store: o.store, maxBytes: o.maxBytes ?? GOLDENS_MAX_BYTES, outsideDomainA: outside })
+  for (const h of hashed) {
+    const run = o.pass.cases.find((c) => c.id === h.case)?.runs.find((r) => r.index === h.run)
+    const bytes = portableDump(dumpBytes(o.store, h.case, run, h.dump), portableRoots({ root: o.root, caseId: h.case, resources: o.resources, work: o.work }))!
+    const at = join(runStore(join(cases, h.case), h.run).dumps, h.dump)
+    rmSync(at, { force: true })
+    writeFileSync(`${at}${HASHED_DUMP}`, `${sha256Bytes(bytes)}\n`)
+  }
+  const index: GoldensIndex = {
+    format: GOLDENS_FORMAT,
+    pass: o.pass.label,
+    knobs: o.pass.knobs,
+    corpusSha256: o.corpusSha256,
+    root: o.root,
+    resources: o.resources,
+    work: o.work,
+    oracle: o.oracle,
+    ...(o.dumps ? { dumps: o.dumps } : {}),
+    ...(hashed.length > 0 ? { hashedDumps: hashed.map((h) => `${h.case}/${h.run}/${h.dump}`) } : {}),
+    cases: o.pass.cases,
+  }
   writeJsonAtomic(join(o.goldens, 'goldens.json'), index)
   return index
 }
+
+/** This checkout: scripts/lib/parity/ is three folders below it. */
+const REPOSITORY = join(import.meta.dir, '..', '..', '..')
 
 export function readGoldens(goldens: string): GoldensIndex {
   const f = join(goldens, 'goldens.json')

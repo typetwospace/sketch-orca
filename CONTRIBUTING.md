@@ -48,7 +48,12 @@ The maintainers follow these rules for their own changes:
     file or with a prebuilt library (`scripts/lib/rust.ts` `vendoredProblems`).
   - The version moves in three places at once: `package.json`, `cli/CMakeLists.txt`
     (`SKETCH_ORCA_VERSION`) and `Cargo.toml`'s workspace version, with `Cargo.lock`'s `orca-*`
-    entries following (`test/repo.test.ts` checks the three agree).
+    entries following (`test/repo.test.ts` checks the three agree). A new version changes `cli/`,
+    so it runs the whole chain again, in `BUILDING.md`'s order ("The chain for an engine
+    version"), before `parity certify` takes the goldens.
+  - A change to the corpus (`scripts/lib/parity/corpus.ts`, `parity/corpus.json`) is followed by
+    `bun run engine parity record` before `parity certify --check`: the new cases have no goldens
+    until then, and `parity/parity.json` lists the corpus's families only as `record` writes it.
   - Every `.rs` file starts with the same nine-line copyright and licence header as `cli/*.cpp`
     (`test/repo.test.ts` checks it, and the same for the `.cpp` and `.hpp` files of
     `parity/oracle/`).

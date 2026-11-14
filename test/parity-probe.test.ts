@@ -4,8 +4,10 @@
 // build.ninja and turned into the probes' response files, their configure line (Ninja, no
 // Fortran) and build line, running them and comparing two runs, the per-file budgets; and the
 // committed probe files themselves (parity/probes/): SOP1 files that start with the probe's HEAD
-// and PRUN, a configdef.json, each within its budget. Hermetic: temporary folders, a fake probe
-// process and the committed files only.
+// and PRUN, a configdef.json, each within its budget. From phase O3 (2026-11-13) also the nine O3
+// entries with their owners and kind prefixes, and the kind rule (probeKindProblems) on the real
+// pages (parity/SOP1.md with parity/sop1/*.md) and committed files and on made-up ones, each
+// refused. Hermetic: temporary folders, a fake probe process and the committed files only.
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -18,9 +20,12 @@ import {
   committedSizeProblems,
   CRT_MATHS_NAMES,
   crtMathsSymbols,
+  fileKinds,
   isDroppedCompileFlag,
   ninjaBuildVars,
   ninjaUnescape,
+  pageKinds,
+  probe,
   PROBE_COMMITTED_MAX_BYTES,
   PROBE_FILE_MAX_BYTES,
   PROBE_FILES,
@@ -31,14 +36,18 @@ import {
   probeConfigureArgs,
   probeDifferences,
   probeExe,
+  probeKindProblems,
   probeLinkArgs,
+  probePage,
   probeSelection,
   probeSourceDir,
   probeTarget,
   rspText,
   runProbe,
+  sop1Pages,
   splitArgs,
   type ProbeEntry,
+  type Sop1Page,
 } from '../scripts/lib/parity/probe.ts'
 import { UsageError } from '../scripts/lib/run.ts'
 import type { RunProcess } from '../scripts/lib/parity/same.ts'
@@ -54,16 +63,32 @@ afterEach(() => rmSync(work, { recursive: true, force: true }))
 const entry = (name: string): ProbeEntry => PROBE_REGISTRY.find((e) => e.name === name)!
 
 describe('the registry', () => {
-  test('one probe per file: the five foundation files of O1 and the nine files of phase O2, each with its task', () => {
-    expect(PROBE_REGISTRY.map((e) => e.name)).toEqual(['crt', 'fmt', 'stl', 'tbb', 'configdef', 'geom', 'qhull', 'mesh', 'cstdio', 'zip', 'xml', 'model', 'arrange', 'placeholder'])
+  test('one probe per file: the five foundation files of O1, the ten files of phase O2 and the nine of phase O3, each with its task', () => {
+    expect(PROBE_REGISTRY.map((e) => e.name)).toEqual([
+      'crt', 'fmt', 'stl', 'tbb', 'configdef', 'geom', 'qhull', 'mesh', 'cstdio', 'zip', 'xml', 'ptree', 'model', 'arrange', 'placeholder',
+      'layer', 'index', 'paths', 'slice', 'voronoi', 'arachne', 'walls', 'surfaces', 'fill',
+    ])
     expect(PROBE_FILES).toEqual(PROBE_REGISTRY.map((e) => e.file))
     expect(new Set(PROBE_FILES).size).toBe(PROBE_FILES.length)
     for (const e of PROBE_REGISTRY) expect(e.file).toBe(e.name === 'configdef' ? 'configdef.json' : `${e.name}.sop1`)
     const owners = Object.fromEntries(PROBE_REGISTRY.map((e) => [e.name, e.owner]))
     expect(owners).toEqual({
       crt: 'O1', fmt: 'O1', stl: 'O1', tbb: 'O1', configdef: 'O1',
-      geom: 'o2-geom', qhull: 'o2-mesh', mesh: 'o2-mesh', cstdio: 'o2-mesh', zip: 'o2-model', xml: 'o2-model', model: 'o2-model', arrange: 'o2-arrange', placeholder: 'o2-front',
+      geom: 'o2-geom', qhull: 'o2-mesh', mesh: 'o2-mesh', cstdio: 'o2-mesh', zip: 'o2-model', xml: 'o2-model', ptree: 'orca-ptree-probe', model: 'o2-model', arrange: 'o2-arrange', placeholder: 'o2-front',
+      layer: 'orca-o3-probe-layer', index: 'orca-o3-probe-index', paths: 'orca-o3-probe-paths', slice: 'orca-o3-probe-slice', voronoi: 'orca-o3-probe-voronoi',
+      arachne: 'orca-o3-probe-arachne', walls: 'orca-o3-probe-walls', surfaces: 'orca-o3-probe-surfaces', fill: 'orca-o3-probe-fill',
     })
+  })
+
+  test('phase O3\'s probes each have a kind prefix and a file of their own under scripts/lib/parity/probes/; the O1 and O2 entries have none', () => {
+    const prefixes = Object.fromEntries(PROBE_REGISTRY.filter((e) => e.kindPrefix !== undefined).map((e) => [e.name, e.kindPrefix]))
+    expect(prefixes).toEqual({ layer: 'LY', index: 'IX', paths: 'PS', slice: 'SL', voronoi: 'VR', arachne: 'AN', walls: 'WL', surfaces: 'SF', fill: 'FL' })
+    for (const e of PROBE_REGISTRY.slice(0, 15)) expect({ name: e.name, keys: Object.keys(e).includes('kindPrefix') }).toEqual({ name: e.name, keys: false })
+    for (const name of Object.keys(prefixes)) {
+      const source = readFileSync(join(ROOT, 'scripts', 'lib', 'parity', 'probes', `${name}.ts`), 'utf8')
+      expect({ name, entry: source.includes(`probe('${name}', 'orca-o3-probe-${name}', { budget: PROBE_FILE_MAX_BYTES, file: '${name}.sop1', crtSymbols: false, kindPrefix: '${prefixes[name]}' })`) }).toEqual({ name, entry: true })
+    }
+    expect(probe('x', 'o')).toEqual({ name: 'x', file: 'x.sop1', budget: PROBE_FILE_MAX_BYTES, crtSymbols: false, owner: 'o' })
   })
 
   test('the foundation files share the 8 MB budget; every other file has 512 KB of its own; only crt takes the map\'s symbols', () => {
@@ -79,7 +104,7 @@ describe('the registry', () => {
     expect(probeSelection()).toEqual([...PROBE_REGISTRY])
     expect(probeSelection('geom')).toEqual([entry('geom')])
     expect(() => probeSelection('nope')).toThrow(UsageError)
-    expect(() => probeSelection('nope')).toThrow(/no such probe \(crt, fmt, .*placeholder\)/)
+    expect(() => probeSelection('nope')).toThrow(/no such probe \(crt, fmt, .*placeholder, layer, index, paths, slice, voronoi, arachne, walls, surfaces, fill\)/)
   })
 
   test('the command line: --check and --only <name>, with and without each other; nothing else', () => {
@@ -110,6 +135,73 @@ describe('the registry', () => {
       const source = readFileSync(join(dir, `${e.name}.cpp`), 'utf8')
       expect({ name: e.name, target: source.includes(`static const Target t{"${e.name}", ${e.crtSymbols}, `) || source.includes(`static const probe::Target t{"${e.name}", ${e.crtSymbols}, `) }).toEqual({ name: e.name, target: true })
     }
+  })
+})
+
+describe('the kind rule of phase O3\'s probes', () => {
+  /** An SOP1 file of these kinds, each with an empty payload, ended with END. */
+  const sop1File = (kinds: string[]): Buffer => {
+    const parts = [Buffer.from('SOP1', 'latin1'), Buffer.from([1, 0, 0, 0])]
+    for (const k of kinds) {
+      const len = Buffer.alloc(8)
+      parts.push(Buffer.from(k.padEnd(4), 'latin1'), len)
+    }
+    const end = Buffer.alloc(8)
+    end.writeBigUInt64LE(BigInt(kinds.length))
+    const endLen = Buffer.alloc(8)
+    endLen.writeBigUInt64LE(8n)
+    parts.push(Buffer.from('END ', 'latin1'), endLen, end)
+    return Buffer.concat(parts)
+  }
+  const layer = probe('layer', 'orca-o3-probe-layer', { kindPrefix: 'LY' })
+  const index = probe('index', 'orca-o3-probe-index', { kindPrefix: 'IX' })
+  const pages = (extra: Record<string, string> = {}): Sop1Page[] => [
+    { name: 'SOP1.md', text: '# SOP1\n\n### HEAD\n\n### RUN\n\n### MATH\n\n### HEAD in a probe file\n\n### PRUN\n' },
+    { name: 'sop1/layer.md', text: '# layer.sop1\n\n### LYAA\n\n`u32` a value.\n' },
+    { name: 'sop1/index.md', text: '# index.sop1\n' },
+    ...Object.entries(extra).map(([name, text]) => ({ name, text })),
+  ]
+  const good = { 'layer.sop1': sop1File(['HEAD', 'PRUN', 'LYAA', 'LYAA']), 'index.sop1': sop1File(['HEAD', 'PRUN']) }
+
+  test('the pages\' kinds are their ### headings of three or four capitals; a file\'s kinds leave out HEAD, PRUN and END', () => {
+    expect(pageKinds(pages()[0]!.text)).toEqual(['HEAD', 'RUN', 'MATH', 'PRUN'])
+    expect(fileKinds(good['layer.sop1'])).toEqual(['LYAA'])
+    expect(fileKinds(good['index.sop1'])).toEqual([])
+    expect(probePage('layer')).toBe('sop1/layer.md')
+  })
+
+  test('passes on distinct prefixes, kinds on their own pages and empty probes', () => {
+    expect(probeKindProblems({ pages: pages(), entries: [entry('crt'), layer, index], files: good })).toEqual([])
+  })
+
+  test('refuses a kind two pages define', () => {
+    const p = pages()
+    p[2] = { name: 'sop1/index.md', text: '# index.sop1\n\n### LYAA\n' }
+    expect(probeKindProblems({ pages: p, entries: [layer, index], files: good })).toEqual(['the kind LYAA is defined on 2 pages: sop1/layer.md, sop1/index.md'])
+    expect(probeKindProblems({ pages: pages({ 'sop1/x.md': '### MATH\n' }), entries: [layer, index], files: good })).toEqual(['the kind MATH is defined on 2 pages: SOP1.md, sop1/x.md'])
+  })
+
+  test('refuses a committed kind no page defines, or one on another page', () => {
+    const files = { ...good, 'layer.sop1': sop1File(['HEAD', 'PRUN', 'LYAA', 'LYBB']) }
+    expect(probeKindProblems({ pages: pages(), entries: [layer, index], files })).toEqual(['layer.sop1 holds the kind LYBB, which has no ### LYBB section on its page parity/sop1/layer.md'])
+    const elsewhere = pages({ 'sop1/other.md': '### LYBB\n' })
+    expect(probeKindProblems({ pages: elsewhere, entries: [layer, index], files })).toEqual(['layer.sop1 holds the kind LYBB, which has no ### LYBB section on its page parity/sop1/layer.md'])
+  })
+
+  test('refuses a prefix two probes share', () => {
+    const twin = probe('index', 'orca-o3-probe-index', { kindPrefix: 'LY' })
+    expect(probeKindProblems({ pages: pages(), entries: [layer, twin], files: good })).toEqual(['the kind prefix LY is shared by the probes layer, index'])
+  })
+
+  test('refuses a kind without its probe\'s prefix, and a kind of SOP1.md that starts with a prefix', () => {
+    const files = { ...good, 'index.sop1': sop1File(['HEAD', 'PRUN', 'LYAA']) }
+    expect(probeKindProblems({ pages: pages(), entries: [layer, index], files })).toEqual([
+      'index.sop1 holds the kind LYAA, which does not start with its prefix IX',
+      'index.sop1 holds the kind LYAA, which has no ### LYAA section on its page parity/sop1/index.md',
+    ])
+    const p = pages()
+    p[0] = { name: 'SOP1.md', text: '### HEAD\n\n### IXQQ\n' }
+    expect(probeKindProblems({ pages: p, entries: [layer, index], files: good })).toEqual(['the kind IXQQ of SOP1.md starts with the prefix IX of the probe index'])
   })
 })
 
@@ -306,14 +398,15 @@ describe('the committed probe files', () => {
     expect(committedSizeProblems(dir)).toEqual([])
   })
 
-  test('each SOP1 file reads whole and starts with the probe\'s HEAD and PRUN for the committed set; every record kind is in SOP1.md', () => {
+  test('each SOP1 file reads whole and starts with the probe\'s HEAD and PRUN for the committed set; every record kind is in SOP1.md or the pages of parity/sop1/', () => {
     const foundations: Record<string, string[]> = {
       'crt.sop1': ['MATH', 'MATS', 'CAST', 'RAND', 'QSRT'],
       'fmt.sop1': ['PRTF', 'TOCH', 'OSTR', 'TOST', 'PARS'],
       'stl.sop1': ['SORT', 'VALS', 'HASH', 'UMAP', 'USET', 'RNGS', 'SSEQ', 'SHUF'],
       'tbb.sop1': ['TBBA', 'TBBF', 'TBBR', 'TBBO'],
     }
-    const sop1 = readFileSync(join(ROOT, 'parity', 'SOP1.md'), 'utf8')
+    // SOP1.md with parity/sop1/*.md, where phase O3's probes define their kinds.
+    const sop1 = sop1Pages(ROOT).map((p) => p.text).join('\n')
     for (const e of PROBE_REGISTRY.filter((x) => x.file.endsWith('.sop1'))) {
       const { records } = readSop1(readFileSync(join(dir, e.file)))
       expect(records[0]!.kind).toBe('HEAD')
@@ -330,6 +423,19 @@ describe('the committed probe files', () => {
       if (foundations[e.file]) expect(kinds).toEqual([...foundations[e.file]!].sort())
       for (const k of kinds) expect({ file: e.file, kind: k, documented: sop1.includes(`### ${k}`) }).toEqual({ file: e.file, kind: k, documented: true })
       expect({ file: e.file, inTable: sop1.includes(`\`${e.file}\``) }).toEqual({ file: e.file, inTable: true })
+    }
+  })
+
+  test('the kind rule holds on the pages and the committed files; each O3 probe has its page and a row in the Probe files table', () => {
+    const pages = sop1Pages(ROOT)
+    expect(pages[0]!.name).toBe('SOP1.md')
+    const files = Object.fromEntries(PROBE_REGISTRY.filter((e) => e.file.endsWith('.sop1')).map((e) => [e.file, readFileSync(join(dir, e.file))]))
+    expect(probeKindProblems({ pages, entries: PROBE_REGISTRY, files })).toEqual([])
+    const table = pages[0]!.text.slice(pages[0]!.text.indexOf('## Probe files'))
+    for (const e of PROBE_REGISTRY.filter((x) => x.kindPrefix !== undefined)) {
+      const page = pages.find((p) => p.name === probePage(e.name))
+      expect({ name: e.name, page: page?.text.startsWith(`# ${e.file}\n`) }).toEqual({ name: e.name, page: true })
+      expect({ name: e.name, row: table.includes(`| \`${e.file}\` | ${e.owner} | kinds starting ${e.kindPrefix}, on \`parity/${probePage(e.name)}\``) }).toEqual({ name: e.name, row: true })
     }
   })
 

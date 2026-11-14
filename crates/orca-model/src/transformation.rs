@@ -11,7 +11,9 @@
 // Carries OrcaSlicer code: class Slic3r::Geometry::Transformation of src/libslic3r/Geometry.hpp
 // and Geometry.cpp (extract_rotation_matrix, extract_scale, extract_rotation_scale, the getters
 // and setters of the offset, rotation, scaling factor and mirror, get_matrix_no_offset and the
-// product) and transform3d_from_string, of OrcaSlicer v2.4.2, translated on 2026-11-07. Copyright
+// product) and transform3d_from_string, of OrcaSlicer v2.4.2, translated on 2026-11-07, and
+// Transformation::get_matrix_with_applied_shrinkage_compensation (Geometry.cpp:654-667),
+// translated on 2026-11-13 by orca-o3-front-2. Copyright
 // the OrcaSlicer authors, the BambuStudio authors (Bambu Lab) and the PrusaSlicer authors (Prusa
 // Research), under the GNU Affero General Public License, version 3 (AGPL-3.0; LICENSE).
 
@@ -290,6 +292,30 @@ impl Transformation {
     /// `set_matrix(transform)`.
     pub fn set_matrix(&mut self, transform: &Transform3d) {
         self.m_matrix = *transform;
+    }
+
+    /// `get_matrix_with_applied_shrinkage_compensation(shrinkage_compensation)` (Orca's take on
+    /// Prusa's filament shrinkage compensation, `Geometry.cpp:654-667`): the matrix with its x and
+    /// y offsets set to 0, scaled by the compensation from the left, then the x and y offsets added
+    /// back to its translation (z gets `+ 0.`, which turns a -0 into +0, as Eigen's `+=` does).
+    #[must_use]
+    pub fn get_matrix_with_applied_shrinkage_compensation(
+        &self,
+        shrinkage_compensation: &Vec3d,
+    ) -> Transform3d {
+        let shrinkage_trafo = scale_transform(shrinkage_compensation);
+        let trafo_offset = self.get_offset();
+        let trafo_offset_xy = Vec3d::new(trafo_offset.x(), trafo_offset.y(), 0.0);
+
+        let mut copy = *self;
+        copy.set_offset_axis(X, 0.0);
+        copy.set_offset_axis(Y, 0.0);
+
+        let mut trafo_after_shrinkage = shrinkage_trafo.mul(copy.get_matrix());
+        let translation = trafo_after_shrinkage.translation() + trafo_offset_xy;
+        trafo_after_shrinkage.set_translation(&translation);
+
+        trafo_after_shrinkage
     }
 
     /// `operator *`: the product of the matrices.

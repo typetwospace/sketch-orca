@@ -11,18 +11,24 @@ The probe gate is the crates' `tests/probes.rs`, which replay every record of th
 | Test | File | Records |
 | --- | --- | --- |
 | `crates/orca-crt/tests/probes.rs` | `crt.sop1` | MATH (with FMA3 on and off), MATS, CAST, RAND, QSRT (every comparator call of `qsort`) |
-| `crates/orca-fmt/tests/probes.rs` | `fmt.sop1` | PRTF, TOCH, OSTR, TOST, PARS |
+| `crates/orca-fmt/tests/probes.rs` | `fmt.sop1`, `cstdio.sop1` | PRTF, TOCH, OSTR, TOST, PARS; CSCN, CFIL |
 | `crates/orca-stl/tests/probes.rs` | `stl.sop1` | SORT (every comparator call), VALS, HASH, UMAP, USET, RNGS, SSEQ, SHUF |
 | `crates/orca-tbb/tests/probes.rs` | `tbb.sop1` | TBBA, TBBF, TBBR, TBBO, in serial arenas of each recorded P |
 | `crates/orca-eigen/tests/probes.rs` | `geom.sop1` | EVEC, EMAT, ETRF, EROT, ESVD |
-| `crates/orca-geom/tests/probes.rs` | `geom.sop1` | CCLP, COFF, CARE, CCLN, CSIM, CMNK, CINT |
-| `crates/orca-qhull/tests/probes.rs` | `qhull.sop1` | none yet: a stub until o2-mesh records there |
-| `crates/orca-mesh/tests/probes.rs` | `mesh.sop1`, `cstdio.sop1` | none yet: stubs until o2-mesh records there |
-| `crates/orca-zip/tests/probes.rs`, `crates/orca-xml/tests/probes.rs`, `crates/orca-model/tests/probes.rs` | `zip.sop1`, `xml.sop1`, `model.sop1` | none yet: stubs until o2-model records there |
-| `crates/orca-exact/tests/probes.rs`, `crates/orca-arrange/tests/probes.rs` | `arrange.sop1` | none yet: a stub until o2-arrange records there |
-| `crates/orca-placeholder/tests/probes.rs` | `placeholder.sop1` | none yet: a stub until o2-front records there |
+| `crates/orca-geom/tests/probes.rs` | `geom.sop1` | CCLP, COFF, CARE, CCLN, CSIM, CMNK, CINT, GPNT, GPLY, GCLU, GXFM |
+| `crates/orca-qhull/tests/probes.rs` | `qhull.sop1` | QHUL |
+| `crates/orca-mesh/tests/probes.rs` | `mesh.sop1`, `qhull.sop1` | MCAS, MSTD (the full set only); QHUL |
+| `crates/orca-zip/tests/probes.rs` | `zip.sop1` | ZCRC, ZINF, ZARC, ZERR |
+| `crates/orca-xml/tests/probes.rs` | `xml.sop1` | XPRS, XERR |
+| `crates/orca-xml/tests/ptree.rs` | `ptree.sop1` | PTXR, PTGT |
+| `crates/orca-model/tests/probes.rs` | `model.sop1` | MXFM, MFAC, MCFG, MCIR, MBVL, MLOD, M3MF, MARP, MTMP |
+| `crates/orca-exact/tests/probes.rs` | `arrange.sop1` | XI28, XRAT |
+| `crates/orca-arrange/tests/probes.rs` | `arrange.sop1` | XI28, XRAT, NLOP, NOPT, RTRE, NFPC, NGEO, ARNG |
+| `crates/orca-placeholder/tests/probes.rs` | `placeholder.sop1` | PHCF, PHEV |
 
-Phase O2's files (2026-11-07) are stubs, HEAD and PRUN only, until the task that fills each records there; its crates' probe tests fail as soon as the file holds a record they do not replay, so no record goes unreplayed. The orca-probe unit test reads the HEAD and PRUN of every committed file.
+Phase O2's files began (2026-11-07) as stubs, HEAD and PRUN only; the tasks that ported each part recorded there (o2-mesh, o2-model, o2-arrange, o2-front), and every committed file now holds its records (2026-11-10). A crate's probe test fails as soon as its file holds a record it does not replay, so no record goes unreplayed. The orca-probe unit test reads the HEAD and PRUN of every committed file of O1 and O2.
+
+Phase O3's nine probe files (`layer`, `index`, `paths`, `slice`, `voronoi`, `arachne`, `walls`, `surfaces` and `fill`, 2026-11-13) began as stubs too, each owned by the probe unit that records it (`orca-o3-probe-<name>`). Each probe keeps to files of its own so that the nine record side by side: its registry entry `scripts/lib/parity/probes/<name>.ts` (with its kind prefix), its program `parity/oracle/probe/<name>.cpp` (and a folder `<name>/` beside it), its committed file `parity/probes/<name>.sop1`, and its page `parity/sop1/<name>.md`, where its record kinds are specified instead of `parity/SOP1.md`. The crates that replay them (`orca-config`, `orca-model`, `orca-geom` and the O3 crates; each O3 crate's `README.md` names its file) add their `tests/probes.rs` with the pieces that fill them.
 
 ```
 bun run rs:test -p orca-crt -p orca-fmt -p orca-stl -p orca-tbb
@@ -44,4 +50,4 @@ repository's `README.md`, `BUILDING.md` and `CONTRIBUTING.md`). Licence: AGPL-3.
 
 ## Dependencies
 
-None. It is a development dependency of `orca-crt`, `orca-fmt`, `orca-stl` and `orca-tbb`, of phase O2's ten crates, and a dependency of `orca-cli`.
+None. It is a development dependency of `orca-crt`, `orca-fmt`, `orca-stl` and `orca-tbb`, of phase O2's ten crates and phase O3's thirteen, and a dependency of `orca-cli`.

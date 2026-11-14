@@ -122,15 +122,17 @@ gh release view v<version> --repo typetwospace/sketch-orca --json tagName,isDraf
 
 `--target` takes only a full commit hash; a short one fails with HTTP 422 `Release.target_commitish
 is invalid`. The source zip goes in the same release as the engine (*Source offer*), and `parity
-reference` expects these asset names (`scripts/lib/parity/reference.ts`). Sketch's dev builds
-accept both sketch-orca 0.1.0 (stage layout 3) and 0.2.0 (layout 4) from the default work
-folder's `dist\engine` (`%LOCALAPPDATA%\SketchDev\orca-engine`) through sketch-slicer's accepted
-pairs (`findEngine`), so a release built there replaces the engine a dev Sketch runs. Release
-builds of Sketch accept only the release they download (0.1.0). A new engine version or stage
-layout needs a new accepted pair in Sketch (sketch-slicer's README), not just a raised
-`ENGINE_STAGE_VERSION`. To keep a dev Sketch on its engine while a release is built, give the
-release a work folder of its own with `SKETCH_ORCA_HOME`. Sketch finds releases on GitHub
-through `SKETCH_ORCA_REPOSITORY` (sketch-slicer).
+reference` expects these asset names (`scripts/lib/parity/reference.ts`). Sketch's dev builds accept
+sketch-orca 0.1.0 (stage layout 3), 0.2.0 and, since 2026-11-12, 0.3.0 (both layout 4) from the
+default work folder's `dist\engine` (`%LOCALAPPDATA%\SketchDev\orca-engine`) through sketch-slicer's
+accepted pairs (`findEngine`), so a release built there replaces the engine a dev Sketch runs. A dev
+Sketch started before its list took 0.3.0 keeps the old list, and so does not take a staged 0.3.0
+until it is restarted (*Restaging the engine a dev Sketch runs*). Release builds of Sketch accept
+only the release they download (0.1.0). A new engine version or stage layout needs a new accepted
+pair in Sketch (sketch-slicer's README), not just a raised `ENGINE_STAGE_VERSION`. To keep a dev
+Sketch on its engine while a release is built, give the release a work folder of its own with
+`SKETCH_ORCA_HOME`. Sketch finds releases on GitHub through `SKETCH_ORCA_REPOSITORY`
+(sketch-slicer).
 
 ## The Rust translation
 
@@ -171,24 +173,41 @@ What `sketch-orca-rs` answers so far (`crates/orca-cli/README.md`):
   in the corpus yet: the thumbnails' internal error, and `setting-invalid` for a resin setting,
   filament colours, the flushing matrix's size and a per-filament override's count
   (`crates/orca-cli/src/presets.rs`); they are translated from `cli/presets.cpp` but not yet held
-  to a C++ run. A refusal the C++ program makes from the reading of the model on (a model it
-  cannot read or that is bigger than the bed) belongs to a step that is not certified, so that job
-  gets `not-ported` below instead, until its family is. A preset with a compatibility condition
-  has it worked out by `orca-placeholder` as Orca works it out (2026-11-07), with Orca's messages
-  for a condition that does not parse; the job then reaches the family `preset-conditions`, and a
-  condition past what the parser takes is declined in the presets stage, naming it.
-- The decline: a job that gets past the model's file and reaches a step `parity/parity.json` does
-  not certify, which for now is every `info`, `layers` and `slice` job, gets `not-ported`, exit -8
-  (the class of `unsupported`; 248 as a low byte) and `missing`, the steps (`protocol/README.md`,
+  to a C++ run. A preset with a compatibility condition has it worked out by `orca-placeholder`
+  as Orca works it out (2026-11-07), with Orca's messages for a condition that does not parse;
+  the job then reaches the family `preset-conditions`, and a condition past what the parser takes
+  is declined in the presets stage, naming it.
+- The model stage (2026-11-11), as `cli/run.cpp` does it: the model read by orca-model
+  (`model-unreadable` for one it cannot read), the objects the job lists checked, and for a
+  `layers` or `slice` job each part Orca prints checked to enclose a volume, with the C++
+  program's results and log lines (`crates/orca-cli/tests/info.rs`). An `info` job is answered
+  there, whole.
+- The placement of a `layers` or `slice` job (2026-11-11), as `cli/run.cpp` does it up to the
+  front-objects boundary: each object's overrides and height ranges, the custom G-code, the prime
+  tower's place, the arrange and the build volume check, with the C++ program's refusals
+  (`setting-invalid`, `custom-gcode-invalid`, `unsupported`, `config-invalid`, `arrange-failed`,
+  `temperature-difference`, `not-printable`, `empty-plate`). `crates/orca-cli/tests/place.rs`
+  holds those refusals to C++ runs, and the placed objects to the oracle's front-objects dumps
+  byte for byte.
+- The decline: a `layers` or `slice` job is declined once its objects are placed, as slicing is
+  not ported: `not-ported`, exit -8 (the class of `unsupported`; 248 as a low byte) and
+  `missing`, the steps past the placement that are not done (`protocol/README.md`,
   `protocol/examples/result-not-ported.json`). The steps a slice reaches include those its
   settings turn on (supports, ironing, fuzzy skin, each infill pattern, the prime tower and the
   rest), read from its overrides, its objects' and its presets as the corpus reads them; presets
-  it cannot read count as every such step (`crates/orca-cli/README.md`). It comes before any
-  output is written (only the work folder is made, as the C++ makes it); outputs are written under
-  temporary names and renamed only on success, so nothing is left behind.
+  it cannot read count as every such step (`crates/orca-cli/README.md`). A job that orients its
+  objects is declined where orientation would start, naming `orient`. The decline comes before
+  any output is written (only the work folder is made, with a 3MF's backup folder in it, as the
+  C++ makes them); outputs are written under temporary names and renamed only on success, so
+  nothing is left behind.
+- The oracle's parity knobs (`SKETCH_ORCA_ORACLE_*`, `parity/oracle/README.md`), for parity work
+  only: read as the oracle reads them, with its refusals (exit 78), and with
+  `SKETCH_ORCA_ORACLE_DUMP` set the front-objects dump the oracle writes
+  (`crates/orca-cli/README.md`). With no knob set, nothing changes.
 - A crash (a panic, an unhandled exception, `abort`) writes the C++ program's `internal-error`
   result, and the process ends with -1; `SKETCH_ORCA_TEST_CRASH` triggers one as in the C++, at
-  the stages `job`, `presets` and `model`.
+  the stages `job`, `presets` and `model`, `orient` for a job that orients its objects, and
+  `arrange` for a `layers` or `slice` job that arranges them.
 
 `bun scripts/orca.ts parity certify` runs every corpus case with `target/debug/sketch-orca-rs.exe`
 (build it first with `bun run rs:build`) and compares it with the goldens: results as JSON values,
@@ -196,11 +215,14 @@ every other output byte for byte, an output that varies between the engine's own
 variance. It raises the certified families in `parity/parity.json` and never lowers them;
 `--check` writes nothing there and fails on a regression. A family passes only when every run of
 it gives what the C++ gave: a declined run never passes one, and a run declined although the C++
-run ended within what `sketch-orca-rs` does itself (no stage past the presets, or a missing model
-file) is wrong in itself. Both fail when a run of a corpus job, example or refusal that reaches an
-uncertified family is not declined naming it, and both refuse goldens that were not recorded with
-the oracle of this checkout's `cli/` after a passing `parity neutral`.
-`version`, `config-def` and `intake` are certified (`parity/README.md`).
+run ended within what `sketch-orca-rs` does itself (no stage past the job, the presets, the model
+and the placement: `endedWithinRust` of `scripts/lib/smoke.ts`) is wrong in itself. Both fail
+when a run of a corpus job, example or refusal that reaches an uncertified family is not declined
+naming it, and both refuse goldens that were not recorded with the oracle of this checkout's
+`cli/` after a passing `parity neutral`.
+`version`, `config-def`, `intake`, `preset-conditions`, `model-load`, `placement` and `info` are
+certified (`parity/README.md`; the last four by 0.3.0's program on 2026-11-12, after the chain of
+`BUILDING.md`, "The chain for an engine version"). `orient` is listed and its cases declined.
 
 One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,
 `.cargo/config.toml`, `rustfmt.toml`, `clippy.toml`). Its crates, each with a README of its own:
@@ -214,23 +236,42 @@ One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.tom
 | `orca-probe` | Reads the probe files (SOP1) the probe programs record, for the probe gate: each crate above has a `tests/probes.rs` that replays every record of its file, the committed subset by default and the full set with `SKETCH_ORCA_PROBES_DEEP=<work>/parity/probes`. |
 | `orca-json` | JSON with `nlohmann::json`'s semantics: parsing with its errors, the key order of `json` and of `ordered_json`, and `dump` with nlohmann's own number output. |
 | `orca-config` | Orca's configuration: every option's `ConfigOptionDef`, generated from the configdef probe; the option values with `ConfigOption`'s serialisation and deserialisation; `handle_legacy`. |
-| `orca-cli` | The program, `sketch-orca-rs`. |
+| `orca-cli` | The program, `sketch-orca-rs`: the commands, the job, the presets stage, and from 0.3.0 the model stage, the info answer, the placement and the parity knobs. |
 | `orca-eigen` | Phase O2: the Eigen 5.0.1 operations libslic3r's geometry reaches, evaluated as MSVC compiles them (o2-geom). |
 | `orca-geom` | Phase O2: Clipper 6.4.2, `ClipperUtils` and libslic3r's points, lines, polygons, ExPolygons, boxes, convex hulls and the `Geometry` predicates and transform builders (o2-geom; `Geometry::Transformation` comes with the task that first needs it). |
 | `orca-exact` | Phase O2: Boost's signed-magnitude `int128_t` and `rational`, which arrangement computes with, down to the exceptions of the wrapped Lehmer gcd, proven by `arrange.sop1`'s XI28 and XRAT records (o2-arrange). |
 | `orca-qhull` | Phase O2: Qhull 2015.2 as `its_convex_hull` runs it (`Qt`, with Qhull's default merging), the 3D convex hulls of meshes, proven by `qhull.sop1`'s QHUL records (o2-mesh). |
 | `orca-mesh` | Phase O2: admesh's STL reading and repair and libslic3r's `TriangleMesh` with its statistics, transforms, bounding boxes, split, 2D hull and 3D hull (`its_convex_hull`, on `orca-qhull`), proven by `mesh.sop1`'s MCAS and MSTD records and `qhull.sop1`'s QHUL records (o2-mesh). |
 | `orca-zip` | Phase O2: ZIP archives as miniz 2.1.0 reads them for the 3MF reader (the central directory with ZIP64, `locate_file`, `file_stat`, extraction to memory, a callback or a file, `tinfl` and the CRC-32, `miniz_extension.cpp`), proven by `zip.sop1`'s ZCRC, ZINF, ZARC and ZERR records (o2-model). |
-| `orca-xml` | Phase O2: XML as expat 2.5.0 parses it for the 3MF reader (the tokenizer and its encodings, the prolog with the internal subset's entities and attribute defaults, content, CDATA sections, `XML_Parse` in chunks and `XML_ParseBuffer`, stops, errors with their lines), proven by `xml.sop1`'s XPRS and XERR records (o2-model). |
+| `orca-xml` | Phase O2: XML as expat 2.5.0 parses it for the 3MF reader (the tokenizer and its encodings, the prolog with the internal subset's entities and attribute defaults, content, CDATA sections, `XML_Parse` in chunks and `XML_ParseBuffer`, stops, errors with their lines), proven by `xml.sop1`'s XPRS and XERR records (o2-model); and Boost 1.84's `property_tree` on rapidxml as the 3MF reader's cut information and height ranges use it (`read_xml` with flags 0, `get_child`, `get<T>` through MSVC's `num_get`), proven by `ptree.sop1`'s PTXR and PTGT records (orca-ptree-probe, orca-ptree-port). |
 | `orca-placeholder` | Phase O2: Orca's placeholder parser's boolean expressions, for the presets' compatibility conditions, with `boost::regex` as an MSVC build reads it; `placeholder.sop1` holds every condition of the vendor profiles (o2-front). |
 | `orca-arrange` | Phase O2: arrangement with libnest2d, `Arrange.cpp`, NLopt 2.5.0's subplex and Nelder-Mead and Boost.Geometry's R*-tree, on box, circle, polygon and infinite beds and over several plates, proven by `arrange.sop1`'s NLOP, NOPT, RTRE, NFPC, NGEO and ARNG records (o2-arrange; rotations are not translated, as the command line never rotates). |
-| `orca-model` | Phase O2: `Model::read_from_file` with the STL and OBJ readers, `Model` with its objects, parts and instances, `Transformation`, `ModelConfig`, a part's painting, `BuildVolume` and what the command line does around arrangement, proven by `model.sop1`'s MXFM, MFAC, MCFG, MCIR, MBVL, MLOD, MARP and MTMP records (o2-model); the 3MF reader is still to come. |
+| `orca-model` | Phase O2: `Model::read_from_file` with the STL and OBJ readers, `Model` with its objects, parts and instances, `Transformation`, `ModelConfig`, a part's painting, `BuildVolume` and what the command line does around arrangement, proven by `model.sop1`'s MXFM, MFAC, MCFG, MCIR, MBVL, MLOD, MARP and MTMP records (o2-model); piece 1 of 3 of the 3MF reader (the container, its relationships and the root model, with Semver and the float and int grammars it parses with), proven by `model.sop1`'s M3MF records of piece 1 (orca-3mf-port-1, 2026-11-10); piece 2 (the config entries: `model_settings.config`, the cut information, layer heights, height ranges, brim ears and svg files, with the text and shape configurations and Boost's `lexical_cast<int>`), proven by the M3MF records of piece 2 (orca-3mf-port-2, 2026-11-11); piece 3 (the sub-model files and the assembly into the model: parts with shared meshes, painting, cut information and text and shape configurations, the plates' instances), proven by the M3MF records of piece 3 (orca-3mf-port-3, 2026-11-11), so the 3MF reader is whole. |
+| `orca-index` | Phase O3: libslic3r's spatial indexes, the indirect AABB trees over triangles and lines, the KD tree, the mutable priority queue and EdgeGrid, to be proven by `index.sop1` (filled by orca-o3-index-1 and index-2). |
+| `orca-paths` | Phase O3: libslic3r's `ShortestPath`, the chaining of extrusions, polylines and islands, to be proven by `paths.sop1` (filled by orca-o3-paths-1). |
+| `orca-voronoi` | Phase O3: Boost.Polygon 1.84's Voronoi builder with its robust arithmetic and predicates, and libslic3r's Voronoi utilities, polygon indexes and medial axis, to be proven by `voronoi.sop1` (filled by orca-o3-voronoi-1 to voronoi-4). |
+| `orca-slice` | Phase O3: `TriangleMeshSlicer`, `SlicingParameters`, adaptive slicing and the layer series, to be proven by `slice.sop1` (filled by orca-o3-slice-1 and slice-2). |
+| `orca-layer` | Phase O3: extrusion entities, `Flow`, variable width, `Surface`, `Layer` and its regions, the declarations of `Print` and its objects and regions, and the reader and replay of the oracle's step-boundary dumps, to be proven by `layer.sop1` and the dumps (filled by orca-o3-layer-1 to layer-3 and dump-1). |
+| `orca-arachne` | Phase O3: Arachne's beading strategies, `ExtrusionLine`, the skeletal trapezoidation, the grids, the stitcher and `WallToolPaths`, to be proven by `arachne.sop1` (filled by orca-o3-arachne-1 to arachne-4). |
+| `orca-print` | Phase O3: `Print` and `PrintObject`, their state and invalidation, `Print::apply`, and `PrintObject::slice` with the elephant foot and the polyholes, held by the dumps and `parity certify` (filled by orca-o3-print-1 to print-3). |
+| `orca-perimeter` | Phase O3: `PerimeterGenerator`, classic and Arachne, with `make_perimeters`, `BridgeDetector` and the principal components, to be proven by `walls.sop1` (filled by orca-o3-walls-1 to walls-3). |
+| `orca-surface` | Phase O3: `MutablePolygon`, region expansion, the surface types and shells, `prepare_infill`, the external surfaces and bridges over infill, to be proven by `surfaces.sop1` (filled by orca-o3-surfaces-1 to surfaces-3). |
+| `orca-fill` | Phase O3: the infill, `FillBase`, gap fill, infill connection, the rectilinear patterns, cross hatch, the concentric patterns, `make_fills` and `PrintObject::infill`, to be proven by `fill.sop1` (filled by orca-o3-fill-1 to fill-4). |
+| `orca-support` | Phase O3: the support steps with supports off, the support check, overhang detection and the curled extrusions, held by the dumps and `parity certify` (filled by orca-o3-support-1). |
+| `orca-plate` | Phase O3: `ToolOrdering` for one filament, the wipe tower's data, the simplify steps, skirt and brim, the conflict checker, the layers to print, and the oracle's print dump writer, held by the dumps and `parity certify` (filled by orca-o3-plate-1 to plate-3 and dump-2). |
+| `orca-process` | Phase O3: `Print::validate` and `Print::process` as the command line runs them, up to the layers answer (filled by orca-o3-process-1 and process-2). |
 
 Phase O2's crates (added 2026-11-07) declare every dependency they will need from the start, so
 the tasks that fill them in parallel never change `Cargo.toml` or `Cargo.lock`. A crate whose task
-has not run yet holds only its name, and its probe file is a stub. `orca-cli` links only
-`orca-placeholder` of them until the o2-info task links the rest. What each carries of others'
-code is in `NOTICE`, in a section of its own, and its hazards are in `parity/HAZARDS.md`.
+has not run yet holds only its name, and its probe file is a stub. From 0.3.0 `orca-cli` links
+all of them (orca-info-load, 2026-11-11). What each carries of others' code is in `NOTICE`, in a
+section of its own, and its hazards are in `parity/HAZARDS.md`.
+
+Phase O3's thirteen crates (orca-o3-skeleton, 2026-11-13) do the same, in their build order from
+`orca-index` to `orca-process`: each declares every library crate of phase O2 and every O3 crate
+before it, and `orca-cli` declares all thirteen, so no unit of the wave changes a manifest or
+`Cargo.lock` until orca-o3-chain. Each holds only its header and doc comment until its pieces land,
+and its `README.md` names them.
 
 The Rust scripts run cargo with `--locked`, inside the environment of the same Visual Studio the
 C++ engine is built in, so `link.exe` takes the same static `libucrt` (`BUILDING.md`):
@@ -340,14 +381,26 @@ SHA-256. `stage.ts` `readManifest` reads and checks it.
 
 On Windows `stage` first builds `sketch-orca-rs` itself, in release with `--locked`
 (`scripts/lib/rust.ts` `buildRustRelease`, logged to `<work>/logs/stage-cargo.log`); its SHA-256 is
-one of the staging inputs. The staged copy must report the C++ engine's version with
-`implementation: "rust"` and pass the Rust smoke cases (`smoke.ts` `RUST_SMOKE_CASES`, in
-`<work>/smoke/staged-rust`), each held to the staged C++ engine: `rs-version`, `rs-config-def`
-(the C++ program's file, byte for byte), `rs-intake` (the refusals' C++ results, or `not-ported`
-for a job the C++ took past the job, its presets and its model's file; a missing model, the
-unknown settings, a renamed key's dropped value and the presets stage's refusals are never
-declined, as `sketch-orca-rs` makes those refusals itself, `RUST_OWN_REFUSALS`) and `rs-decline` (a slice job ends `not-ported`, exit -8, with no output);
-otherwise nothing is swapped in.
+one of the staging inputs. Like every cargo command of the runner but `fmt`, the build remaps
+cargo's home folder to the relative `cargo` (rustc's `--remap-path-prefix`, passed with cargo's
+`--config` and joined to the `+crt-static` of `.cargo/config.toml`), so a crate from cargo's
+registry records `cargo\registry\src\...` in the program and not the builder's folder; `rs:build`,
+`rs:test:release` and `stage` build with the same flags. The release build's program database
+(`target/release/sketch_orca_rs.pdb`) is not staged: it names the build folder, which is one reason
+`stage` never ships it, and the program names it without its folder. The staged copy must report the
+C++ engine's version with `implementation: "rust"` and pass the Rust smoke cases (`smoke.ts`
+`RUST_SMOKE_CASES`, in `<work>/smoke/staged-rust`), each held to the staged C++ engine:
+`rs-version`, `rs-config-def` (the C++ program's file, byte for byte), `rs-intake` (the refusals'
+C++ results, or `not-ported` for a job the C++ took past the job, its presets, the model and
+placement (`RUST_STAGES`, `endedWithinRust`); a missing model, the unknown settings, a renamed key's
+dropped value and the presets stage's refusals are never declined, as `sketch-orca-rs` makes those
+refusals itself, `RUST_OWN_REFUSALS`), `rs-info` (info jobs on the cube as a binary STL, as an OBJ
+of quads and as the lone-triangle OBJ, answered by the Rust program and held to the C++ results),
+`rs-model-refusals` (`RUST_MODEL_REFUSALS`, the refusals of the model's reading and of placement,
+held to the C++ results and never declined) and `rs-decline` (a slice job declined after the objects
+are placed: `not-ported`, exit -8, no output, its `missing` naming none of `version`, `config-def`,
+`intake`, `preset-conditions`, `model-load`, `placement` and `info` but naming `slice-mesh`, and its
+progress, `arrange` included, the C++ run's first lines); otherwise nothing is swapped in.
 
 Before staging, `stage` checks that the checkout is at the locked commit; that the patches `build`
 last applied (`state/patches.json`, names and SHA-256) are `patches/` as it is now (`build`
@@ -383,6 +436,48 @@ exceptions, each with why; none is needed today). It runs the staged copy with o
 plus `bin/` as the library path): `version`, which proves `bin/` is complete, then smoke's
 `cube-fixed` and `bambu-3mf` cases with the staged `resources/` (`STAGED_CASES`, in
 `<work>/smoke/staged`), which proves the folder slices with what it ships. Then it swaps it in.
+
+### Restaging the engine a dev Sketch runs
+
+A dev Sketch runs its engines from the default work folder's `dist\engine`, and staging replaces
+that folder. This is how 0.3.0, whose `sketch-orca-rs` answers info jobs, was staged there on
+2026-11-12, without publishing anything. No secret is involved.
+
+1. Look for a running engine (read only). On Windows:
+   `Get-Process | Where-Object { $_.Path -like "$env:LOCALAPPDATA\SketchDev\orca-engine\dist\engine*" }`.
+   Any process there is a slice in progress: wait and look again; never stop it.
+2. `bun run engine stage`. It needs a passing full smoke run of the engine in `build/`
+   (`state/smoke.json`, at the current smoke version); after a change to `cli/` or the patches run
+   `build` and `smoke` first. A change only to the Rust crates needs no more than `stage`, which
+   builds `sketch-orca-rs` again, and so does a change to `parity/parity.json`, which
+   `sketch-orca-rs` builds in (`crates/orca-cli/src/decline.rs`, `include_str!`): `parity record`,
+   `certify` and `goldens --check` rewrite it, so stage again after them (`BUILDING.md`, "The chain
+   for an engine version"). The program cargo gave and the staged copy must each hold
+   `parity/parity.json` as the checkout has it now, byte for byte, or `stage` is refused; and
+   `source` refuses a staged `sketch-orca-rs` that does not hold it, "run stage"
+   (`scripts/lib/stage.ts`, `stagedParityProblem`). It
+   takes the run lock, builds, checks and runs the copy in
+   `dist\engine.staging`, and swaps it in only when every check and case passes; otherwise
+   `dist\engine` stays as it was.
+3. `bun run engine smoke` (it skips, saying so, when the stamp already covers this build).
+4. Check the manifest: `engine.version` and `rust.engineVersion` the new version, `stageVersion` 4,
+   and `rust.sha256` the SHA-256 of `bin\sketch-orca-rs.exe`.
+5. In Sketch's checkout, `env -C sketch/sketch-slicer bun test ./src/orca`: its real-engine tests
+   (`engine.test.ts` "the staged engine", `catalog.test.ts`) find the copy in the default work
+   folder as a dev build does (`testEngine.ts`, `ENGINE_DEV_ACCEPTED`) and run it; they skip,
+   saying why, when it is missing or refused. Check that the tests of "the staged engine" passed
+   and did not skip: the output has no line `engine.test.ts: ... the real-engine tests are skipped`.
+
+A dev Sketch that is running keeps the accepted list it started with: one started before its list
+took the new version refuses the new copy until it is restarted. Agents in Sketch's monorepo run
+steps 2, 3 and 5 through its build lease (`sketch/sketch-native/scripts/lane.ts run orca`).
+
+What went wrong on 2026-11-12. The first `stage` of 0.3.0 was refused (exit 3, "staged files name
+the builder or the build machine"): rayon-core and the crossbeam crates put their registry paths in
+the program, fixed by the cargo home remap above. The second was stopped when the process that ran
+it ended (the lease's status 129); it left `dist\engine.staging`, which the next `stage` replaces,
+and a lock record of a process that was gone, which the next run took over by itself. The third
+staged 0.3.0.
 
 ### The source bundle
 
@@ -546,9 +641,20 @@ cases are `SMOKE_CASES` in `scripts/lib/smoke.ts`:
   -5), for a resin printer (`not-fdm`, -7), a process made for another printer
   (`process-not-compatible`, -17), a bad override value (`setting-invalid`, -2), a flushing volume
   past 20000 and `layer_height` 0 (`config-invalid`, -18), a resources folder with no profiles
-  (`environment`, -1) and a work folder that cannot be made (`output-failed`, -13); and a missing
+  (`environment`, -1) and a work folder that cannot be made (`output-failed`, -13); a missing
   model after the stage's warnings, which must come in their order (two `preset-value-skipped`, a
-  `setting-substituted` and a `filament-not-compatible`).
+  `setting-substituted` and a `filament-not-compatible`); and the refusals of the model's reading
+  and of placement (`MODEL_REFUSE`): an empty file, a binary STL of no triangles, one cut short,
+  an ASCII facet with a vertex that is not a number and an OBJ face past its vertices
+  (`model-unreadable`, -6), an object index past the model's (`job-invalid`, -2), an object's
+  setting that applies to the whole plate, one Orca does not have and an extruder past the job's
+  filaments, and a height range's setting that only an object takes, a zero layer height and an
+  extruder past the filaments (`setting-invalid`, -2, object 0), a colour change with no
+  extruder, a filament change with one filament or past the filaments, and a pause with no pause
+  G-code (`custom-gcode-invalid`, -2), custom G-code when printing by object (`unsupported`, -8),
+  a prime tower set past the bed (`config-invalid`, -18) and one that fits nowhere
+  (`arrange-failed`, -21), and a cube that arrange off leaves off the bed (`not-printable`, -50,
+  object 0, as no object is inside).
   Jobs that `scripts/lib/job.ts` refuses itself are written unchecked, so the engine's own check
   is what is tested.
 
@@ -664,6 +770,30 @@ These are for the maintainers to decide, and some for a lawyer. The first three 
   open, for counsel: whether the libgcc and mingw-w64 runtime code GCC links into the two DLLs needs
   more than the licence texts `stage` ships in `LICENSES/MinGW-w64/` (libgcc's GPL 3 with the GCC
   Runtime Library Exception, and the mingw-w64 runtime's permissive terms).
+- **The Rust program at 0.3.0 (2026-11-11).** The version is 0.3.0 in the three places. The
+  chain of `BUILDING.md` ("The chain for an engine version") ran on it through `goldens --check` by
+  2026-11-12: the engine, smoke, the oracle (with oracle patch 0006), `parity probe --check`,
+  `parity corpus`, `stage` into the default work folder (smoke version 13), `parity neutral`,
+  `record` (the 59 families in `parity/parity.json`, `orient` among them), `envelope`, `certify` and
+  `goldens --check` (no H-site, the front-objects dumps among the compared outputs). Sketch's dev
+  builds accept 0.3.0 since 2026-11-12. The first `stage` refused the 0.3.0 `sketch-orca-rs.exe`
+  (exit 3, "staged files name the builder or the build machine"): from 0.3.0 the program links
+  orca-tbb, so rayon-core, crossbeam-deque and crossbeam-epoch come in, and their panic locations
+  held their absolute paths in cargo's registry (`C:\Users\<name>\.cargo\registry\src\...`); the
+  0.2.0 program held no such path. Since 2026-11-12 the runner remaps cargo's home folder to
+  `cargo` in every build (`scripts/lib/rust.ts`), and `stage` staged 0.3.0 with it (*Restaging
+  the engine a dev Sketch runs*). Closed on 2026-11-12: `parity certify` raised `model-load` and
+  `placement` once certify judged a decline's own log lines and carried a declined run's outputs
+  to the runs after it (`scripts/lib/parity/certify.ts`, `streamPrefixProblem` and `goldenCarry`;
+  `parity/README.md`). It certifies `version`, `config-def`, `intake`, `preset-conditions`,
+  `model-load` (255 runs, 147 by declines past `front-objects`), `placement` (172, 147 of them so)
+  and `info` (63), with no decline gap and no regression; `certify --check` and `goldens --check`
+  (1777 outputs, the front-objects dumps among them, no H-site) pass. `stage` ran last, so the
+  staged `sketch-orca-rs` holds the `parity/parity.json` those steps wrote (corpus SHA-256
+  `ba88231c...`), and Sketch's real-engine tests ran it. What is left of the Rust program:
+  - Three `float` literal defaults are kept in orca-cli (`FLOAT_LITERAL_DEFAULTS`); orca-config
+    still reads them back from the probe's six digits.
+  - Orientation (`orient`) and everything from slicing on are not ported; such jobs are declined.
 - **libnoise.** The package Orca pins dropped libnoise's `COPYING.txt`. Staging ships the grant
   from its sources (`src/noise.h`, LGPL 2.1 or later) and the LGPL 2.1 text from `licenses/`.
 - **The toolchain record.** `BUILT_WITH` (`scripts/lib/bundle.ts`, and so each bundle's

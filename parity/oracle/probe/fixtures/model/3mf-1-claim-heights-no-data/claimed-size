@@ -1,0 +1,3 @@
+# The layer heights have no data (compressed size 0) and claim 30 bytes: miniz refuses an entry
+# that claims bytes with no compressed data (miniz.c:3771) before any entry is read.
+Metadata/layer_heights_profile.txt 30

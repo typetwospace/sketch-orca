@@ -60,6 +60,12 @@ impl Symbols for BTreeMap<String, OptionValue> {
     }
 }
 
+impl Symbols for orca_config::config::Config {
+    fn option(&self, key: &str) -> Option<&OptionValue> {
+        self.get(key)
+    }
+}
+
 /// What evaluating an expression gave besides a result.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {

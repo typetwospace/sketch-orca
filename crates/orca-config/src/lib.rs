@@ -8,8 +8,9 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
 // (LICENSE) for more details.
 
-//! Orca's configuration: the definition of every option, the values options hold, and the
-//! renames and drops Orca applies to the keys it reads.
+//! Orca's configuration: the definition of every option, the values options hold, the renames
+//! and drops Orca applies to the keys it reads, the dynamic config the presets stage builds, and
+//! the static print configs the slicing stages read.
 //!
 //! - [`options`], [`get`], [`has`]: `print_config_def`, every option of OrcaSlicer 2.4.2 with
 //!   every field of its `ConfigOptionDef` ([`OptionDef`]), in its order (by key). They are
@@ -21,16 +22,61 @@
 //! - [`value`]: [`OptionValue`], the values of Orca's `ConfigOption` types, with their
 //!   `serialize` and `deserialize`, the same text both ways.
 //! - [`legacy`]: [`handle_legacy`], `PrintConfigDef::handle_legacy`.
+//! - [`config`]: [`Config`](config::Config), the `DynamicPrintConfig` the presets stage builds,
+//!   and what cli/presets.cpp calls on one (moved here from orca-cli).
+//! - [`option`]: the `ConfigOption` types a static config holds ([`ConfigOptionFloat`] and the
+//!   rest) and [`ConfigOption`], the virtual interface, with the C++'s `hash()` and both of its
+//!   `operator==`.
+//! - [`print_config`]: the static print configs ([`PrintObjectConfig`], [`PrintRegionConfig`],
+//!   [`MachineEnvelopeConfig`], [`GCodeConfig`], [`PrintConfig`], [`FullPrintConfig`] and the SLA
+//!   classes) and the enums of PrintConfig.hpp, generated from the header by
+//!   `gen/print-config.ts` and checked against it by `tests/static_header.rs`.
+//! - [`static_config`]: [`StaticPrintConfig`] (defaults, keys, options by key, the hash) and
+//!   [`ConfigBase`] (`apply_only`, `equals`, `diff`, `get_abs_value`, `set_deserialize_strict`),
+//!   [`full_print_config`] and [`new_from_defaults_keys`].
+//! - [`functions`]: `get_extruder_ams_count`, `compute_filament_override_value` and `has_skirt`.
+//! - [`material_type`]: `MaterialType`, the table of filament types and its lookups.
 
+// The crate's own code (config.rs, moved from orca-cli) names it as orca_config.
+extern crate self as orca_config;
+
+pub mod config;
 #[rustfmt::skip]
 mod def_generated;
+pub mod functions;
 pub mod legacy;
+pub mod material_type;
+pub mod option;
+#[rustfmt::skip]
+#[allow(
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals,
+    clippy::upper_case_acronyms,
+    clippy::enum_variant_names
+)]
+pub mod print_config;
+pub mod static_config;
 pub mod value;
 
 pub use def_generated::{
     FILAMENT_OPTIONS, LEGACY_KEYS, PRINT_OPTIONS, PRINTER_OPTIONS, PROBE_VALUES,
 };
 pub use legacy::handle_legacy;
+pub use option::{
+    ConfigEnum, ConfigOption, ConfigOptionBool, ConfigOptionBools, ConfigOptionBoolsNullable,
+    ConfigOptionEnum, ConfigOptionEnumsGeneric, ConfigOptionEnumsGenericNullable,
+    ConfigOptionFloat, ConfigOptionFloatOrPercent, ConfigOptionFloats, ConfigOptionFloatsNullable,
+    ConfigOptionInt, ConfigOptionInts, ConfigOptionIntsNullable, ConfigOptionPercent,
+    ConfigOptionPercents, ConfigOptionPercentsNullable, ConfigOptionPoint, ConfigOptionPoints,
+    ConfigOptionPointsGroups, ConfigOptionString, ConfigOptionStrings,
+};
+pub use print_config::{
+    FullPrintConfig, GCodeConfig, MachineEnvelopeConfig, PrintConfig, PrintObjectConfig,
+    PrintRegionConfig, SLAFullPrintConfig, SLAMaterialConfig, SLAPrintConfig, SLAPrintObjectConfig,
+    SLAPrinterConfig,
+};
+pub use static_config::{ConfigBase, StaticPrintConfig, full_print_config, new_from_defaults_keys};
 pub use value::{ConfigError, OptionValue};
 
 /// `ConfigOptionType`.

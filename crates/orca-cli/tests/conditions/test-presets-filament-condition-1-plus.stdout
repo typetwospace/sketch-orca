@@ -1,0 +1,5 @@
+Preset::is_compatible_with_print - parsing error of compatible_prints_condition Test process:
+Parsing error at line 1. Expecting an expression.
+1 +
+   ^
+

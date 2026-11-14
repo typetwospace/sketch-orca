@@ -1,0 +1,2 @@
+The full set only: a refused file that records what the reader of piece 2 of the port does with an entry no other record held (orca-3mf-probe-3, 2026-11-11); out of the committed model.sop1, whose budget it would pass.
+cut_id's three get<size_t> (bbs_3mf.cpp:2593-2595) are call arguments, whose order the compiler picks: here no id and no connectors_cnt, so the error the load ends with shows which attribute is read first.

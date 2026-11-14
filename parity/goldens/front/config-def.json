@@ -1,7 +1,7 @@
 {
   "format": "sketch-orca-config-def/1",
   "engine": "sketch-orca",
-  "engineVersion": "0.2.0",
+  "engineVersion": "0.3.0",
   "orcaVersion": "2.4.2",
   "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
   "count": 673,

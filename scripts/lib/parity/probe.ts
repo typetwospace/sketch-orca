@@ -2,8 +2,8 @@
 // static UCRT's maths, MSVC 14.42's casts, printf, to_chars, iostreams and parsers, the STL's
 // algorithms, containers and random numbers, oneTBB 2021.5.0's split trees, and Orca's ConfigDef)
 // and, from phase O2, the libraries the model's reading reaches (geometry, meshes, archives,
-// arrangement, the placeholder parser) into SOP1 files (parity/SOP1.md, "Probe files") and
-// configdef.json, which the Rust crates' probe tests replay.
+// Boost's property_tree, arrangement, the placeholder parser) into SOP1 files (parity/SOP1.md,
+// "Probe files") and configdef.json, which the Rust crates' probe tests replay.
 //
 // The registry (PROBE_REGISTRY, 2026-11-07) lists the probes: one program and one file each,
 // sketch-orca-probe-<name> from parity/oracle/probe/main.cpp and <name>.cpp. parity probe builds
@@ -20,6 +20,15 @@
 // stl, tbb and configdef.json under PROBE_COMMITTED_MAX_BYTES together, every later file
 // PROBE_FILE_MAX_BYTES at most). Nothing in them depends on the machine, the time or the folder, so
 // a second run (parity probe --check) must write the same bytes.
+//
+// From phase O3 (orca-o3-skeleton, 2026-11-13) each new probe's entry is a file of its own,
+// probes/<name>.ts, imported here after the O2 entries; ProbeEntry and probe() are in
+// probes/entry.ts. Each O3 probe has a kind prefix and a page of its own, parity/sop1/<name>.md,
+// where its record kinds' ### sections go; SOP1.md and those pages are read together
+// (sop1Pages), and probeKindProblems holds the kind rule that lets the probe units record side by
+// side: distinct prefixes that no kind of SOP1.md starts with, no kind defined on two pages, and
+// every kind an O3 probe's committed file holds beyond HEAD, PRUN and END starting with its prefix
+// and defined on its own page.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -30,40 +39,29 @@ import { readStamp, sha256File, sha256Text, writeStamp, type ParityPaths, type W
 import { runLogged, StepError, UsageError, type Log } from '../run.ts'
 import { engineLibraryDirs } from '../smoke.ts'
 import type { Toolchain } from '../toolchain.ts'
+import { readSop1 } from './neutral.ts'
 import { ORACLE_EXE, ORACLE_MAP, oracleStateDir } from './oracle.ts'
+import { entry as arachneProbe } from './probes/arachne.ts'
+import { PROBE_FILE_MAX_BYTES, probe, type ProbeEntry } from './probes/entry.ts'
+import { entry as fillProbe } from './probes/fill.ts'
+import { entry as indexProbe } from './probes/index.ts'
+import { entry as layerProbe } from './probes/layer.ts'
+import { entry as pathsProbe } from './probes/paths.ts'
+import { entry as sliceProbe } from './probes/slice.ts'
+import { entry as surfacesProbe } from './probes/surfaces.ts'
+import { entry as voronoiProbe } from './probes/voronoi.ts'
+import { entry as wallsProbe } from './probes/walls.ts'
 import { runHidden, type RunProcess } from './same.ts'
+
+export { PROBE_FILE_MAX_BYTES, probe, type ProbeEntry }
 
 /** The committed size limit of the five foundation files (crt, fmt, stl, tbb, configdef.json) together. */
 export const PROBE_COMMITTED_MAX_BYTES = 8 * 1024 * 1024
 
-/** The committed size limit of each later probe file, on its own. */
-export const PROBE_FILE_MAX_BYTES = 512 * 1024
-
-/** One probe: a program of its own that writes one file into each set. */
-export interface ProbeEntry {
-  /** The name --only takes: the program is sketch-orca-probe-<name>, its source <name>.cpp. */
-  readonly name: string
-  /** The file it writes into each set. */
-  readonly file: string
-  /** Its committed budget: shared with the other foundation files, or a limit of its own in bytes. */
-  readonly budget: 'foundations' | number
-  /** Whether it takes the oracle map's CRT maths functions (--crt-symbols). */
-  readonly crtSymbols: boolean
-  /** The task that records into it: O1 for the foundations; an O2 task's file is a stub until it runs. */
-  readonly owner: string
-}
-
-const probe = (name: string, owner: string, o: Partial<Pick<ProbeEntry, 'file' | 'budget' | 'crtSymbols'>> = {}): ProbeEntry => ({
-  name,
-  file: o.file ?? `${name}.sop1`,
-  budget: o.budget ?? PROBE_FILE_MAX_BYTES,
-  crtSymbols: o.crtSymbols ?? false,
-  owner,
-})
-
 /**
  * The probes, in the order a full run builds and runs them. parity/oracle/probe/CMakeLists.txt's
- * PROBE_NAMES lists the same names in the same order (test/parity-probe.test.ts holds it).
+ * PROBE_NAMES lists the same names in the same order (test/parity-probe.test.ts holds it). Phase
+ * O3's nine come last, each from its own file under probes/ (2026-11-13).
  */
 export const PROBE_REGISTRY: readonly ProbeEntry[] = [
   probe('crt', 'O1', { budget: 'foundations', crtSymbols: true }),
@@ -77,9 +75,19 @@ export const PROBE_REGISTRY: readonly ProbeEntry[] = [
   probe('cstdio', 'o2-mesh'),
   probe('zip', 'o2-model'),
   probe('xml', 'o2-model'),
+  probe('ptree', 'orca-ptree-probe'),
   probe('model', 'o2-model'),
   probe('arrange', 'o2-arrange'),
   probe('placeholder', 'o2-front'),
+  layerProbe,
+  indexProbe,
+  pathsProbe,
+  sliceProbe,
+  voronoiProbe,
+  arachneProbe,
+  wallsProbe,
+  surfacesProbe,
+  fillProbe,
 ]
 
 /** Every file a full probe run writes into each set, in the order it writes them. */
@@ -91,6 +99,79 @@ export function probeSelection(only?: string): ProbeEntry[] {
   const e = PROBE_REGISTRY.find((x) => x.name === only)
   if (!e) throw new UsageError(`parity probe --only ${only}: no such probe (${PROBE_REGISTRY.map((x) => x.name).join(', ')})`)
   return [e]
+}
+
+// ---------------------------------------------------------------- the record kinds' pages
+
+/** One page that defines record kinds: parity/SOP1.md, or a probe's own page parity/sop1/<name>.md. */
+export interface Sop1Page {
+  /** `SOP1.md`, or `sop1/<name>.md`: the path under parity/. */
+  readonly name: string
+  readonly text: string
+}
+
+/** The page every O1 and O2 kind is defined on. */
+export const SOP1_MAIN_PAGE = 'SOP1.md'
+
+/** An O3 probe's own page, under parity/. */
+export function probePage(name: string): string {
+  return `sop1/${name}.md`
+}
+
+/**
+ * The pages that define record kinds, read together wherever the ### KIND sections or the
+ * backticked files are looked up: parity/SOP1.md first, then every parity/sop1/*.md by name.
+ */
+export function sop1Pages(engineDir: string): Sop1Page[] {
+  const parity = join(engineDir, 'parity')
+  const pages: Sop1Page[] = [{ name: SOP1_MAIN_PAGE, text: readFileSync(join(parity, SOP1_MAIN_PAGE), 'utf8') }]
+  const dir = join(parity, 'sop1')
+  if (existsSync(dir)) for (const f of readdirSync(dir).filter((n) => n.endsWith('.md')).sort()) pages.push({ name: `sop1/${f}`, text: readFileSync(join(dir, f), 'utf8') })
+  return pages
+}
+
+/** The kinds a page defines: its `### KIND` headings (three or four capitals and digits alone on the line), in order. */
+export function pageKinds(text: string): string[] {
+  return [...text.matchAll(/^### ([A-Z][A-Z0-9]{2,3})[ \t]*\r?$/gm)].map((m) => m[1]!)
+}
+
+/** The record kinds a probe file holds beyond HEAD, PRUN and END, each once, sorted (a kind's padding trimmed). */
+export function fileKinds(bytes: Buffer): string[] {
+  const { records } = readSop1(bytes)
+  return [...new Set(records.map((r) => r.kind.trimEnd()))].filter((k) => !['HEAD', 'PRUN', 'END'].includes(k)).sort()
+}
+
+/**
+ * The kind rule, which lets phase O3's probe units record side by side without breaking each
+ * other's runs. Given the pages (SOP1.md and parity/sop1/*.md), the registry's entries and the
+ * committed files (by file name; a file not given is not judged), one problem per breach:
+ *
+ *   - the kind prefixes are distinct, and no kind of SOP1.md starts with one;
+ *   - no `### KIND` heading is on two pages;
+ *   - every kind an O3 probe's committed file holds beyond HEAD, PRUN and END starts with its
+ *     prefix and has its `### KIND` section on its own page, sop1/<name>.md.
+ */
+export function probeKindProblems(o: { pages: readonly Sop1Page[]; entries: readonly ProbeEntry[]; files: Readonly<Record<string, Buffer>> }): string[] {
+  const problems: string[] = []
+  const withPrefix = o.entries.filter((e) => e.kindPrefix !== undefined)
+  const byPrefix = new Map<string, string[]>()
+  for (const e of withPrefix) byPrefix.set(e.kindPrefix!, [...(byPrefix.get(e.kindPrefix!) ?? []), e.name])
+  for (const [prefix, names] of byPrefix) if (names.length > 1) problems.push(`the kind prefix ${prefix} is shared by the probes ${names.join(', ')}`)
+  const main = o.pages.find((p) => p.name === SOP1_MAIN_PAGE)
+  if (main) for (const k of pageKinds(main.text)) for (const e of withPrefix) if (k.startsWith(e.kindPrefix!)) problems.push(`the kind ${k} of ${SOP1_MAIN_PAGE} starts with the prefix ${e.kindPrefix} of the probe ${e.name}`)
+  const pagesOf = new Map<string, string[]>()
+  for (const p of o.pages) for (const k of new Set(pageKinds(p.text))) pagesOf.set(k, [...(pagesOf.get(k) ?? []), p.name])
+  for (const [k, pages] of pagesOf) if (pages.length > 1) problems.push(`the kind ${k} is defined on ${pages.length} pages: ${pages.join(', ')}`)
+  for (const e of withPrefix) {
+    const bytes = o.files[e.file]
+    if (bytes === undefined) continue
+    const own = probePage(e.name)
+    for (const k of fileKinds(bytes)) {
+      if (!k.startsWith(e.kindPrefix!)) problems.push(`${e.file} holds the kind ${k}, which does not start with its prefix ${e.kindPrefix}`)
+      if (!(pagesOf.get(k) ?? []).includes(own)) problems.push(`${e.file} holds the kind ${k}, which has no ### ${k} section on its page parity/${own}`)
+    }
+  }
+  return problems
 }
 
 /** A probe's CMake target and program name. */

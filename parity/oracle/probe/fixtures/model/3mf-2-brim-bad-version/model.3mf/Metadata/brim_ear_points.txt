@@ -1,0 +1,2 @@
+brim_points_format_version=v1
+object_id=1|1 2 0 3

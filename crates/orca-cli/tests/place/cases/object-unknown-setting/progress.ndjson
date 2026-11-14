@@ -1,0 +1,4 @@
+{"stage":"job","percent":1.0,"message":"reading the job"}
+{"stage":"presets","percent":3.0,"message":"reading the presets"}
+{"stage":"model","percent":8.0,"message":"reading the model"}
+{"stage":"failed","percent":8.0,"message":"objects[0].overrides.sketch_smoke_no_such_setting: sketch_smoke_no_such_setting is not a setting of Orca 2.4.2"}

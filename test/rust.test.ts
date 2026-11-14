@@ -4,10 +4,14 @@
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { BUILT_WITH } from '../scripts/lib/bundle.ts'
 import { EXIT, UsageError } from '../scripts/lib/run.ts'
-import { cargoBinDir, isRustSteeringEnv, parseRustArgs, pinnedEnvProblems, RUST_PINS, RUST_PROGRAM, rustBuildEnv, rustcProblems, rustReleaseExe, rustTimeoutMs, vendoredProblems } from '../scripts/lib/rust.ts'
+import {
+  CARGO_HOME_REMAP_TO, cargoBinDir, cargoHomeDir, cargoHomeRemapConfig, isRustSteeringEnv, parseRustArgs, pinnedEnvProblems, RUST_PINS, RUST_PROGRAM, rustBuildEnv,
+  rustcProblems, rustReleaseExe, rustTimeoutMs, vendoredProblems,
+} from '../scripts/lib/rust.ts'
+import { recordedBuildPaths } from '../scripts/lib/stage.ts'
 
 const ROOT = join(import.meta.dir, '..')
 
@@ -16,6 +20,11 @@ const GOOD_VC: Record<string, string> = {
   WindowsSDKVersion: `${RUST_PINS.windowsSdk}\\`,
   VSCMD_ARG_TGT_ARCH: 'x64',
 }
+
+/** A made-up cargo home folder, and the --config the runner adds for it after each subcommand but fmt's. */
+const HOME = 'C:\\h\\.cargo'
+const REMAP = ['--config', cargoHomeRemapConfig(HOME)]
+const cargoArgs = (argv: string[]) => parseRustArgs(argv, HOME).cargoArgs
 
 describe('the pins', () => {
   test('are the toolchain the C++ engine is built with, and the Rust of rust-toolchain.toml', () => {
@@ -33,8 +42,8 @@ describe('the pins', () => {
 
 describe('what the pipeline runs', () => {
   test('stage builds the program in release with --locked; source vendors the crates with --locked', () => {
-    expect(parseRustArgs(['build', '--release', '--bin', RUST_PROGRAM]).cargoArgs).toEqual(['build', '--locked', '--release', '--bin', 'sketch-orca-rs'])
-    expect(parseRustArgs(['vendor', '--versioned-dirs', 'v']).cargoArgs).toEqual(['vendor', '--locked', '--versioned-dirs', 'v'])
+    expect(cargoArgs(['build', '--release', '--bin', RUST_PROGRAM])).toEqual(['build', ...REMAP, '--locked', '--release', '--bin', 'sketch-orca-rs'])
+    expect(cargoArgs(['vendor', '--versioned-dirs', 'v'])).toEqual(['vendor', ...REMAP, '--locked', '--versioned-dirs', 'v'])
     expect(rustReleaseExe(join('r'))).toBe(join('r', 'target', 'release', 'sketch-orca-rs.exe'))
     expect(rustTimeoutMs({})).toBe(45 * 60 * 1000)
     expect(rustTimeoutMs({ SKETCH_ORCA_RUST_TIMEOUT_MS: '1000' })).toBe(1000)
@@ -50,58 +59,59 @@ describe('what the pipeline runs', () => {
 
 describe('parseRustArgs', () => {
   test('build and test run with --locked', () => {
-    expect(parseRustArgs(['build'])).toEqual({ command: 'build', cargoArgs: ['build', '--locked'] })
-    expect(parseRustArgs(['test'])).toEqual({ command: 'test', cargoArgs: ['test', '--locked'] })
-    expect(parseRustArgs(['build', '--release', '-p', 'orca-cli']).cargoArgs).toEqual(['build', '--locked', '--release', '-p', 'orca-cli'])
+    expect(parseRustArgs(['build'], HOME)).toEqual({ command: 'build', cargoArgs: ['build', ...REMAP, '--locked'] })
+    expect(parseRustArgs(['test'], HOME)).toEqual({ command: 'test', cargoArgs: ['test', ...REMAP, '--locked'] })
+    expect(cargoArgs(['build', '--release', '-p', 'orca-cli'])).toEqual(['build', ...REMAP, '--locked', '--release', '-p', 'orca-cli'])
   })
 
   test('--locked is not given twice, and --frozen counts as it', () => {
-    expect(parseRustArgs(['build', '--locked']).cargoArgs).toEqual(['build', '--locked'])
-    expect(parseRustArgs(['test', '--frozen']).cargoArgs).toEqual(['test', '--frozen'])
+    expect(cargoArgs(['build', '--locked'])).toEqual(['build', ...REMAP, '--locked'])
+    expect(cargoArgs(['test', '--frozen'])).toEqual(['test', ...REMAP, '--frozen'])
   })
 
-  test('fmt formats the whole workspace and takes no --locked (cargo fmt has none)', () => {
-    expect(parseRustArgs(['fmt']).cargoArgs).toEqual(['fmt', '--all'])
-    expect(parseRustArgs(['fmt', '--check']).cargoArgs).toEqual(['fmt', '--all', '--check'])
-    expect(parseRustArgs(['fmt', '--all', '--check']).cargoArgs).toEqual(['fmt', '--all', '--check'])
-    expect(parseRustArgs(['fmt', '-p', 'orca-json']).cargoArgs).toEqual(['fmt', '-p', 'orca-json'])
-    expect(parseRustArgs(['fmt']).cargoArgs).not.toContain('--locked')
+  test('fmt formats the whole workspace and takes no --locked (cargo fmt has none) and no --config', () => {
+    expect(cargoArgs(['fmt'])).toEqual(['fmt', '--all'])
+    expect(cargoArgs(['fmt', '--check'])).toEqual(['fmt', '--all', '--check'])
+    expect(cargoArgs(['fmt', '--all', '--check'])).toEqual(['fmt', '--all', '--check'])
+    expect(cargoArgs(['fmt', '-p', 'orca-json'])).toEqual(['fmt', '-p', 'orca-json'])
+    expect(cargoArgs(['fmt'])).not.toContain('--locked')
+    expect(cargoArgs(['fmt'])).not.toContain('--config')
   })
 
   test('clippy checks every target unless one is selected', () => {
-    expect(parseRustArgs(['clippy']).cargoArgs).toEqual(['clippy', '--locked', '--all-targets'])
-    expect(parseRustArgs(['clippy', '--lib']).cargoArgs).toEqual(['clippy', '--locked', '--lib'])
-    expect(parseRustArgs(['clippy', '--all-targets']).cargoArgs).toEqual(['clippy', '--locked', '--all-targets'])
+    expect(cargoArgs(['clippy'])).toEqual(['clippy', ...REMAP, '--locked', '--all-targets'])
+    expect(cargoArgs(['clippy', '--lib'])).toEqual(['clippy', ...REMAP, '--locked', '--lib'])
+    expect(cargoArgs(['clippy', '--all-targets'])).toEqual(['clippy', ...REMAP, '--locked', '--all-targets'])
   })
 
   test("puts back the -- that bun swallows before clippy's lint flags", () => {
     // bun run rs:clippy -- -D warnings reaches the script as: clippy -D warnings
-    expect(parseRustArgs(['clippy', '-D', 'warnings']).cargoArgs).toEqual(['clippy', '--locked', '--all-targets', '--', '-D', 'warnings'])
-    expect(parseRustArgs(['clippy', '-Dwarnings']).cargoArgs).toEqual(['clippy', '--locked', '--all-targets', '--', '-Dwarnings'])
-    expect(parseRustArgs(['clippy', '-p', 'orca-cli', '-W', 'clippy::pedantic', '-A', 'clippy::module_name_repetitions']).cargoArgs).toEqual([
-      'clippy', '--locked', '--all-targets', '-p', 'orca-cli', '--', '-W', 'clippy::pedantic', '-A', 'clippy::module_name_repetitions',
+    expect(cargoArgs(['clippy', '-D', 'warnings'])).toEqual(['clippy', ...REMAP, '--locked', '--all-targets', '--', '-D', 'warnings'])
+    expect(cargoArgs(['clippy', '-Dwarnings'])).toEqual(['clippy', ...REMAP, '--locked', '--all-targets', '--', '-Dwarnings'])
+    expect(cargoArgs(['clippy', '-p', 'orca-cli', '-W', 'clippy::pedantic', '-A', 'clippy::module_name_repetitions'])).toEqual([
+      'clippy', ...REMAP, '--locked', '--all-targets', '-p', 'orca-cli', '--', '-W', 'clippy::pedantic', '-A', 'clippy::module_name_repetitions',
     ])
   })
 
   test("puts back the -- before libtest's options and keeps cargo's own before it", () => {
-    expect(parseRustArgs(['test', '--nocapture']).cargoArgs).toEqual(['test', '--locked', '--', '--nocapture'])
-    expect(parseRustArgs(['test', '-p', 'orca-cli', 'usage', '--test-threads=1', '--nocapture']).cargoArgs).toEqual([
-      'test', '--locked', '-p', 'orca-cli', 'usage', '--', '--test-threads=1', '--nocapture',
+    expect(cargoArgs(['test', '--nocapture'])).toEqual(['test', ...REMAP, '--locked', '--', '--nocapture'])
+    expect(cargoArgs(['test', '-p', 'orca-cli', 'usage', '--test-threads=1', '--nocapture'])).toEqual([
+      'test', ...REMAP, '--locked', '-p', 'orca-cli', 'usage', '--', '--test-threads=1', '--nocapture',
     ])
     // cargo's -F is --features, not a lint flag, and --color is cargo's: they stay before the --.
-    expect(parseRustArgs(['clippy', '-F', 'x', '--color', 'never']).cargoArgs).toEqual(['clippy', '--locked', '--all-targets', '-F', 'x', '--color', 'never'])
-    expect(parseRustArgs(['test', '--color', 'never']).cargoArgs).toEqual(['test', '--locked', '--color', 'never'])
+    expect(cargoArgs(['clippy', '-F', 'x', '--color', 'never'])).toEqual(['clippy', ...REMAP, '--locked', '--all-targets', '-F', 'x', '--color', 'never'])
+    expect(cargoArgs(['test', '--color', 'never'])).toEqual(['test', ...REMAP, '--locked', '--color', 'never'])
   })
 
   test('a -- the caller wrote stays where it is, and is not doubled', () => {
-    expect(parseRustArgs(['clippy', '--', '-D', 'warnings']).cargoArgs).toEqual(['clippy', '--locked', '--all-targets', '--', '-D', 'warnings'])
-    expect(parseRustArgs(['test', '--', '--nocapture']).cargoArgs).toEqual(['test', '--locked', '--', '--nocapture'])
-    expect(parseRustArgs(['test', '-p', 'orca-cli', '--', '-D']).cargoArgs).toEqual(['test', '--locked', '-p', 'orca-cli', '--', '-D'])
-    expect(parseRustArgs(['build', '--', 'x']).cargoArgs.filter((a) => a === '--').length).toBe(1)
+    expect(cargoArgs(['clippy', '--', '-D', 'warnings'])).toEqual(['clippy', ...REMAP, '--locked', '--all-targets', '--', '-D', 'warnings'])
+    expect(cargoArgs(['test', '--', '--nocapture'])).toEqual(['test', ...REMAP, '--locked', '--', '--nocapture'])
+    expect(cargoArgs(['test', '-p', 'orca-cli', '--', '-D'])).toEqual(['test', ...REMAP, '--locked', '-p', 'orca-cli', '--', '-D'])
+    expect(cargoArgs(['build', '--', 'x']).filter((a) => a === '--').length).toBe(1)
   })
 
   test('build does not move anything after a --: -D is not its flag', () => {
-    expect(parseRustArgs(['build', '-D', 'warnings']).cargoArgs).toEqual(['build', '--locked', '-D', 'warnings'])
+    expect(cargoArgs(['build', '-D', 'warnings'])).toEqual(['build', ...REMAP, '--locked', '-D', 'warnings'])
   })
 
   test('refuses no command, an unknown command and a command that names a property of Object', () => {
@@ -119,11 +129,66 @@ describe('parseRustArgs', () => {
     expect(() => parseRustArgs(['build', '--target'])).toThrow(UsageError)
     expect(() => parseRustArgs(['build', '--manifest-path', 'x/Cargo.toml'])).toThrow('--manifest-path')
     expect(() => parseRustArgs(['build', '--manifest-path=x/Cargo.toml'])).toThrow(UsageError)
-    expect(parseRustArgs(['build', '--target', 'x86_64-pc-windows-msvc']).cargoArgs).toEqual(['build', '--locked', '--target', 'x86_64-pc-windows-msvc'])
+    expect(cargoArgs(['build', '--target', 'x86_64-pc-windows-msvc'])).toEqual(['build', ...REMAP, '--locked', '--target', 'x86_64-pc-windows-msvc'])
   })
 
   test('a + after the -- belongs to the tool, not to cargo', () => {
-    expect(parseRustArgs(['test', '--', '+x']).cargoArgs).toEqual(['test', '--locked', '--', '+x'])
+    expect(cargoArgs(['test', '--', '+x'])).toEqual(['test', ...REMAP, '--locked', '--', '+x'])
+  })
+})
+
+describe("cargo's home folder is remapped out of what cargo builds", () => {
+  /** What rustc's --remap-path-prefix makes of `path` for the runner's flag: the folder's components swapped for `cargo`. */
+  const remapped = (path: string) => (path.startsWith(`${HOME}\\`) ? `${CARGO_HOME_REMAP_TO}${path.slice(HOME.length)}` : path)
+  const flagOf = (config: string) => (Bun.TOML.parse(config) as { target: Record<string, { rustflags: string[] }> }).target[RUST_PINS.host]!.rustflags
+
+  test('the cargo command line: every command but fmt gets the remap right after its subcommand, the same for stage and rs:test:release', () => {
+    expect(cargoHomeRemapConfig(HOME)).toBe('target.x86_64-pc-windows-msvc.rustflags=["--remap-path-prefix=C:\\\\h\\\\.cargo=cargo"]')
+    expect(REMAP).toEqual(['--config', 'target.x86_64-pc-windows-msvc.rustflags=["--remap-path-prefix=C:\\\\h\\\\.cargo=cargo"]'])
+    for (const command of ['build', 'test', 'clippy', 'vendor']) expect({ command, head: cargoArgs([command]).slice(0, 3) }).toEqual({ command, head: [command, ...REMAP] })
+    expect(cargoArgs(['build', '--release', '--bin', RUST_PROGRAM]).filter((a, i, all) => a === '--config' || all[i - 1] === '--config')).toEqual(
+      cargoArgs(['test', '--release']).filter((a, i, all) => a === '--config' || all[i - 1] === '--config'),
+    )
+    // Without a folder given, it is the cargo home cargo itself finds (CARGO_HOME, else .cargo in the home folder).
+    expect(parseRustArgs(['build']).cargoArgs.slice(0, 3)).toEqual(['build', '--config', cargoHomeRemapConfig(cargoHomeDir())])
+    // The target is relative: neither a drive nor a POSIX root.
+    expect(CARGO_HOME_REMAP_TO).toBe('cargo')
+  })
+
+  test("the flag is a TOML string that gives the folder back whole: spaces, quotes, backslashes and an = in it", () => {
+    for (const home of [HOME, 'D:\\a b\\x=y "q"\\.cargo', 'C:\\h\\.cargo\\\\', 'E:\\\u00dcn\u00efc\u00f8d\u00e9\\.cargo']) {
+      expect({ home, flag: flagOf(cargoHomeRemapConfig(home)) }).toEqual({ home, flag: [`--remap-path-prefix=${home}=cargo`] })
+    }
+  })
+
+  test('the +crt-static of .cargo/config.toml is still merged: the remap goes in the same table, which cargo joins', () => {
+    const file = Bun.TOML.parse(readFileSync(join(ROOT, '.cargo', 'config.toml'), 'utf8')) as {
+      build?: { rustflags?: unknown }
+      target: Record<string, { rustflags: string[] }>
+    }
+    const fromFile = file.target[RUST_PINS.host]!.rustflags
+    expect(fromFile).toEqual(['-C', 'target-feature=+crt-static'])
+    // build.rustflags would be ignored next to a target's rustflags, so neither side uses it.
+    expect(file.build?.rustflags).toBeUndefined()
+    expect(Object.keys(Bun.TOML.parse(cargoHomeRemapConfig(HOME)))).toEqual(['target'])
+    // Cargo joins the arrays of a key given in a config file and with --config, the file's first.
+    expect([...fromFile, ...flagOf(cargoHomeRemapConfig(HOME))]).toEqual(['-C', 'target-feature=+crt-static', '--remap-path-prefix=C:\\h\\.cargo=cargo'])
+  })
+
+  test("a registry crate's path is one stage refuses; remapped to cargo it is not; remapped to /cargo it would be", () => {
+    const path = `${HOME}\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\rayon-core-1.13.0\\src\\registry.rs`
+    const recorded = (p: string) => recordedBuildPaths(Buffer.from(`\0panicked at \0${p}\0`, 'latin1'))
+    expect(recorded(path)).toEqual([path])
+    expect(remapped(path)).toBe('cargo\\registry\\src\\index.crates.io-1949cf8c6b5b557f\\rayon-core-1.13.0\\src\\registry.rs')
+    expect(recorded(remapped(path))).toEqual([])
+    expect(recorded('/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rayon-core-1.13.0/src/registry.rs')).toHaveLength(1)
+  })
+
+  test("cargo's home folder is CARGO_HOME, else .cargo in the home folder, made absolute", () => {
+    expect(cargoHomeDir({ CARGO_HOME: 'D:\\cargo' }, 'C:\\h')).toBe(resolve('D:\\cargo'))
+    expect(cargoHomeDir({}, 'C:\\h')).toBe(resolve('C:\\h', '.cargo'))
+    expect(cargoHomeDir({ CARGO_HOME: '' }, 'C:\\h')).toBe(resolve('C:\\h', '.cargo'))
+    expect(join(cargoHomeDir({ CARGO_HOME: 'D:\\cargo' }, 'C:\\h'), 'bin')).toBe(resolve(cargoBinDir({ CARGO_HOME: 'D:\\cargo' }, 'C:\\h')))
   })
 })
 

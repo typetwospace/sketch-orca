@@ -1,0 +1,73 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": true,
+  "code": "ok",
+  "message": "",
+  "exitCode": 0,
+  "warnings": [],
+  "command": "info",
+  "info": {
+    "objects": [
+      {
+        "objectIndex": 0,
+        "name": "unpainted.obj",
+        "instances": 1,
+        "triangles": 12,
+        "min": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "max": [
+          20.0,
+          20.0,
+          20.0
+        ],
+        "size": [
+          20.0,
+          20.0,
+          20.0
+        ]
+      }
+    ],
+    "bed": {
+      "printableArea": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          300.0,
+          0.0
+        ],
+        [
+          300.0,
+          300.0
+        ],
+        [
+          0.0,
+          300.0
+        ]
+      ],
+      "printableHeight": 275.0,
+      "excludeArea": [],
+      "bedType": "High Temp Plate"
+    },
+    "printer": "Voron 2.4 300 0.4 nozzle",
+    "printerModel": "Voron 2.4 300",
+    "printerModelId": "Voron2_300",
+    "process": "0.20mm Standard @Voron",
+    "filaments": [
+      "Generic PLA @System"
+    ],
+    "extruders": 1,
+    "printSequence": "by layer"
+  },
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.3.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

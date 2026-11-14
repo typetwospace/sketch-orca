@@ -1,5 +1,6 @@
 // The oracle and the neutrality gate: the patches of parity/oracle/patches (numbered, dated, each
-// with the header and the knob it adds), the knob names, the refusals of parity oracle (free space,
+// with the header and the knob it adds or, for 0006 and 0007, the dump knob it works under; 0007's
+// line rule for OracleDump.cpp), the knob names, the refusals of parity oracle (free space,
 // the work folder's length, the platform), its build settings, the check of a staged oracle, the
 // SOP1 reader and what parity neutral makes of runs and dumps. Hermetic: temporary folders, fake
 // engine processes and hand-made SOP1 files only.
@@ -48,13 +49,17 @@ const PATCH_KNOBS: Record<string, string> = {
   '0003-oracle-threads.patch': ORACLE_KNOBS.threads,
   '0004-oracle-fma3.patch': ORACLE_KNOBS.fma3,
   '0005-oracle-dumps.patch': ORACLE_KNOBS.dump,
+  // The front end's objects in full: no knob of its own, under 0005's dump folder.
+  '0006-oracle-front-objects.patch': ORACLE_KNOBS.dump,
+  // Every step boundary in full and the end of process(): no knob of its own either.
+  '0007-oracle-step-dumps.patch': ORACLE_KNOBS.dump,
 }
 
 describe('the oracle patches', () => {
   const dir = oraclePatchesDir(ROOT)
   const names = readdirSync(dir).filter((n) => n.endsWith('.patch')).sort()
 
-  test('parity/oracle/patches holds the five, numbered from 0001 with no gap, and nothing else', () => {
+  test('parity/oracle/patches holds the seven, numbered from 0001 with no gap, and nothing else', () => {
     expect(names).toEqual(Object.keys(PATCH_KNOBS))
     expect(readdirSync(dir).sort()).toEqual(names)
     names.forEach((n, i) => expect(n.slice(0, 4)).toBe(String(i + 1).padStart(4, '0')))
@@ -110,7 +115,68 @@ describe('the oracle patches', () => {
     expect(patches.map((p) => p.name)).toEqual(names)
     for (const p of patches) expect(p.sha256).toBe(sha256File(p.path))
   })
+
+  test("0007 keeps OracleDump.cpp's lines 1-1017 where they were: five change in place, every new line comes after 1017", () => {
+    const text = readFileSync(join(dir, '0007-oracle-step-dumps.patch'), 'utf8')
+    // The file as 0005 makes it and 0006 changes it, then as 0007 leaves it, each patch's hunks
+    // applied in memory: what is compared is the file, whatever shape git gave the diff.
+    const patched = (n: string, base: string[]) => applyHunks(base, fileHunks(readFileSync(join(dir, n), 'utf8'), 'src/libslic3r/OracleDump.cpp'))
+    const before = patched('0006-oracle-front-objects.patch', patched('0005-oracle-dumps.patch', []))
+    const after = applyHunks(before, fileHunks(text, 'src/libslic3r/OracleDump.cpp'))
+    expect(before.length).toBe(1017)
+    expect(after.length).toBeGreaterThan(1017)
+    const changed = before.flatMap((line, i) => (after[i] === line ? [] : [i + 1]))
+    expect(changed).toEqual([18, 66, 770, 783, 1013])
+    // Each changed line keeps what it held and adds to it.
+    for (const n of changed) expect({ n, kept: after[n - 1]!.includes(before[n - 1]!.trim()) }).toEqual({ n, kept: true })
+    // The end of process() is dumped after the conflict check, before the log line that ends it.
+    const print = text.slice(text.indexOf('diff --git a/src/libslic3r/Print.cpp'))
+    expect(print).toContain('+        Oracle::dump_print_step(*this, int(psConflictCheck));')
+    // The next line is context: its mark, a space, then its own four spaces.
+    expect(print).toMatch(/\+ {8}Oracle::dump_print_step\(\*this, int\(psConflictCheck\)\);\n {5}BOOST_LOG_TRIVIAL\(info\) << "Slicing process finished\."/)
+  })
 })
+
+/** A hunk of a unified diff: the old file's first line (1-based; 0 for a new file) and its lines, each with its mark (' ', '-' or '+'). */
+interface Hunk {
+  oldStart: number
+  lines: string[]
+}
+
+/** The hunks a patch gives the file `path` (its `diff --git a/<path>` section). */
+function fileHunks(patch: string, path: string): Hunk[] {
+  const start = patch.indexOf(`diff --git a/${path} `)
+  expect({ path, found: start >= 0 }).toEqual({ path, found: true })
+  const next = patch.indexOf('\ndiff --git ', start + 1)
+  const hunks: Hunk[] = []
+  for (const line of patch.slice(start, next < 0 ? undefined : next).split('\n')) {
+    const h = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/.exec(line)
+    if (h) hunks.push({ oldStart: Number(h[1]), lines: [] })
+    else if (hunks.length > 0 && /^[ +-]/.test(line)) hunks[hunks.length - 1]!.lines.push(line)
+  }
+  return hunks
+}
+
+/** `base` with `hunks` applied as git applies them at their line numbers; each context and removed line must be the base's. */
+function applyHunks(base: string[], hunks: Hunk[]): string[] {
+  const out: string[] = []
+  let at = 0
+  for (const h of hunks) {
+    const from = Math.max(h.oldStart - 1, 0)
+    out.push(...base.slice(at, from))
+    at = from
+    for (const line of h.lines) {
+      const text = line.slice(1)
+      if (line[0] === '+') out.push(text)
+      else {
+        expect({ line: at + 1, text: base[at] }).toEqual({ line: at + 1, text })
+        if (line[0] === ' ') out.push(text)
+        at += 1
+      }
+    }
+  }
+  return [...out, ...base.slice(at)]
+}
 
 describe('an oracle patch that is not right', () => {
   const good = 'sketch-orca oracle patch 0007: a knob.\nModified for Sketch, 2026-11-06.\n\nWhat it does.\n---\ndiff --git a/x b/x\n'

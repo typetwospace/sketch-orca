@@ -1,0 +1,16 @@
+{
+  "format": "sketch-orca-result/1",
+  "ok": false,
+  "code": "custom-gcode-invalid",
+  "message": "the pause at printZ 5.05 needs the printer's pause G-code, and machine_pause_gcode is empty in this machine preset",
+  "exitCode": -2,
+  "warnings": [],
+  "command": "layers",
+  "engine": {
+    "engine": "sketch-orca",
+    "engineVersion": "0.3.0",
+    "orcaVersion": "2.4.2",
+    "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
+    "orcaTag": "v2.4.2"
+  }
+}

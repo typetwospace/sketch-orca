@@ -1,0 +1,38 @@
+# Copyright (C) 2026 The sketch-orca authors (see AUTHORS)
+# SPDX-License-Identifier: AGPL-3.0-only
+
+[package]
+name = "orca-slice"
+description = "libslic3r's TriangleMeshSlicer, SlicingParameters and adaptive slicing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Every dependency the crate will need, declared up front (orca-o3-skeleton, 2026-11-13), so that
+# no task of phase O3 that fills a crate changes Cargo.toml or Cargo.lock: every library crate of
+# phase O2 and every crate of phase O3 before this one in the build order (Cargo.toml).
+[dependencies]
+orca-arrange = { workspace = true }
+orca-config = { workspace = true }
+orca-crt = { workspace = true }
+orca-eigen = { workspace = true }
+orca-exact = { workspace = true }
+orca-fmt = { workspace = true }
+orca-geom = { workspace = true }
+orca-json = { workspace = true }
+orca-mesh = { workspace = true }
+orca-model = { workspace = true }
+orca-placeholder = { workspace = true }
+orca-qhull = { workspace = true }
+orca-stl = { workspace = true }
+orca-tbb = { workspace = true }
+orca-xml = { workspace = true }
+orca-zip = { workspace = true }
+orca-index = { workspace = true }
+orca-paths = { workspace = true }
+orca-voronoi = { workspace = true }
+
+[dev-dependencies]
+orca-probe = { workspace = true }

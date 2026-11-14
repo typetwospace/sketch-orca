@@ -10,7 +10,7 @@
 
 // Carries OrcaSlicer code: Model::read_from_file of src/libslic3r/Model.cpp and load_stl of
 // src/libslic3r/Format/STL.cpp, of OrcaSlicer v2.4.2, translated on 2026-11-07 (the OBJ branch on
-// 2026-11-08). Copyright the
+// 2026-11-08, the 3MF branch on 2026-11-10, its end, lines 363-369, on 2026-11-11). Copyright the
 // OrcaSlicer authors, the BambuStudio authors (Bambu Lab) and the PrusaSlicer authors (Prusa
 // Research), under the GNU Affero General Public License, version 3 (AGPL-3.0; LICENSE).
 
@@ -19,8 +19,13 @@
 //!
 //! An STL (`.stl`, or `.oltp` with a 256-byte header) is read and repaired by `orca-mesh`, an OBJ
 //! by [`crate::obj`]; an object is named after the text behind the path's last `\`, Windows'
-//! separator (so a path written with `/` names it by the whole path). The errors are the C++
-//! exceptions' texts, byte for byte ([`ReadError::what`]).
+//! separator (so a path written with `/` names it by the whole path). A 3MF is read by
+//! [`crate::bbs_3mf`], whole: its sub-model files and its assembly into the model included. It
+//! refuses with "Loading of a model file failed." and logs why, or lets an exception escape
+//! ([`ReadError::Message`]). It answers [`ReadError::NotPorted`] only at an entry that a load with
+//! configuration reads ([`crate::bbs_3mf::LOAD_CONFIG_STAGE`]); the command line's load never
+//! reaches one. `.svg`, `.drc` and `.amf` still answer [`ReadError::NotPorted`], for the caller
+//! to decline. The errors are the C++ exceptions' texts, byte for byte ([`ReadError::what`]).
 //!
 //! An ASCII STL whose `solid` line passes 255 bytes (a file with CR line ends is one line) overruns
 //! the C++ reader's buffer and the engine dies (0xC0000409, `parity/CORPUS.md`, "An engine fault:
@@ -32,8 +37,10 @@ use std::path::Path;
 use orca_mesh::admesh::stlinit::StlError;
 use orca_mesh::triangle_mesh::TriangleMesh;
 
+use crate::bbs_3mf::load_bbs_3mf;
 use crate::model::Model;
 use crate::obj::{ObjInfo, load_obj};
+use crate::semver::Semver;
 
 /// `LoadStrategy`: the flags `read_from_file` takes.
 pub mod load_strategy {
@@ -63,9 +70,10 @@ pub enum ReadError {
     /// An extension no reader takes.
     UnknownFormat,
     /// The reader failed without a message (an STL that cannot be opened or read, or has no
-    /// triangle).
+    /// triangle; a 3MF file the reader refuses, its reasons in the log).
     LoadFailed,
-    /// The reader failed with its message (the 3MF and OBJ readers).
+    /// The reader failed with its message (the OBJ reader; an exception that escapes the 3MF
+    /// reader).
     Message(String),
     /// The file was read and holds no object.
     Empty,
@@ -74,8 +82,11 @@ pub enum ReadError {
         /// The bytes of the line read before stopping.
         length: usize,
     },
-    /// A format whose reader is not translated yet (`.obj`, `.3mf`, `.svg`, `.drc`, `.amf`): the
-    /// extension, for the caller to decline.
+    /// A reader, or a stage of one, not translated yet (`.svg`, `.drc` and `.amf`, and the 3MF
+    /// reader's entries that only a load with configuration reads, [`LOAD_CONFIG_STAGE`]): what
+    /// is missing, for the caller to decline.
+    ///
+    /// [`LOAD_CONFIG_STAGE`]: crate::bbs_3mf::LOAD_CONFIG_STAGE
     NotPorted(&'static str),
 }
 
@@ -95,7 +106,7 @@ impl ReadError {
             ReadError::OverlongSolidLine { length } => {
                 StlError::OverlongSolidLine { length: *length }.to_string()
             }
-            ReadError::NotPorted(ext) => format!("the {ext} reader is not translated yet"),
+            ReadError::NotPorted(what) => format!("the {what} is not translated yet"),
         }
     }
 }
@@ -160,7 +171,8 @@ pub fn load_stl(
 ///
 /// # Errors
 ///
-/// [`ReadError`]: the exception the C++ throws, or a reader not translated yet.
+/// [`ReadError`]: the exception the C++ throws, or a reader (or a stage of one) not translated
+/// yet.
 pub fn read_from_file(input_file: &str, options: u32) -> Result<Model, ReadError> {
     let mut model = Model::default();
     if iends_with(input_file, ".stl") {
@@ -172,13 +184,24 @@ pub fn read_from_file(input_file: &str, options: u32) -> Result<Model, ReadError
         let mut obj_info = ObjInfo::default();
         load_obj(input_file, &mut model, &mut obj_info, None).map_err(ReadError::Message)?;
     } else if iends_with(input_file, ".svg") {
-        return Err(ReadError::NotPorted(".svg"));
+        return Err(ReadError::NotPorted(".svg reader"));
     } else if iends_with(input_file, ".drc") {
-        return Err(ReadError::NotPorted(".drc"));
+        return Err(ReadError::NotPorted(".drc reader"));
     } else if iends_with(input_file, ".amf") {
-        return Err(ReadError::NotPorted(".amf"));
+        return Err(ReadError::NotPorted(".amf reader"));
     } else if iends_with(input_file, ".3mf") {
-        return Err(ReadError::NotPorted(".3mf"));
+        // is_xxx is is_bbl_3mf here; it and the file's version are not read again.
+        let mut is_xxx = false;
+        let mut file_version = Semver::default();
+        if !load_bbs_3mf(
+            input_file,
+            &mut model,
+            &mut is_xxx,
+            &mut file_version,
+            options,
+        )? {
+            return Err(ReadError::LoadFailed);
+        }
     } else {
         return Err(ReadError::UnknownFormat);
     }
@@ -188,9 +211,11 @@ pub fn read_from_file(input_file: &str, options: u32) -> Result<Model, ReadError
     for o in &mut model.objects {
         o.input_file = input_file.to_owned();
     }
-    if options & load_strategy::ADD_DEFAULT_INSTANCES != 0 {
+    if options & load_strategy::ADD_DEFAULT_INSTANCES == load_strategy::ADD_DEFAULT_INSTANCES {
         model.add_default_instances();
     }
+    // Lines 363-369 check each plate's custom G-code, which only a load with configuration reads
+    // (none here), and sort the configuration's substitutions, of which there are none.
     Ok(model)
 }
 

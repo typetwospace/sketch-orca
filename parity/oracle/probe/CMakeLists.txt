@@ -34,8 +34,9 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 # The registry's names, in its order (test/parity-probe.test.ts holds the two lists equal; added
 # 2026-11-07). Each is a program sketch-orca-probe-<name> of main.cpp, which every program shares,
 # and <name>.cpp, which defines probe::target(), with the .cpp files of a folder <name>/ beside it
-# if the probe has one. So a task that fills a probe changes only its own sources.
-set(PROBE_NAMES crt fmt stl tbb configdef geom qhull mesh cstdio zip xml model arrange placeholder)
+# if the probe has one. So a task that fills a probe changes only its own sources. Phase O3's nine
+# probes (layer to fill) were appended as stubs on 2026-11-13 (orca-o3-skeleton).
+set(PROBE_NAMES crt fmt stl tbb configdef geom qhull mesh cstdio zip xml ptree model arrange placeholder layer index paths slice voronoi arachne walls surfaces fill)
 
 add_library(sketch-orca-probe-main OBJECT main.cpp)
 target_compile_options(sketch-orca-probe-main PRIVATE "@${PROBE_COMPILE_RSP}")

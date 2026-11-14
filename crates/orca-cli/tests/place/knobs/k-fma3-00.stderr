@@ -1,0 +1,1 @@
+sketch-orca-oracle: SKETCH_ORCA_ORACLE_FMA3 must be 0 (the CRT's FMA3 paths off) or 1 (the CRT's own choice)

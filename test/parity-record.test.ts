@@ -11,16 +11,24 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { knobRunner, parseHead, portableDump, readSop1, Sop1Reader } from '../scripts/lib/parity/neutral.ts'
+import { sha256Bytes } from '../scripts/lib/files.ts'
+import type { CorpusDocument } from '../scripts/lib/parity/corpus.ts'
 import {
   classifyDumps,
   collectDumps,
   dumpBoundary,
   dumpBytes,
   dumpNames,
+  dumpObject,
+  dumpSha256,
   dumpsRoot,
+  GOLDENS_MAX_BYTES,
+  hashedDumps,
   KEPT_DUMPS,
   keepGoldens,
   keptDump,
+  OBJECT_STEPS,
+  outsideDomainAOf,
   passKey,
   portableDumpBytes,
   readGoldens,
@@ -90,14 +98,46 @@ function frontObjects(threads: string, value = 'x'): Buffer {
 const ok = { code: 0, timedOut: false, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) }
 
 describe('the dumps a pass keeps', () => {
-  test('are front-objects in phase O2, known by the name part of their file', () => {
-    expect([...KEPT_DUMPS]).toEqual(['front-objects'])
+  test("are every boundary of the front end and of process() that domain A reaches, in process()'s order, known by the name part of their file", () => {
+    expect([...KEPT_DUMPS]).toEqual([
+      'front-objects',
+      'front-config',
+      'object-posSlice',
+      'object-posPerimeters',
+      'object-posEstimateCurledExtrusions',
+      'object-posPrepareInfill',
+      'object-posInfill',
+      'object-posIroning',
+      'object-posContouring',
+      'object-posSupportMaterial',
+      'object-posDetectOverhangsForLift',
+      'print-psWipeTower',
+      'print-psSkirtBrim',
+      'object-posSimplifyPath',
+      'object-posSimplifyInfill',
+      'object-posSimplifySupportPath',
+      'print-psConflictCheck',
+    ])
+    // Every object step the oracle dumps is kept but posSimplifyWall, which is never set done.
+    expect(OBJECT_STEPS.map((s) => `object-${s}`).every((b) => KEPT_DUMPS.includes(b))).toBe(true)
+    expect(KEPT_DUMPS).not.toContain('object-posSimplifyWall')
     expect(dumpBoundary('front-objects-1.sop1')).toBe('front-objects')
-    expect(dumpBoundary('object0-posSlice-12.sop1')).toBe('object0-posSlice')
+    // An object's dump is its step's boundary, for every object.
+    expect(dumpBoundary('object0-posSlice-12.sop1')).toBe('object-posSlice')
+    expect(dumpBoundary('object11-posDetectOverhangsForLift-1.sop1')).toBe('object-posDetectOverhangsForLift')
+    expect(dumpObject('object11-posDetectOverhangsForLift-1.sop1')).toBe(11)
+    expect(dumpObject('front-config-1.sop1')).toBeUndefined()
+    expect(dumpBoundary('print-psConflictCheck-2.sop1')).toBe('print-psConflictCheck')
     expect(dumpBoundary('notes.txt')).toBeUndefined()
     expect(keptDump('front-objects-2.sop1')).toBe(true)
-    expect(keptDump('front-config-1.sop1')).toBe(false)
+    expect(keptDump('front-config-1.sop1')).toBe(true)
+    expect(keptDump('object3-posInfill-1.sop1')).toBe(true)
+    expect(keptDump('print-psConflictCheck-1.sop1')).toBe(true)
+    // The G-code export's dump is phase O4's.
+    expect(keptDump('print-psGCodeExport-1.sop1')).toBe(false)
+    expect(keptDump('object0-posSimplifyWall-1.sop1')).toBe(false)
     expect(keptDump('print-psWipeTower-1.sop1', ['print-psWipeTower'])).toBe(true)
+    expect(keptDump('front-config-1.sop1', ['front-objects'])).toBe(false)
   })
 
   test('a fresh folder per engine run, the other dumps removed as the run ends, the kept ones beside the run in the store', async () => {
@@ -114,6 +154,8 @@ describe('the dumps a pass keeps', () => {
       writeFileSync(join(folder, 'front-objects-1.sop1'), frontObjects(o.env.SKETCH_ORCA_ORACLE_THREADS!))
       writeFileSync(join(folder, 'front-config-1.sop1'), 'c')
       writeFileSync(join(folder, 'object0-posSlice-1.sop1'), 's')
+      writeFileSync(join(folder, 'object0-posSimplifyWall-1.sop1'), 'w')
+      writeFileSync(join(folder, 'print-psGCodeExport-1.sop1'), 'g')
       writeFileSync(join(caseDir, 'result.json'), '{}')
       return ok
     }
@@ -121,17 +163,19 @@ describe('the dumps a pass keeps', () => {
     const run = knobRunner({ SKETCH_ORCA_ORACLE_THREADS: '1' }, dumps, fake, (f) => keptDump(f))
     const exec = recordingExec({ exe: 'oracle', caseDir, root: join(work, 'cases'), store: join(store, 'cube'), env: { PATH: 'x' }, timeoutMs: 1000, runs, run })
     await exec(['run'])
-    // Only the kept boundary is left in the run's folder once it ended.
-    expect(readdirSync(join(dumps, 'cube', '0'))).toEqual(['front-objects-1.sop1'])
+    // Only the kept boundaries are left in the run's folder once it ended.
+    const kept = ['front-config-1.sop1', 'front-objects-1.sop1', 'object0-posSlice-1.sop1']
+    expect(readdirSync(join(dumps, 'cube', '0')).sort()).toEqual(kept)
     await exec(['run'])
     expect(seen).toEqual([join(dumps, 'cube', '0'), join(dumps, 'cube', '1')])
     const cases: CaseRecord[] = [{ id: 'cube', ok: true, problems: [], warnings: [], runs }]
     collectDumps(dumps, store, cases)
     expect(existsSync(dumps)).toBe(false)
-    expect(runs.map((r) => r.dumps)).toEqual([['front-objects-1.sop1'], ['front-objects-1.sop1']])
-    expect(readdirSync(join(store, 'cube', '0', 'dumps'))).toEqual(['front-objects-1.sop1'])
+    expect(runs.map((r) => r.dumps)).toEqual([kept, kept])
+    expect(readdirSync(join(store, 'cube', '0', 'dumps')).sort()).toEqual(kept)
     expect(dumpBytes(store, 'cube', runs[1], 'front-objects-1.sop1')!.equals(frontObjects('1'))).toBe(true)
-    expect(dumpBytes(store, 'cube', runs[1], 'front-config-1.sop1')).toBeUndefined()
+    expect(dumpBytes(store, 'cube', runs[1], 'object0-posSlice-1.sop1')!.toString()).toBe('s')
+    expect(dumpBytes(store, 'cube', runs[1], 'print-psGCodeExport-1.sop1')).toBeUndefined()
     // The run's own outputs are kept as before.
     expect(runs[0]!.files).toEqual(['result.json'])
   })
@@ -189,6 +233,66 @@ describe('the dumps across the thread counts', () => {
     expect(readFileSync(join(goldens, 'cases', 'cube', '0', 'dumps', 'front-objects-1.sop1')).equals(frontObjects('1'))).toBe(true)
     const before = keepGoldens({ pass: p1, store: join(work, 'oracle-p1'), goldens, corpusSha256: 's', root: 'r', resources: 'res', work: 'w', oracle })
     expect('dumps' in before).toBe(false)
+    // Well within 8 GiB, no dump is kept as its hash.
+    expect('hashedDumps' in index).toBe(false)
+  })
+})
+
+describe('the goldens past their size', () => {
+  const root = join('C:\\w', 'cases')
+  /** A pass whose cases each have one run with one dump of `size` bytes (a path of its case folder inside a CONF string). */
+  function bigPass(ids: string[], size: number): Pass {
+    const cases: CaseRecord[] = ids.map((id) => {
+      const bytes = sop1([
+        ['HEAD', head('config', 1)],
+        ['CONF', conf('job', 'filename_format', `${join(root, id)}\\out.gcode${'x'.repeat(Math.max(0, size - 120))}`)],
+      ])
+      mkdirSync(join(work, 'p1', id, '0', 'dumps'), { recursive: true })
+      writeFileSync(join(work, 'p1', id, '0', 'dumps', 'front-config-1.sop1'), bytes)
+      return { id, ok: true, problems: [], warnings: [], runs: [{ index: 0, args: [], extraEnv: [], code: 0, timedOut: false, files: [], gone: [], dumps: ['front-config-1.sop1'] }] }
+    })
+    return { label: 'oracle-p1', knobs: {}, cases }
+  }
+
+  test("past the most, a dump of a run outside domain A that would take the goldens past it is kept as its SHA-256; domain A's keep their bytes", () => {
+    expect(GOLDENS_MAX_BYTES).toBe(8 * 1024 ** 3)
+    const p = bigPass(['a-cube', 'b-gyroid', 'c-cube', 'd-tower'], 400)
+    const store = join(work, 'p1')
+    const outside = (id: string) => id === 'b-gyroid' || id === 'd-tower'
+    const size = (id: string) => readFileSync(join(store, id, '0', 'dumps', 'front-config-1.sop1')).length
+    const all = ['a-cube', 'b-gyroid', 'c-cube', 'd-tower'].reduce((t, id) => t + size(id), 0)
+    // Room for domain A's two and one more: the first outside domain A fits, the second does not.
+    const max = size('a-cube') + size('c-cube') + size('b-gyroid')
+    expect(hashedDumps({ pass: p, store, maxBytes: all, outsideDomainA: outside })).toEqual([])
+    expect(hashedDumps({ pass: p, store, maxBytes: max, outsideDomainA: outside })).toEqual([{ case: 'd-tower', run: 0, dump: 'front-config-1.sop1' }])
+    // Even with no room at all, domain A's runs keep their bytes.
+    expect(hashedDumps({ pass: p, store, maxBytes: 0, outsideDomainA: outside }).map((h) => h.case)).toEqual(['b-gyroid', 'd-tower'])
+
+    const goldens = join(work, 'goldens')
+    const index = keepGoldens({ pass: p, store, goldens, corpusSha256: 's', root, resources: 'res', work: 'w', oracle: { exeSha256: 'e', cli: 'c' }, maxBytes: max, outsideDomainA: outside })
+    expect(index.hashedDumps).toEqual(['d-tower/0/front-config-1.sop1'])
+    const gstore = join(goldens, 'cases')
+    const tower = index.cases.find((c) => c.id === 'd-tower')!.runs[0]
+    // The run still names the dump; its bytes are gone from the goldens and its hash is beside where they were.
+    expect(tower!.dumps).toEqual(['front-config-1.sop1'])
+    expect(existsSync(join(gstore, 'd-tower', '0', 'dumps', 'front-config-1.sop1'))).toBe(false)
+    expect(dumpBytes(gstore, 'd-tower', tower, 'front-config-1.sop1')).toBeUndefined()
+    // The hash is of the portable bytes: the case folder written <case>.
+    const portable = portableDumpBytes(store, 'd-tower', tower, 'front-config-1.sop1', { root, resources: 'res', work: 'w' })!
+    expect(portable.toString('latin1')).toContain('<case>')
+    expect(dumpSha256(gstore, 'd-tower', tower, 'front-config-1.sop1')).toBe(sha256Bytes(portable))
+    // The pass's store keeps the bytes, and so does every other run of the goldens.
+    expect(dumpBytes(store, 'd-tower', tower, 'front-config-1.sop1')).toBeDefined()
+    for (const id of ['a-cube', 'b-gyroid', 'c-cube']) {
+      const r = index.cases.find((c) => c.id === id)!.runs[0]
+      expect(dumpBytes(gstore, id, r, 'front-config-1.sop1')!.equals(readFileSync(join(store, id, '0', 'dumps', 'front-config-1.sop1')))).toBe(true)
+      expect(dumpSha256(gstore, id, r, 'front-config-1.sop1')).toBeUndefined()
+    }
+  })
+
+  test('a case is outside domain A when one of its families is a marker', () => {
+    const outside = outsideDomainAOf({ cases: [{ families: ['slice-mesh', 'infill-gyroid'], id: 'g' }, { families: ['slice-mesh', 'infill-monotonic'], id: 'm' }, { families: ['wipe-tower'], id: 't' }] as CorpusDocument['cases'] })
+    expect(['g', 'm', 't', 'unknown'].map(outside)).toEqual([true, false, true, false])
   })
 })
 

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<objects>
+ <object id="1">
+  <range min_z="2" max_z="4">
+   <option opt_key="layer_height">thin</option>
+  </range>
+ </object>
+</objects>

@@ -20,9 +20,10 @@
 //! - [`parse`]: microsoft/STL's `std::from_chars`; `strtod`, `strtof`, `strtol` and their family,
 //!   written from the C standard around it with the UCRT's choices; and the STL's `std::stod`,
 //!   `stof`, `stoi` and the rest.
-//! - [`istream`]: microsoft/STL's `std::istringstream >> double` and `>> int` (`num_get`), which
-//!   Orca's configuration options read their values with; not yet replayed against the runtime
-//!   (`parity/HAZARDS.md`).
+//! - [`istream`]: microsoft/STL's `std::istringstream >> double`, `>> float`, `>> int` and
+//!   `>> unsigned long long` (`num_get`), which Orca's configuration options read their values
+//!   with, and Boost's `stream_translator` the 3MF reader's numbers; replayed against the runtime
+//!   by `ptree.sop1`'s PTGT records (`orca-xml`'s `tests/ptree.rs`).
 //! - [`scanf`]: the UCRT's `fscanf` and `sscanf` for the formats admesh's ASCII STL reader passes,
 //!   written from the C standard and black-box tests of the UCRT (`tests/scanf.rs`; o2-mesh,
 //!   2026-11-07).

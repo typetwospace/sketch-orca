@@ -2,10 +2,8 @@
   "format": "sketch-orca-result/1",
   "ok": false,
   "code": "not-ported",
-  "message": "sketch-orca-rs cannot do this slice job yet: it reaches steps that are not ported (model-load, placement, slice-mesh, perimeters-arachne, infill-monotonic, infill-monotonicline, infill-crosshatch, infill-concentricinternal, gcode-export, gcode-processor, step-estimate-curled-extrusions, step-prepare-infill, step-simplify-path, step-detect-overhangs-for-lift, step-simplify-wall, step-simplify-infill, step-skirt-brim, step-conflict-check)",
+  "message": "sketch-orca-rs cannot do this slice job yet: it reaches steps that are not ported (slice-mesh, perimeters-arachne, infill-monotonic, infill-monotonicline, infill-crosshatch, infill-concentricinternal, gcode-export, gcode-processor, step-estimate-curled-extrusions, step-prepare-infill, step-simplify-path, step-detect-overhangs-for-lift, step-simplify-wall, step-simplify-infill, step-skirt-brim, step-conflict-check, tool-ordering, support-check)",
   "missing": [
-    "model-load",
-    "placement",
     "slice-mesh",
     "perimeters-arachne",
     "infill-monotonic",
@@ -21,14 +19,16 @@
     "step-simplify-wall",
     "step-simplify-infill",
     "step-skirt-brim",
-    "step-conflict-check"
+    "step-conflict-check",
+    "tool-ordering",
+    "support-check"
   ],
   "exitCode": -8,
   "warnings": [],
   "command": "slice",
   "engine": {
     "engine": "sketch-orca",
-    "engineVersion": "0.2.0",
+    "engineVersion": "0.3.0",
     "orcaVersion": "2.4.2",
     "orcaCommit": "8500fcdccaa10b5099ac20d252af3a7c560046f1",
     "orcaTag": "v2.4.2",

@@ -3,7 +3,7 @@
 
 [package]
 name = "orca-cli"
-description = "The Rust program, sketch-orca-rs: sketch-orca's commands, intake, declines and crash result"
+description = "The Rust program, sketch-orca-rs: sketch-orca's commands, intake, presets stage, model stage, info answer, placement, parity knobs, declines and crash result"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -22,9 +22,34 @@ orca-tbb = { workspace = true }
 orca-probe = { workspace = true }
 orca-json = { workspace = true }
 orca-config = { workspace = true }
-# Of phase O2's crates only the placeholder parser for now (the presets' compatibility conditions);
-# o2-info adds the other nine when it runs alone, so building this crate never compiles a crate
-# another task is filling.
+# Phase O2's crates: the placeholder parser (the presets' compatibility conditions), and from
+# orca-info-load (2026-11-11) the model's readers and what they stand on, for the model stage and
+# the info answer (src/model.rs, src/info.rs).
 orca-placeholder = { workspace = true }
+orca-eigen = { workspace = true }
+orca-geom = { workspace = true }
+orca-exact = { workspace = true }
+orca-qhull = { workspace = true }
+orca-mesh = { workspace = true }
+orca-zip = { workspace = true }
+orca-xml = { workspace = true }
+orca-arrange = { workspace = true }
+orca-model = { workspace = true }
+# Phase O3's crates (orca-o3-skeleton, 2026-11-13), declared up front so that no unit of the wave
+# changes this file: process-1 and process-2 run the print through them (src/ names none of them
+# until then).
+orca-index = { workspace = true }
+orca-paths = { workspace = true }
+orca-voronoi = { workspace = true }
+orca-slice = { workspace = true }
+orca-layer = { workspace = true }
+orca-arachne = { workspace = true }
+orca-print = { workspace = true }
+orca-perimeter = { workspace = true }
+orca-surface = { workspace = true }
+orca-fill = { workspace = true }
+orca-support = { workspace = true }
+orca-plate = { workspace = true }
+orca-process = { workspace = true }
 sha2 = { workspace = true }
 windows-sys = { workspace = true }
