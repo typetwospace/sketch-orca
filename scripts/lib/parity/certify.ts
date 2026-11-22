@@ -94,7 +94,7 @@ import { compareOutput, masksFor, type Mask, type OutputStatus } from './masks.t
 import type { NeutralReport } from './neutral.ts'
 import { readSop1, sop1Differences } from './neutral.ts'
 import { dumpBoundary, dumpNames, dumpSha256, maskName, outputBytes, outputNames, portableDumpBytes, portableRoots, type FamilyEntry, type GoldensIndex, type ParityDocument } from './record.ts'
-import { runStore, type AfterRun, type CaseRecord, type RecordedRun } from './same.ts'
+import { type AfterRun, type CaseRecord, type RecordedRun } from './same.ts'
 import { endedWithinRust, lowByte, RUST_STAGES } from '../smoke.ts'
 
 export const CERTIFY_FORMAT = 'sketch-orca-parity-certify/1'
@@ -862,11 +862,6 @@ export function classIndex(outputs: { case: string; run: number; output: string;
 export function envelopeIndex(report: EnvelopeReport | undefined): (caseId: string, run: number, output: string) => OutputEnvelope | undefined {
   const m = new Map((report?.outputs ?? []).map((o) => [`${o.case}\u0000${o.run}\u0000${o.output}`, o]))
   return (c, r, out) => m.get(`${c}\u0000${r}\u0000${out}`)
-}
-
-/** The runs of the store as a pass keeps them (runStore), for a reader that wants the folder. */
-export function runFolder(side: Side, caseId: string, run: number): string {
-  return runStore(join(side.store, caseId), run).dir
 }
 
 export function readJsonIf<T>(path: string): T | undefined {
